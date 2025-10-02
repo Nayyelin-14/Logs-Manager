@@ -86,17 +86,13 @@ npm run db:seed
 npm run server
 ```
 
-**Configuration**
-**Environment Variables**
-**Create a .env file in the root directory**:
+# Environment Variables
 
-# Application
-
+```bash
 NODE_ENV=development
 PORT=desired_port
 
 # Database
-
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 DB_HOST=localhost
 DB_PORT=5432
@@ -105,90 +101,84 @@ DB_USER=postgres
 DB_PASSWORD=password
 
 # Redis
-
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
 
 # Authentication
-
 ACCESS_TOKEN_SECRET=your-access-secret
 REFRESH_TOKEN_SECRET=your-refresh-secret
 
 # External APIs
-
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
 SMTP_PASSWORD=your-password
+```
 
 ## 📂 Project Structure (Backend)
 
-```
 backend/
-├── node_modules/               # Dependencies
-├── prisma/                     # Prisma schema & migrations
-├── src/                        # Source code
-│   ├── __tests__/              # Unit & integration tests
-│   │   └── user_login.test.ts
-│   │
-│   ├── actions/                # Action handlers (e.g., email, templates)
-│   │   ├── emailAction.ts
-│   │   └── templates/
-│   │
-│   ├── config/                 # Configurations & clients
-│   │   ├── errorcode.ts
-│   │   ├── PrismaClient.ts
-│   │   └── redisClient.ts
-│   │
-│   ├── controllers/            # Controllers (logic per domain)
-│   │   ├── admin/
-│   │   │   ├── alert.con.ts
-│   │   │   ├── logs.con.ts
-│   │   │   └── manage.con.ts
-│   │   ├── auth/
-│   │   │   ├── auth.con.ts
-│   │   │   └── authChecks.ts
-│   │   └── users/
-│   │       └── users.con.ts
-│   │
-│   ├── generated/              # Auto-generated files (e.g., Prisma client)
-│   │
-│   ├── jobs/                   # Background jobs & workers
-│   │   ├── queues/
-│   │   └── workers/
-│   │
-│   ├── middleware/             # Middleware (auth, validation, etc.)
-│   │   ├── authorization.ts
-│   │   └── isAuth.ts
-│   │
-│   ├── routes/                 # API routes
-│   │   ├── alert.route.ts
-│   │   ├── auth.route.ts
-│   │   ├── index.route.ts
-│   │   ├── logs.route.ts
-│   │   └── manage.route.ts
-│   │
-│   ├── services/               # Services (handle core logic & DB ops)
-│   │   ├── alert.service.ts
-│   │   ├── auth.service.ts
-│   │   ├── logs.service.ts
-│   │   └── users.service.ts
-│   │
-│   ├── types/                  # TypeScript types/interfaces
-│   │
-│   ├── utils/                  # Utility functions/helpers
-│   │
-│   ├── app.ts                  # Main Express app
-│   ├── index.ts                # App entry point
-│   ├── testDb.ts               # Test DB setup
-│   └── testRedis.ts            # Test Redis setup
+├── node_modules/ # Dependencies
+├── prisma/ # Prisma schema & migrations
+├── src/ # Source code
+│ ├── **tests**/ # Unit & integration tests
+│ │ └── user_login.test.ts
+│ │
+│ ├── actions/ # Action handlers (e.g., email, templates)
+│ │ ├── emailAction.ts
+│ │ └── templates/
+│ │
+│ ├── config/ # Configurations & clients
+│ │ ├── errorcode.ts
+│ │ ├── PrismaClient.ts
+│ │ └── redisClient.ts
+│ │
+│ ├── controllers/ # Controllers (logic per domain)
+│ │ ├── admin/
+│ │ │ ├── alert.con.ts
+│ │ │ ├── logs.con.ts
+│ │ │ └── manage.con.ts
+│ │ ├── auth/
+│ │ │ ├── auth.con.ts
+│ │ │ └── authChecks.ts
+│ │ └── users/
+│ │ └── users.con.ts
+│ │
+│ ├── generated/ # Auto-generated files (e.g., Prisma client)
+│ │
+│ ├── jobs/ # Background jobs & workers
+│ │ ├── queues/
+│ │ └── workers/
+│ │
+│ ├── middleware/ # Middleware (auth, validation, etc.)
+│ │ ├── authorization.ts
+│ │ └── isAuth.ts
+│ │
+│ ├── routes/ # API routes
+│ │ ├── alert.route.ts
+│ │ ├── auth.route.ts
+│ │ ├── index.route.ts
+│ │ ├── logs.route.ts
+│ │ └── manage.route.ts
+│ │
+│ ├── services/ # Services (handle core logic & DB ops)
+│ │ ├── alert.service.ts
+│ │ ├── auth.service.ts
+│ │ ├── logs.service.ts
+│ │ └── users.service.ts
+│ │
+│ ├── types/ # TypeScript types/interfaces
+│ │
+│ ├── utils/ # Utility functions/helpers
+│ │
+│ ├── app.ts # Main Express app
+│ ├── index.ts # App entry point
+│ ├── testDb.ts # Test DB setup
+│ └── testRedis.ts # Test Redis setup
 │
-├── .env                        # Environment variables
-├── .env.example                # Example environment configuration
-```
-
----
+├── .env # Environment variables
+├── .env.example # Example environment configuration
 
 📌 **Legend**
 
@@ -250,25 +240,24 @@ backend/
 
 ---
 
-# Create a new migration
+## Database CLI
 
+```bash
+# Create a new migration
 npx prisma migrate dev --name add_new_feature
 
 # Apply migrations to production
-
 npx prisma migrate deploy
 
 # Reset database (CAUTION: drops all data)
-
 npx prisma migrate reset
 
 # View migration status
-
 npx prisma migrate status
 
 # Generate Prisma Client after schema changes
-
 npx prisma generate
+```
 
 ## Available Scripts
 
