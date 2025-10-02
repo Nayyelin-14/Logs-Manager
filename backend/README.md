@@ -118,22 +118,20 @@ SMTP_PASSWORD=your-password
 
 ## 📂 Project Structure (Backend)
 
+```
 backend/
 ├── node_modules/ # Dependencies
 ├── prisma/ # Prisma schema & migrations
 ├── src/ # Source code
-│ ├── **tests**/ # Unit & integration tests
+│ ├── tests/ # Unit & integration tests
 │ │ └── user_login.test.ts
-│ │
-│ ├── actions/ # Action handlers (e.g., email, templates)
+│ ├── actions/ # Action handlers (email, templates)
 │ │ ├── emailAction.ts
 │ │ └── templates/
-│ │
 │ ├── config/ # Configurations & clients
 │ │ ├── errorcode.ts
 │ │ ├── PrismaClient.ts
 │ │ └── redisClient.ts
-│ │
 │ ├── controllers/ # Controllers (logic per domain)
 │ │ ├── admin/
 │ │ │ ├── alert.con.ts
@@ -144,43 +142,35 @@ backend/
 │ │ │ └── authChecks.ts
 │ │ └── users/
 │ │ └── users.con.ts
-│ │
-│ ├── generated/ # Auto-generated files (e.g., Prisma client)
-│ │
+│ ├── generated/ # Auto-generated files
 │ ├── jobs/ # Background jobs & workers
 │ │ ├── queues/
 │ │ └── workers/
-│ │
-│ ├── middleware/ # Middleware (auth, validation, etc.)
+│ ├── middleware/ # Middleware (auth, validation)
 │ │ ├── authorization.ts
 │ │ └── isAuth.ts
-│ │
 │ ├── routes/ # API routes
 │ │ ├── alert.route.ts
 │ │ ├── auth.route.ts
 │ │ ├── index.route.ts
 │ │ ├── logs.route.ts
 │ │ └── manage.route.ts
-│ │
-│ ├── services/ # Services (handle core logic & DB ops)
+│ ├── services/ # Business logic & DB operations
 │ │ ├── alert.service.ts
 │ │ ├── auth.service.ts
 │ │ ├── logs.service.ts
 │ │ └── users.service.ts
-│ │
 │ ├── types/ # TypeScript types/interfaces
-│ │
 │ ├── utils/ # Utility functions/helpers
-│ │
 │ ├── app.ts # Main Express app
 │ ├── index.ts # App entry point
 │ ├── testDb.ts # Test DB setup
 │ └── testRedis.ts # Test Redis setup
-│
 ├── .env # Environment variables
-├── .env.example # Example environment configuration
+└── .env.example # Example environment configuration
+```
 
-📌 **Legend**
+📌 **Folder Overview**
 
 - **controllers/** → Handles incoming requests, calls services.
 - **services/** → Contains reusable business logic, database queries.
