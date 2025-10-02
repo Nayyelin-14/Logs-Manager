@@ -1,28 +1,58 @@
 # LMS Project
 
-A React + TypeScript setup using Vite, with Tailwind CSS, Shadcn UI components, React Query, and other modern libraries for building a responsive Logs Management System (LMS).
+A high-performance **Log Management System (LMS)** frontend application built with **React** and **TypeScript**, using **Vite** for lightning-fast development and build times. The interface leverages **Tailwind CSS** and **Shadcn UI** components to provide a fully responsive, accessible, and consistent design.
+
+**React Query** enables efficient data fetching, caching, and state management, ensuring high performance throughout the app. The frontend delivers a comprehensive dashboard for:
+
+- Log management and viewing
+- Real-time alerts
+- Alert rule configuration
+- Analytics and reporting
+
+It also includes robust authentication flows and a rich set of reusable UI components, all engineered for **clean code, scalability, and optimal performance**.
 
 ---
 
 ## Features
 
--**User Access** : Login, registration, OTP verification, and password recovery -**Role-Based Access Control (RBAC)** : Separate permissions for Admin and User
--Admin: Full access to manage alert rules , alerts, logs, and user accounts
--User: only view alerts and create/delete logs, cannot perform administrative tasks -**Analytics Dashboard**: Browse logs, apply filters, search efficiently, and visualize data with interactive charts -**Alert Rule(Admin)**: Create, edit, delete, and monitor alerts -**UI Components** : Built with shadcn/ui and Tailwind for a modern, responsive, and consistent interface -**State Management** : Global state managed with Zustand for users, filters, and app settings -**Data Handling** : Efficient data fetching, caching, and syncing using React Router actions/loaders and TanStack Query
-
-- **Form Validation** : Zod schemas integrated with React Hook Form for robust input validation
+- **User Access**: Login, registration, OTP verification, and password recovery
+- **Role-Based Access Control (RBAC)**: Separate permissions for Admin and User
+  - **Admin**: Full access to manage alert rules, alerts, logs, and user accounts
+  - **User**: Can view alerts and create/delete logs, cannot perform administrative tasks
+- **Analytics Dashboard**: Browse logs, apply filters, search efficiently, and visualize data with interactive charts
+- **Alert Rule (Admin)**: Create, edit, delete, and monitor alerts
+- **UI Components**: Built with shadcn/ui and Tailwind for a modern, responsive, and consistent interface
+- **State Management**: Global state managed with Zustand for users, filters, and app settings
+- **Data Handling**: Efficient data fetching, caching, and syncing using React Router actions/loaders and TanStack Query
+- **Form Validation**: Zod schemas integrated with React Hook Form for robust input validation
 - **Developer Experience**: Modular, reusable, and scalable architecture for maintainable and high-performance code
-- **Theming & Styling** : Dark/light mode support and customizable Tailwind themes -**Performance Optimizations** : Lazy loading, code splitting, and optimized rendering for faster UI
+- **Theming & Styling**: Dark/light mode support and customizable Tailwind themes
+- **Performance Optimizations**: Lazy loading, code splitting, and optimized rendering for faster UI
 
 ---
 
 ## Technologies & Libraries
 
--**React 19** : UI library for building components -**TypeScript** : Static type checking -**Vite** : Fast development server & build tool -**Tailwind CSS** : Utility-first CSS framework -**Radix UI** : Accessible component primitives -**React Query** : Data fetching and caching -**Zod** : Schema validation -**React Hook Form** : Form management -**Recharts** : Charts and data visualization -**Lucide React** : Icons library -**Lottie React** : Animations-**Zustand** : Lightweight state management
+- **React 19**: UI library for building components
+- **TypeScript**: Static type checking
+- **Vite**: Fast development server & build tool
+- **Tailwind CSS**: Utility-first CSS framework
+- **Radix UI**: Accessible component primitives
+- **React Query**: Data fetching and caching
+- **Zod**: Schema validation
+- **React Hook Form**: Form management
+- **Recharts**: Charts and data visualization
+- **Lucide React**: Icons library
+- **Lottie React**: Animations
+- **Zustand**: Lightweight state management
+
+---
 
 ## Dev Tools
 
--**ESLint** : Code linting -**vite-tsconfig-paths** : Module path alias support -**React Query DevTools** : Debug React Query cache and queries
+- **ESLint**: Code linting
+- **vite-tsconfig-paths**: Module path alias support
+- **React Query DevTools**: Debug React Query cache and queries
 
 ---
 
@@ -40,15 +70,20 @@ A React + TypeScript setup using Vite, with Tailwind CSS, Shadcn UI components, 
 ### Clone the Repository
 
 ```bash
+
 git clone <your-repo-url>
 cd frontend
+
 #install dependencies
 npm install
+
 ## Environment Variables
 #Create a .env file in the root folder and add your configuration:
 VITE_API_URL=https://your-backend-api-url
+
 #Run Development Server
 npm run dev
+
 #Build for Production
 npm run build
 ```
@@ -85,11 +120,5 @@ frontend/
 ├─ tsconfig.json # TypeScript configuration
 ├─ tsconfig.node.json # Node-specific TS config
 └─ vite.config.ts # Vite configuration
-
-```
-
----
-
-```
 
 ```
