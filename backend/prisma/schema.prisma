@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String?
+  password  String?
+  email     String   @unique
+  role      Role     @default(USER)
+  tenant    String?
+  status    Status   @default(ACTIVE)
+  createAt  DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([tenant])
+  @@index([role])
+  @@index([createAt])
+  @@index([status])
+}
+
+model AlertRule {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  tenant      String
+
+  conditions  Json      
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  alerts      Alert[]
+
+  @@map("alert_rules")
+}
+
+model Alert {
+  id          String    @id @default(cuid())
+  ruleId      String    @map("rule_id")
+  rule        AlertRule @relation(fields: [ruleId], references: [id])
+  tenant      String
+  title       String
+  description String
+  severity    String    
+  status      String    @default("open") 
+  eventIds    String[]  @map("event_ids") 
+  triggeredAt DateTime  @default(now())
+  
+  @@map("alerts")
+  @@index([tenant, status])
+}
+
+model Otp {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  optCode       String
+  rememberToken String
+  verifyToken   String?
+  count         Int      @default(0) @db.SmallInt
+  error         Int      @default(0) @db.SmallInt
+  createAt      DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SecurityEvent {
+  id             String   @id @default(cuid())
+  timestamp      DateTime @default(now()) @map("@timestamp")
+  tenant         String
+  source         Source
+  vendor         String?
+  product        String?
+  eventType      String   @map("event_type")
+  eventSubtype   String?  @map("event_subtype")
+  severity       Int?     @default(0)
+  action         Action?
+  srcIp          String?  @map("src_ip")
+  srcPort        String?  @map("src_port")
+  dstIp          String?  @map("dst_ip")
+  dstPort        String?  @map("dst_port")
+  protocol       String?
+  host           String?
+  process        String?
+  url            String?
+  httpMethod     String?  @map("http_method")
+  statusCode     Int?     @map("status_code")
+  ruleName       String?  @map("rule_name")
+  ruleId         String?  @map("rule_id")
+  cloudAccountId String?  @map("cloud_account_id")
+  cloudRegion    String?  @map("cloud_region")
+  cloudService   String?  @map("cloud_service")
+  raw            Json
+  tags           String[] @map("_tags")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  ip             String?
+  user           String?
+  description    String?
+  eventId        Int?
+  loginType      Int?
+  priority       Int?
+  sha256         String?
+  status         String?
+  interface      String?
+  mac            String?
+
+  @@index([timestamp])
+  @@index([tenant, timestamp])
+  @@index([source, timestamp])
+  @@index([eventType])
+  @@index([severity])
+  @@index([tenant, user])
+  @@index([tenant, srcIp])
+  @@index([srcIp])
+  @@index([tenant, createdAt(sort: Desc)])
+  @@index([tenant, source, createdAt(sort: Desc)])
+  @@index([tenant, action, createdAt(sort: Desc)])
+  @@index([tenant, eventType, createdAt(sort: Desc)])
+  @@map("security_logs")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Status {
+  FREEZE
+  INACTIVE
+  ACTIVE
+}
+
+enum Action {
+  ALLOW
+  DENY
+  CREATE
+  DELETE
+  LOGIN
+  LOGOUT
+  ALERT
+  QUARANTINE
+  CREATEUSER
+}
+
+
+enum Source {
+  FIREWALL
+  CROWDSTRIKE
+  AWS
+  M365
+  AD
+  API
+  NETWORK
+}
