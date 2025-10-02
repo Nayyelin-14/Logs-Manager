@@ -67,42 +67,24 @@ This backend ingests logs from heterogeneous sources (HTTP, syslog, agents, thir
 
 ## Installation
 
-### Using Docker (Recommended)
+## Manual Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/username/project-name.git
 cd project-name
 
-# Copy environment variables
-cp .env.example .env
-
-# Start services
-docker-compose up -d
-```
-
-## Manual Installation
-
-# Clone the repository
-
-git clone https://github.com/username/project-name.git
-cd project-name
-
 # Install dependencies
-
 npm install
-
 # Set up database
 
 npx prisma migrate
-
 # Seed database (optional)
-
 npm run db:seed
 
 # Start dev server
-
-npm run dev
+npm run server
+```
 
 **Configuration**
 **Environment Variables**
