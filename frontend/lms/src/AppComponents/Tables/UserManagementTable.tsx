@@ -71,7 +71,7 @@ interface TenantType {
 
 const UserManagementTable = ({ tenant }: TenantType) => {
   const [loading] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [, setSearchParams] = useSearchParams();
 
   const [open, setOpen] = useState(false);
 
@@ -162,14 +162,17 @@ const UserManagementTable = ({ tenant }: TenantType) => {
       {error.message}
     </p>
   ) : (
-    <div className="border border-gray-100 p-4 rounded-md shadow-md ">
+    <div
+      className="border border-gray-100 p-4 rounded-md shadow-md "
+      id="users"
+    >
       <div className="flex items-center justify-between py-4  ">
         <h1 className="text-2xl font-extrabold">All users list</h1>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <button className="bg-blue-600 hover:bg-blue-700 text-white p-2 sm:px-4 sm:py-2 rounded-lg flex items-center gap-2 text-xs md:text-base">
               <Plus size={16} />
-              Create New User
+              New User
             </button>
           </DialogTrigger>
 

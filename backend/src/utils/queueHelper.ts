@@ -22,3 +22,31 @@ export const OtpEmailQueue = async (payload: {
     }
   );
 };
+
+export const AlertEmailQueue = async (payload: {
+  email: string;
+  username: string;
+  tenant: string;
+  title: string;
+  description: string;
+  severity: string;
+}) => {
+  return await emailQueue.add(
+    "AlertEmail",
+    {
+      email: payload.email,
+      username: payload.username,
+      tenant: payload.tenant,
+      title: payload.title,
+      description: payload.description,
+      severity: payload.severity,
+    },
+    {
+      jobId: `ALERT:${payload.tenant}:${Date.now()}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 1000 },
+      removeOnComplete: true,
+      removeOnFail: 1000,
+    }
+  );
+};

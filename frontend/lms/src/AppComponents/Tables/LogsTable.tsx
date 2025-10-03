@@ -66,7 +66,7 @@ const AllLogsTable = ({
   tenant: string;
   range?: string;
 }) => {
-  const [searchParams, setSearchParams] = useState(new URLSearchParams());
+  const [, setSearchParams] = useState(new URLSearchParams());
   const user = useUserStore((state) => state.user);
   const [isOpen, setIsOpen] = useState(false);
   const [showFilters, setShowFilters] = useState({
@@ -83,7 +83,7 @@ const AllLogsTable = ({
   const activeFiltersCount = Object.values(filterValues).filter(Boolean).length;
   const {
     data,
-    status,
+
     isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
@@ -159,14 +159,14 @@ const AllLogsTable = ({
   };
   // console.log(allEvents);
   return (
-    <div className="border border-gray-100 p-4 rounded-md shadow-md">
+    <div className="border border-gray-100 p-4 rounded-md shadow-md" id="logs">
       <div className="flex items-center justify-between py-4">
-        <h1 className="text-2xl font-extrabold">Security Events</h1>
+        <h1 className="text-2xl font-extrabold">All Logs</h1>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <button className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer p-2 sm:px-4 sm:py-2 rounded-lg inline-flex items-center gap-2 text-xs md:text-base">
               <Plus size={16} type="button" />
-              Create New Log
+              New Log
             </button>
           </DialogTrigger>
           <DialogContent>

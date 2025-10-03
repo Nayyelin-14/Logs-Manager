@@ -5,7 +5,6 @@ import {
   Search,
   ChevronDown,
   LoaderCircle,
-  Filter,
   Trash,
   Calendar,
   Plus,
@@ -34,7 +33,7 @@ import {
   RulesInfiniteQueryWithFilters,
 } from "../../api/query";
 import { useSecurityEventFilterStore } from "../../store/filterStore";
-import { severityOptions } from "../../lib/constants";
+
 import {
   Dialog,
   DialogContent,
@@ -62,10 +61,10 @@ interface TenantType {
 }
 
 const AllRulesTable = ({ tenant }: TenantType) => {
-  const [searchParams, setSearchParams] = useState(new URLSearchParams());
+  const [, setSearchParams] = useState(new URLSearchParams());
 
   const [isOpen, setIsOpen] = useState(false);
-  const [showFilters, setShowFilters] = useState({
+  const [, setShowFilters] = useState({
     date: false,
     source: false,
     severity: false,
@@ -79,7 +78,6 @@ const AllRulesTable = ({ tenant }: TenantType) => {
   const activeFiltersCount = Object.values(filterValues).filter(Boolean).length;
   const {
     data,
-    status,
     isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
@@ -154,9 +152,9 @@ const AllRulesTable = ({ tenant }: TenantType) => {
   };
 
   return (
-    <div className="border border-gray-100 p-4 rounded-md shadow-md">
+    <div className="border border-gray-100 p-4 rounded-md shadow-md" id="rules">
       <div className="flex items-center justify-between py-4">
-        <h1 className="text-2xl font-extrabold">Security Events</h1>
+        <h1 className="text-2xl font-extrabold">All alert rules</h1>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <button className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer p-2 sm:px-4 sm:py-2 rounded-lg inline-flex items-center gap-2 text-xs md:text-base">

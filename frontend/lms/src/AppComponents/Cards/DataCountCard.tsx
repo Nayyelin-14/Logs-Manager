@@ -1,65 +1,91 @@
-import { AlertTriangle, Database, FileText, Users } from "lucide-react";
-const DataCountCard = () => {
+import { AlertTriangle, Settings, FileText, Users } from "lucide-react";
+import { useNavigate } from "react-router";
+
+type DataCount = {
+  data: {
+    allLogs: number;
+    allUsers: number;
+    allAlerts: number;
+    allRules: number;
+    tenants?: { tenant: string }[];
+  };
+};
+
+const DataCountCard = ({ dataCount }: { dataCount: DataCount }) => {
+  const navigate = useNavigate();
+  const handleClick = (target: string) => {
+    // If the section is on the same page, scroll
+    if (target === "logs" || target === "users" || target === "rules") {
+      const element = document.getElementById(target);
+      if (element) element.scrollIntoView({ behavior: "smooth" });
+    } else {
+      // Navigate to /dashboard with a hash or query
+      navigate(`/dashboard#${target}`);
+    }
+  };
+
   return (
-    <>
-      <div>
-        {" "}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {[
-              {
-                title: "Total Logs",
-                value: "2.8M",
-                change: "+12.5%",
-                icon: FileText,
-                color: "from-blue-500 to-cyan-500",
-              },
-              {
-                title: "Active Users",
-                value: "24",
-                change: "+2",
-                icon: Users,
-                color: "from-green-500 to-emerald-500",
-              },
-              {
-                title: "Active Alerts",
-                value: "7",
-                change: "-3",
-                icon: AlertTriangle,
-                color: "from-red-500 to-orange-500",
-              },
-              {
-                title: "Storage",
-                value: "847 GB",
-                change: "+5.2%",
-                icon: Database,
-                color: "from-purple-500 to-violet-500",
-              },
-            ].map((stat, index) => (
-              <div
-                key={index}
-                className="bg-white/60 backdrop-blur-md rounded-2xl p-6 border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-300"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">{stat.title}</p>
-                    <p className="text-3xl font-bold text-gray-900">
-                      {stat.value}
-                    </p>
-                    <p className="text-sm text-green-600 mt-1">{stat.change}</p>
-                  </div>
-                  <div
-                    className={`p-3 bg-gradient-to-r ${stat.color} rounded-xl`}
-                  >
-                    <stat.icon className="h-6 w-6 text-white" />
-                  </div>
-                </div>
-              </div>
-            ))}
+    <div className="grid grid-cols-4 gap-6">
+      <div
+        onClick={() => handleClick("logs")}
+        className="cursor-pointer p-6 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-blue-600">Logs</div>
+          <div className="bg-blue-500 p-2 rounded-lg">
+            <FileText className="w-5 h-5 text-white" />
           </div>
         </div>
+        <div className="text-3xl font-bold text-blue-900">
+          {dataCount.data.allLogs.toLocaleString()}
+        </div>
       </div>
-    </>
+
+      <div
+        onClick={() => handleClick("users")}
+        className="cursor-pointer p-6 bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-green-600">Users</div>
+          <div className="bg-green-500 p-2 rounded-lg">
+            <Users className="w-5 h-5 text-white" />
+          </div>
+        </div>
+        <div className="text-3xl font-bold text-green-900">
+          {dataCount.data.allUsers.toLocaleString()}
+        </div>
+      </div>
+
+      <div
+        onClick={() => handleClick("alerts")}
+        className="cursor-pointer p-6 bg-gradient-to-br from-red-50 to-red-100 border border-red-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-red-600">Alerts</div>
+          <div className="bg-red-500 p-2 rounded-lg">
+            <AlertTriangle className="w-5 h-5 text-white" />
+          </div>
+        </div>
+        <div className="text-3xl font-bold text-red-900">
+          {dataCount.data.allAlerts.toLocaleString()}
+        </div>
+      </div>
+
+      <div
+        onClick={() => handleClick("rules")}
+        className="cursor-pointer p-6 bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-purple-600">Rules</div>
+          <div className="bg-purple-500 p-2 rounded-lg">
+            <Settings className="w-5 h-5 text-white" />
+          </div>
+        </div>
+        <div className="text-3xl font-bold text-purple-900">
+          {dataCount.data.allRules.toLocaleString()}
+        </div>
+      </div>
+    </div>
   );
 };
 

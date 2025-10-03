@@ -54,14 +54,7 @@ const router = createBrowserRouter([
             <DashBoard />
           </Suspense>
         ),
-        loader: async () => {
-          try {
-            return await GetDataWithFilers();
-          } catch (err) {
-            console.error("Dashboard loader error:", err);
-            return null;
-          }
-        },
+        loader: GetDataWithFilers,
       },
       {
         path: "/dashboard",
@@ -79,14 +72,7 @@ const router = createBrowserRouter([
           </Suspense>
         ),
         action: loginAction,
-        loader: async () => {
-          try {
-            return await authCheckLoader();
-          } catch (err) {
-            console.error("Login loader error:", err);
-            return null;
-          }
-        },
+        loader: authCheckLoader,
       },
       {
         path: "/logout",
@@ -110,14 +96,7 @@ const router = createBrowserRouter([
                 <RegisterPage />
               </Suspense>
             ),
-            loader: async () => {
-              try {
-                return await authCheckLoader();
-              } catch (err) {
-                console.error("Register loader error:", err);
-                return null;
-              }
-            },
+            loader: authCheckLoader,
             action: registerAction,
           },
           {
@@ -127,14 +106,7 @@ const router = createBrowserRouter([
                 <OtpPage />
               </Suspense>
             ),
-            loader: async () => {
-              try {
-                return await OtpCheckLoader();
-              } catch (err) {
-                console.error("OTP loader error:", err);
-                return null;
-              }
-            },
+            loader: OtpCheckLoader,
             action: OTPAction,
           },
           {
@@ -144,14 +116,7 @@ const router = createBrowserRouter([
                 <ConfirmPwdPage />
               </Suspense>
             ),
-            loader: async () => {
-              try {
-                return await ConfirmPwdCheckLoader();
-              } catch (err) {
-                console.error("Confirm password loader error:", err);
-                return null;
-              }
-            },
+            loader: ConfirmPwdCheckLoader,
             action: ConfirmPwdAction,
           },
         ],

@@ -4,6 +4,15 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "../api";
 
+type IngestResponse = {
+  success: boolean;
+  eventId: string;
+  message: string;
+  event: any;
+  alertTriggered: boolean;
+  alerts: any[];
+};
+
 type MutationOptions<TData = any, _TVariables = any> = {
   endpoint: string | ((variables: _TVariables) => string);
   method?: "post" | "put" | "patch" | "delete";
@@ -13,7 +22,10 @@ type MutationOptions<TData = any, _TVariables = any> = {
   transformResponse?: (res: any) => TData;
 };
 
-export function useAppMutation<TData = any, TVariables = any>({
+export function useAppMutation<
+  TData extends Partial<IngestResponse> = any,
+  TVariables = any
+>({
   endpoint,
   method = "post",
   invalidateFn,
@@ -36,6 +48,16 @@ export function useAppMutation<TData = any, TVariables = any>({
       const msg = (data as any)?.message || successMessage || "Success";
 
       toast.success(msg);
+
+      if (data?.alertTriggered && data.alerts?.length) {
+        toast.warning(
+          `⚠️ Alert triggered: ${
+            data.alerts[0]?.title || "Check alerts for details"
+          }`
+        );
+      } else if (data?.alertTriggered) {
+        toast.warning(`⚠️ Alert triggered: Check alerts for details`);
+      }
     },
     onError: (err: any) => {
       console.log(errorMessage, err);

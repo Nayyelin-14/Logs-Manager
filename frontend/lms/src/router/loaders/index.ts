@@ -50,13 +50,10 @@ export const ConfirmPwdCheckLoader = async () => {
 };
 
 export const GetDataWithFilers = async () => {
-  await authCheckLoader(); // keep auth check blocking
-
-  // trigger queries in background
-  queryClient.ensureQueryData(DataCountQuery());
-  queryClient.ensureInfiniteQueryData(UsersInfiniteQueryWithFilters());
-  queryClient.ensureInfiniteQueryData(LogsInfiniteQueryWithFilters());
-  queryClient.ensureInfiniteQueryData(RulesInfiniteQueryWithFilters());
-
-  return null; // resolve immediately
+  await Promise.all([
+    queryClient.ensureQueryData(DataCountQuery()),
+    queryClient.ensureInfiniteQueryData(UsersInfiniteQueryWithFilters()),
+    queryClient.ensureInfiniteQueryData(LogsInfiniteQueryWithFilters()),
+    queryClient.ensureInfiniteQueryData(RulesInfiniteQueryWithFilters()),
+  ]);
 };

@@ -191,7 +191,7 @@ export const ingestEvent = [
         },
       });
 
-      await alertService.checkAlerts(event);
+      const alertResult = await alertService.checkAlerts(event);
 
       await cacheQueue.add(
         "invalidate-log-cache",
@@ -199,15 +199,19 @@ export const ingestEvent = [
         { jobId: `invalidate-${Date.now()}`, priority: 1 }
       );
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         eventId: event.id,
+        message: "Log has been ingested successfully.",
+        event,
+        alertTriggered: alertResult?.length > 0,
+        alerts: alertResult || [],
       });
     } catch (error) {
-      console.error("Error ingesting event:", error);
-      res.status(500).json({
+      console.error("Error ingesting log:", error);
+      return res.status(500).json({
         success: false,
-        error: "Failed to ingest event",
+        error: "Failed to ingest log",
         message: error instanceof Error ? error.message : "Unknown error",
       });
     }

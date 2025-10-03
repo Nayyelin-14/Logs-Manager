@@ -72,6 +72,14 @@ const LogSchema = z.object({
 
 type FormData = z.infer<typeof LogSchema>;
 
+type IngestResponse = {
+  success: boolean;
+  eventId: string;
+  message: string;
+  event: unknown;
+  alertTriggered: boolean;
+  alerts: unknown[];
+};
 interface MultiSourceLogFormProps {
   setIsOpen: (open: boolean) => void;
   tenant: string;
@@ -132,17 +140,18 @@ export function MultiSourceLogForm({
     },
   });
 
-  const { mutate: createLog, isPending: logCreating } = useAppMutation({
-    endpoint: "/ingest",
-    method: "post",
-    invalidateFn: async () => {
-      await invalidateLogQueries();
-      await invalidateAllDataCount(tenant);
-      await invalidateDashboardStats(tenant, range, user?.id.toString());
-    },
-    successMessage: "Log has been created successfully.",
-    errorMessage: "Failed to create new log.",
-  });
+  const { mutate: createLog, isPending: logCreating } =
+    useAppMutation<IngestResponse>({
+      endpoint: "/ingest",
+      method: "post",
+      invalidateFn: async () => {
+        await invalidateLogQueries();
+        await invalidateAllDataCount(tenant);
+        await invalidateDashboardStats(tenant, range, user?.id.toString());
+      },
+      successMessage: "Log has been created successfully.",
+      errorMessage: "Failed to create new log.",
+    });
 
   const onSubmit = (data: FormData) => {
     createLog(data, {

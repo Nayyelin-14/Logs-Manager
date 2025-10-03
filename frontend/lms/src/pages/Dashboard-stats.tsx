@@ -14,10 +14,11 @@ import {
 import { type ChartConfig } from "../components/ui/chart";
 import AllLogsTable from "../AppComponents/Tables/LogsTable";
 import EventTypeChart from "../AppComponents/Cards/EventTypeChart";
-import UsersChart from "../AppComponents/Cards/TOpUserChart";
+
 import AlertTable from "../AppComponents/Tables/AlertTable";
 import { useUserStore } from "../store/userStore";
 import SourceChart from "../AppComponents/Charts/SourceChart";
+import UsersChart from "../AppComponents/Cards/TopUserChart";
 
 export const chartConfig: ChartConfig = {
   count: { label: "Count", color: "var(--chart-1)" },
@@ -145,8 +146,9 @@ export default function Dashboard_stats() {
           </div>
         </div>
 
-        <div className="w-full h-full rounded-2xl p-6 shadow-md">
+        <div className="w-full h-full rounded-2xl p-6 shadow-md" id="alerts">
           <h3 className="font-semibold mb-4">Recent Alert Triggered</h3>
+          <hr />
           <div className="overflow-x-auto">
             <AlertTable alerts={data.recentAlert} />
           </div>
