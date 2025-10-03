@@ -516,14 +516,8 @@ export const logout = async (
     });
 };
 
-export const UserProfile = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {};
 export default {
   loginUser,
-  UserProfile,
   registerUser,
   logout,
   veridyOtp,

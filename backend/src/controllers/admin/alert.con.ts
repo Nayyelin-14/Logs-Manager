@@ -87,7 +87,6 @@ export const createAlertRule = [
         .status(201)
         .json({ message: "Alert rule is created", createdRule });
     } catch (error) {
-      console.error("Error creating AlertRule:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
   },

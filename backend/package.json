@@ -30,7 +30,9 @@
     "server": "npm-run-all --parallel server:dev work cache",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "log:cleanup": "ts-node src/scripts/logCleanUp.ts",
+    "test:coverage": "jest --coverage",
+    "seed": "ts-node src/config/seed.ts"
   },
   "keywords": [],
   "author": "",

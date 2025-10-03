@@ -79,8 +79,8 @@ npm install
 # Set up database
 
 npx prisma migrate
-# Seed database (optional)
-npm run db:seed
+# Seed database
+npm run seed
 
 # Start dev server
 npm run server
@@ -132,6 +132,8 @@ backend/
 │ │ ├── errorcode.ts
 │ │ ├── PrismaClient.ts
 │ │ └── redisClient.ts
+│ │ └── sampleData.ts #sample data for seeding
+│ │ └── seed.ts #seed function
 │ ├── controllers/ # Controllers (logic per domain)
 │ │ ├── admin/
 │ │ │ ├── alert.con.ts
@@ -155,6 +157,8 @@ backend/
 │ │ ├── index.route.ts
 │ │ ├── logs.route.ts
 │ │ └── manage.route.ts
+│ ├── scripts/ # Business logic & DB operations
+| | └── logCleanUp.ts #cleaning older than 7 days logs func
 │ ├── services/ # Business logic & DB operations
 │ │ ├── alert.service.ts
 │ │ ├── auth.service.ts
@@ -177,7 +181,7 @@ backend/
 - **routes/** → Defines API endpoints and routes.
 - **middleware/** → Contains request middlewares (auth, validation).
 - **jobs/** → Background tasks like email alerts, cron jobs.
-- **config/** → Database clients, Redis, error handling configs.
+- **config/** → Database clients, Redis , seed , error handling configs.
 - **actions/** → Specific business actions (like sending emails).
 - **tests/** → Unit and integration test files.
 
@@ -251,12 +255,16 @@ npx prisma generate
 
 ## Available Scripts
 
-| Command              | Description                      | Use Case                     |
-| -------------------- | -------------------------------- | ---------------------------- |
-| `npm start`          | Run compiled production build    | Production deployment        |
-| `npm run build`      | Compile TypeScript to JavaScript | Before production deployment |
-| `npm run server:dev` | Run dev server with hot-reload   | Local development            |
-| `npm run work`       | Run email worker                 | Process email notifications  |
-| `npm run cache`      | Run cache worker                 | Manage Redis cache           |
-| `npm run server`     | Run all services in parallel     | Full local development       |
-| `npm test`           | Run all tests                    | Testing                      |
+| Command                 | Description                            | Use Case                              |
+| ----------------------- | -------------------------------------- | ------------------------------------- |
+| `npm start`             | Run compiled production build          | Production deployment                 |
+| `npm run build`         | Compile TypeScript to JavaScript       | Before production deployment          |
+| `npm run server:dev`    | Run development server with hot-reload | Local development                     |
+| `npm run work`          | Run email worker                       | Process email notifications           |
+| `npm run cache`         | Run cache worker                       | Manage Redis cache                    |
+| `npm run server`        | Run all services in parallel           | Full local development                |
+| `npm test`              | Run all tests                          | Testing                               |
+| `npm run test:watch`    | Run tests in watch mode                | Continuous testing during development |
+| `npm run test:coverage` | Run tests with coverage report         | Check test coverage                   |
+| `npm run log:cleanup`   | Run log cleanup script                 | Maintenance / cleanup                 |
+| `npm run seed`          | Seed the database                      | Populate initial data                 |

@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import path from "path";
 import cron from "node-cron";
 import route from "./routes/index.route";
+import { cleanupOldLogs } from "./scripts/logCleanUp";
 
 export const app = express();
 const whitelist = ["http://localhost:5173", "https://yourdomain.com"];
@@ -53,6 +54,12 @@ app.use((error: any, req: Request, res: Response, next: NextFunction) => {
   res.status(status).json({ message, error: errorCode });
 });
 
-cron.schedule("* * 5 * *", async () => {
-  console.log("Running a task every minute for testing purpose");
+//run once a week on Monday at 5 AM.
+cron.schedule("0 5 * * 1", async () => {
+  console.log("🕒 Running scheduled cleanup task...");
+  try {
+    await cleanupOldLogs();
+  } catch (err) {
+    console.error("Cleanup failed:", err);
+  }
 });
