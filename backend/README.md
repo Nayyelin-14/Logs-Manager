@@ -110,10 +110,11 @@ ACCESS_TOKEN_SECRET=your-access-secret
 REFRESH_TOKEN_SECRET=your-refresh-secret
 
 # External APIs
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-password
+#Go to Google Account → Security → App Passwords
+#Select Mail as the app and your device (e.g., Other → “Nodemailer”)
+#Google will give you a 16-character password (this is your GMAIL_PASS).
+GMAIL_USER=your_gmail_user_here
+GMAIL_PASS=your_gmail_password_here
 ```
 
 ## 📂 Project Structure (Backend)
