@@ -25,25 +25,23 @@ const UserMenu = () => {
         <button
           type="button"
           aria-label={`Account menu for ${displayName}`}
-          className="flex size-9 items-center justify-center rounded-xl border border-border/60 bg-surface-muted text-left transition-colors hover:border-border hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 focus-visible:outline-none"
+          className="flex size-8 items-center justify-center rounded-full bg-brand/15 text-[10px] font-semibold text-brand ring-1 ring-border/70 transition-all hover:ring-brand/50 focus-visible:ring-[3px] focus-visible:ring-brand/20 focus-visible:outline-none"
         >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-rail font-mono text-[9px] font-semibold text-signal">
-            {initials}
-          </span>
+          {initials}
         </button>
       </PopoverTrigger>
 
       <PopoverContent align="end" className="w-64 p-0">
         <div className="rounded-t-md bg-rail p-3 text-rail-foreground">
           <div className="flex items-center gap-2.5">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-rail-line bg-rail-raised font-mono text-[10px] font-semibold text-signal">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-rail-line bg-rail-raised text-[10px] font-semibold text-signal">
               {initials}
             </span>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-rail-foreground">
                 {displayName}
               </p>
-              <p className="flex items-center gap-1 truncate font-mono text-[9px] text-rail-muted">
+              <p className="flex items-center gap-1 truncate text-[10px] text-rail-muted">
                 <Mail className="size-3 shrink-0" />
                 {displayEmail}
               </p>
@@ -54,15 +52,11 @@ const UserMenu = () => {
         <div className="flex flex-col gap-2 px-3 py-2.5">
           <div className="flex items-center gap-2 text-[10px] text-ink-muted">
             <ShieldCheck className="size-3.5 shrink-0 text-brand" />
-            <span className="font-mono tracking-[0.08em] uppercase">
-              {role === "ADMIN" ? "Administrator" : "Member"}
-            </span>
+            <span>{role === "ADMIN" ? "Administrator" : "Member"}</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-ink-muted">
             <span className="size-1.5 shrink-0 rounded-full bg-signal" />
-            <span className="truncate font-mono tracking-[0.06em] uppercase">
-              {tenant}
-            </span>
+            <span className="truncate">{tenant}</span>
           </div>
         </div>
 

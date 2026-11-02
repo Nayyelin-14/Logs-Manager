@@ -45,7 +45,6 @@ export const getAllLogs = [
       return next(handleError(errors[0].msg, 400, errorCode.invalid)); //This next(error) skips all other routes/middlewares and jumps directly to your error-handling middleware:
     }
     const { tenant, source, action, severity, date, search } = req.query;
-    console.log(tenant, source, action, severity, date, search);
     const userId = req.user?.userId;
 
     const user = await getUserById(Number(userId!));
@@ -75,7 +74,6 @@ export const getAllLogs = [
     if (severity && typeof severity === "string") {
       const key = severity.toLowerCase(); // lowercase to match map
       const level = severityLevelMap[key];
-      console.log(level);
       if (level) {
         filters.severity = { gte: level.min, lte: level.max };
       }

@@ -75,9 +75,9 @@ const CreateForm: React.FC<CreateFormProps> = ({
             name="username"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Username</FormLabel>
+                <FormLabel>Full name</FormLabel>
                 <FormControl>
-                  <Input placeholder="analyst" autoComplete="off" {...field} />
+                  <Input placeholder="e.g. Maya Chen" autoComplete="off" {...field} className="h-10 rounded-xl border-border/60 bg-surface-container-low px-3.5 text-[13px] placeholder:text-ink-muted/40" />
                 </FormControl>
                 <FormDescription>
                   Display name used in audit views.
@@ -91,12 +91,13 @@ const CreateForm: React.FC<CreateFormProps> = ({
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Email</FormLabel>
+                <FormLabel>Work email address</FormLabel>
                 <FormControl>
                   <Input
-                    placeholder="analyst@company.com"
+                    placeholder="e.g. maya.chen@company.com"
                     autoComplete="off"
                     {...field}
+                    className="h-10 rounded-xl border-border/60 bg-surface-container-low px-3.5 text-[13px] placeholder:text-ink-muted/40"
                   />
                 </FormControl>
                 <FormDescription>Sign-in address for this account.</FormDescription>
@@ -112,9 +113,9 @@ const CreateForm: React.FC<CreateFormProps> = ({
             name="tenant"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Tenant</FormLabel>
+                <FormLabel>Tenant scope</FormLabel>
                 <FormControl>
-                  <Input placeholder="demoA" autoComplete="off" {...field} />
+                  <Input placeholder="e.g. demoA" autoComplete="off" {...field} className="h-10 rounded-xl border-border/60 bg-surface-container-low px-3.5 text-[13px] placeholder:text-ink-muted/40" />
                 </FormControl>
                 <FormDescription>
                   Workspace this account belongs to.
@@ -128,11 +129,11 @@ const CreateForm: React.FC<CreateFormProps> = ({
             name="role"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Role</FormLabel>
+                <FormLabel>Role assignment</FormLabel>
                 <FormControl>
                   <select
                     {...field}
-                    className="h-9 w-full rounded-sm border border-input bg-card px-2.5 text-sm text-ink outline-none transition-[border-color,box-shadow] hover:border-ink/20 focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-brand/15"
+                    className="h-10 w-full rounded-xl border border-border/60 bg-surface-container-low px-3.5 text-[13px] text-ink outline-none transition-[border-color,box-shadow] hover:border-ink/20 focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-brand/15"
                   >
                     <option value="USER">User</option>
                     <option value="ADMIN">Admin</option>
@@ -153,7 +154,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Password</FormLabel>
+                <FormLabel>Access password</FormLabel>
                 <FormControl>
                   <PassworInput
                     {...field}
@@ -161,6 +162,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
                     autoComplete="new-password"
                     required
                     inputMode="numeric"
+                    className="h-10 rounded-xl border-border/60 bg-surface-container-low text-[13px]"
                   />
                 </FormControl>
                 <FormMessage />
@@ -180,6 +182,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
                     autoComplete="new-password"
                     required
                     inputMode="numeric"
+                    className="h-10 rounded-xl border-border/60 bg-surface-container-low text-[13px]"
                   />
                 </FormControl>
                 <FormMessage />
@@ -188,9 +191,9 @@ const CreateForm: React.FC<CreateFormProps> = ({
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={userCreating}>
+        <Button type="submit" variant="signal" className="h-10 w-full rounded-xl shadow-md shadow-signal/20" disabled={userCreating}>
           {userCreating && <LoaderCircle className="size-3.5 animate-spin" />}
-          {userCreating ? "Creating user" : "Create user"}
+          {userCreating ? "Creating user" : "Create User"}
         </Button>
       </form>
     </Form>

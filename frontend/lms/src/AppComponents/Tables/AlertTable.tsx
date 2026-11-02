@@ -68,7 +68,7 @@ const AlertTable = ({ alerts, id }: AlertsProps) => {
             Latest detections from active alert rules
           </PanelDescription>
         </PanelHeading>
-        <span className="font-mono text-[10px] font-medium text-ink-muted tabular-nums">
+        <span className="font-mono text-xs font-medium text-ink-muted tabular-nums">
           {alerts.length} alerts
         </span>
       </PanelHeader>
@@ -79,7 +79,7 @@ const AlertTable = ({ alerts, id }: AlertsProps) => {
             <BellOff className="size-4" />
           </span>
           <div>
-            <p className="text-[13px] font-medium text-ink">No recent alerts</p>
+            <p className="text-sm font-medium text-ink">No recent alerts</p>
             <p className="mt-1 text-xs text-ink-muted">
               Triggered alerts will appear here as rules match incoming events.
             </p>
@@ -111,7 +111,7 @@ const AlertTable = ({ alerts, id }: AlertsProps) => {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <span className="font-mono text-[10px] tracking-[0.06em] text-ink-muted uppercase">
+                    <span className="font-mono text-xs tracking-[0.06em] text-ink-muted uppercase">
                       {alert.tenant}
                     </span>
                   </TableCell>
@@ -121,13 +121,13 @@ const AlertTable = ({ alerts, id }: AlertsProps) => {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="font-mono text-[10px] leading-4 text-ink">
+                    <div className="font-mono text-xs leading-4 text-ink">
                       {triggeredAt.toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
                       })}
                     </div>
-                    <div className="font-mono text-[9px] leading-4 text-ink-muted">
+                    <div className="font-mono text-xs leading-4 text-ink-muted">
                       {triggeredAt.toLocaleTimeString("en-US", {
                         hour: "2-digit",
                         minute: "2-digit",

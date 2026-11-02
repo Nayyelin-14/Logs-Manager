@@ -4,8 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Ubuntu Mono", monospace;
+  --font-sans: "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -15,6 +15,11 @@
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
+  --color-surface-container-lowest: var(--surface-container-lowest);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-container-highest: var(--surface-container-highest);
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-brand: var(--brand);
@@ -27,6 +32,7 @@
   --color-warning: var(--warning);
   --color-critical: var(--critical);
   --color-info: var(--info);
+  --color-tertiary: var(--tertiary);
   --color-rail: var(--rail);
   --color-rail-foreground: var(--rail-foreground);
   --color-rail-muted: var(--rail-muted);
@@ -70,6 +76,11 @@
   --canvas: #111418;
   --surface: #0f1216;
   --surface-muted: #181c22;
+  --surface-container-lowest: #0b0e12;
+  --surface-container-low: #191c20;
+  --surface-container: #1d2024;
+  --surface-container-high: #23272e;
+  --surface-container-highest: #282e38;
   --ink: #f1f3f7;
   --ink-muted: #9ca3af;
   --brand: #f97316;
@@ -84,6 +95,7 @@
   --warning: #fbbf24;
   --critical: #f87171;
   --info: #94a3b8;
+  --tertiary: #4edea3;
 
   --rail: #0a0c0f;
   --rail-foreground: #f1f3f7;
@@ -136,18 +148,18 @@
   body {
     @apply bg-background text-foreground antialiased;
     min-height: 100%;
-    font-family: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     letter-spacing: -0.012em;
   }
 
   button, input, select, textarea {
-    font-family: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   }
 
   code, kbd, pre, samp {
-    font-family: "JetBrains Mono", "Ubuntu Mono", monospace;
+    font-family: "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   }
 
   ::selection {
@@ -214,18 +226,6 @@ body {
   }
 }
 
-@font-face {
-  font-family: "Ubuntu Sans";
-  src: url("/fonts/UbuntuSans.ttf") format("truetype");
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-}
 
-@font-face {
-  font-family: "Ubuntu Sans Mono";
-  src: url("/fonts/UbuntuMono.ttf") format("truetype");
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-}
+
+

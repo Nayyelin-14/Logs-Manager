@@ -24,14 +24,17 @@ import { LoaderCircle } from "lucide-react";
 import type { AlertRuleType } from "../../types/types";
 import { useAppMutation } from "../../hooks/useMutationApi";
 import { invalidateAllDataCount, invalidateRuleQueries } from "../../api/query";
+import { DeleteConfirmDialog } from "../Tables/shared/DeleteConfirmDialog";
 
 interface CreateRuleFormProps {
   setOpen: (open: boolean) => void;
   tenant: string;
   rule?: AlertRuleType | null;
+  onDelete?: () => void;
+  isDeleting?: boolean;
 }
 
-export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
+export function AlertRuleForm({ setOpen, tenant, rule, onDelete, isDeleting }: CreateRuleFormProps) {
   const currentCondition = rule?.conditions?.[0];
   const form = useForm<AlertRuleFormValues>({
     resolver: zodResolver(AlertRuleSchema),
@@ -103,7 +106,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                 <FormItem>
                   <FormLabel>Rule name</FormLabel>
                   <FormControl>
-                    <Input className="h-10 rounded-xl border-border/60 bg-card" placeholder="High error rate" {...field} />
+                    <Input className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50" placeholder="High error rate" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -117,7 +120,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                   <FormLabel>Tenant</FormLabel>
                   <FormControl>
                     <Input
-                      className="h-10 rounded-xl border-border/60 bg-card"
+                      className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50"
                       {...field}
                       value={rule ? rule.tenant : field.value}
                       disabled={Boolean(rule) || tenant !== "all"}
@@ -143,7 +146,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                   <Textarea
                     {...field}
                     placeholder="Describe what this rule detects and why it matters."
-                    className="min-h-24 rounded-xl border-border/60 bg-card"
+                    className="min-h-24 rounded-xl border-0 bg-surface-container-low px-3.5 py-3 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50"
                   />
                 </FormControl>
                 <FormMessage />
@@ -172,7 +175,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
           {form.watch("conditions").map((_condition, index) => (
             <div
               key={index}
-              className="space-y-4 rounded-2xl border border-border/60 bg-card p-4"
+              className="space-y-4 rounded-xl border border-[#22262d] bg-surface-container-low p-4"
             >
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[9px] font-semibold tracking-[0.12em] text-ink-muted uppercase">
@@ -189,7 +192,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                     <FormControl>
                       <select
                         {...field}
-                        className="h-10 w-full rounded-xl border border-input bg-[#0b0e12] px-3 text-xs text-ink outline-none focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-brand/15"
+                        className="h-10 w-full rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink outline-none focus-visible:ring-1 focus-visible:ring-brand/50"
                       >
                         <option value="">Choose a condition</option>
                         <option value="event_type">Event type matches</option>
@@ -217,7 +220,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                           <FormControl>
                             <select
                               {...field}
-                              className="h-10 w-full rounded-xl border border-input bg-[#0b0e12] px-3 text-xs text-ink outline-none focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-brand/15"
+                              className="h-10 w-full rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink outline-none focus-visible:ring-1 focus-visible:ring-brand/50"
                             >
                               <option value="">Choose a field</option>
                               <option value="action">Action</option>
@@ -247,7 +250,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                             : "Field value"}
                         </FormLabel>
                         <FormControl>
-                          <Input className="h-10 rounded-xl border-border/60 bg-[#0b0e12]" {...field} placeholder="500" />
+                            <Input className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50" {...field} placeholder="500" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -265,7 +268,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                       <FormItem>
                         <FormLabel>Threshold count</FormLabel>
                         <FormControl>
-                          <Input className="h-10 rounded-xl border-border/60 bg-[#0b0e12]" type="number" {...field} />
+                          <Input className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50" type="number" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -278,7 +281,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                       <FormItem>
                         <FormLabel>Window (seconds)</FormLabel>
                         <FormControl>
-                          <Input className="h-10 rounded-xl border-border/60 bg-[#0b0e12]" type="number" {...field} />
+                          <Input className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50" type="number" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -295,7 +298,7 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
                     <FormItem>
                       <FormLabel>Minimum severity</FormLabel>
                       <FormControl>
-                      <Input className="h-10 rounded-xl border-border/60 bg-[#0b0e12] font-mono" {...field} type="number" min="0" max="10" placeholder="3" />
+                      <Input className="h-10 rounded-xl border-0 bg-surface-container-low px-3.5 text-[13px] text-ink focus-visible:ring-1 focus-visible:ring-brand/50" {...field} type="number" min="0" max="10" placeholder="3" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -306,12 +309,38 @@ export function AlertRuleForm({ setOpen, tenant, rule }: CreateRuleFormProps) {
           ))}
         </section>
 
-        <div className="sticky bottom-0 mt-auto flex items-center justify-end gap-2 border-t border-border bg-[#0b0e12] py-4">
-        <Button type="button" variant="outline" className="h-10 rounded-xl px-4" onClick={() => setOpen(false)}>Cancel</Button>
-        <Button type="submit" className="h-10 rounded-xl bg-brand px-5 text-white shadow-md shadow-brand/20 hover:bg-brand-hover hover:text-white" disabled={isPending}>
-          {isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
-          {isPending ? "Saving rule" : rule ? "Save changes" : "Create alert rule"}
-        </Button>
+        <div className="sticky bottom-0 z-10 -mx-6 mt-auto flex items-center justify-between gap-3 border-t border-[#22262d] bg-[#0b0e12] px-6 py-4">
+          <div>
+            {rule && onDelete ? (
+              <DeleteConfirmDialog
+                isDeleting={Boolean(isDeleting)}
+                onConfirm={onDelete}
+                confirmText="Delete rule"
+                title="Delete detection rule?"
+                description="This will immediately cease telemetry evaluations for this rule and cannot be undone."
+                targetName={rule.name}
+                targetEmail={rule.id}
+                triggerLabel="Delete Rule"
+              />
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-xl bg-surface-container px-4 py-2.5 text-[12px] font-medium text-ink-muted transition-colors hover:text-ink"
+            >
+              Cancel
+            </button>
+            <Button
+              type="submit"
+              className="h-10 rounded-xl bg-brand px-5 text-white shadow-md shadow-brand/20 hover:bg-brand-hover hover:text-white"
+              disabled={isPending}
+            >
+              {isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              {isPending ? "Saving rule" : rule ? "Save Changes" : "Create Rule"}
+            </Button>
+          </div>
         </div>
       </form>
     </Form>

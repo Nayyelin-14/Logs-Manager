@@ -41,6 +41,7 @@ export const useSecurityEventFilterStore =
     search: "",
     severity: null,
     eventType: null,
+    source: null,
     tenant: null,
   });
 export const useRuleFilterStore = createFilterStore<RulesFilters>({

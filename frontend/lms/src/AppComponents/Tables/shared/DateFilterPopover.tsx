@@ -50,17 +50,17 @@ export function DateFilterPopover({
           )}
         >
           <Calendar className="size-3.5" />
-          <span className="font-mono text-[11px]">{label}</span>
+          <span className="font-mono text-xs">{label}</span>
           <ChevronDown className="ml-auto size-3.5 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto overflow-hidden p-0" align="start">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <p className="font-mono text-[9px] font-semibold tracking-[0.14em] text-ink-muted uppercase">
+          <p className="font-mono text-[11px] font-semibold tracking-[0.14em] text-ink-muted uppercase">
             Filter by date
           </p>
           {value && (
-            <span className="inline-flex items-center gap-1 text-[10px] text-ink-muted">
+            <span className="inline-flex items-center gap-1 text-xs text-ink-muted">
               <X className="size-3" />
               Applied
             </span>

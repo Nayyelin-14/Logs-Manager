@@ -45,7 +45,7 @@ export function TableLoading() {
           <div className="h-8 w-24 animate-pulse rounded-sm bg-surface-muted/40" />
         </div>
       ))}
-      <div className="flex items-center justify-center gap-2 pt-2 font-mono text-[9px] tracking-[0.14em] text-ink-muted uppercase">
+      <div className="flex items-center justify-center gap-2 pt-2 font-mono text-[11px] tracking-[0.14em] text-ink-muted uppercase">
         <LoaderCircle className="size-3 animate-spin" />
         Loading records
       </div>
@@ -103,7 +103,7 @@ export function TablePagination({
 }: TablePaginationProps) {
   return (
     <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="font-mono text-[9px] font-medium tracking-[0.1em] text-ink-muted uppercase">
+      <div className="font-mono text-[11px] font-medium tracking-[0.1em] text-ink-muted uppercase">
         Showing {count} {countLabel}
       </div>
       <Button

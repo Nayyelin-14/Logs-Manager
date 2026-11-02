@@ -119,6 +119,7 @@ export interface SecurityEventFilters {
   search: string;
   severity: string | null;
   eventType: string | null;
+  source: string | null;
   tenant: string | null;
 }
 export interface RulesFilters {

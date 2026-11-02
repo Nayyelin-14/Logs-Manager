@@ -6,11 +6,8 @@ const getOrSetCache = async (cacheKey, cb) => {
     try {
         const cacheData = await redisClient_1.redisConnection.get(cacheKey);
         if (cacheData) {
-            console.log("cache hit", cacheKey);
-            console.log(cacheData);
             return JSON.parse(cacheData);
         }
-        console.log("cache missed");
         const freshData = await cb(); // if there is no cache
         await redisClient_1.redisConnection.setex(cacheKey, 3600, JSON.stringify(freshData));
         return freshData;
