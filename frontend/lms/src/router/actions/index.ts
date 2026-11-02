@@ -12,18 +12,17 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const response = await authAPI.post("auth/login", authData);
-    console.log(response);
-
-    if (response.status !== 201) {
-      console.log(response);
-      return response.data;
-    }
-
     const userData = response.data.userData;
+    if (!response.status || response.status < 200 || response.status >= 300 || !userData) {
+      return {
+        isSuccess: false,
+        message: response.data?.message ?? "Login failed. Check your credentials and try again.",
+      };
+    }
 
     // Store user data in Zustand
     userStore.setUser({
-      id: userData.id,
+      id: String(userData.id),
       username: userData.username,
       email: userData.email,
       role: userData.role,
@@ -35,7 +34,6 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
       return redirect("/");
     }
   } catch (error) {
-    console.log(error);
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Login Failed" };
     } else {
@@ -52,7 +50,6 @@ export const registerAction = async ({ request }: ActionFunctionArgs) => {
   const registerData = Object.fromEntries(data);
   try {
     const response = await authAPI.post("auth/register", registerData);
-    console.log(response);
     if (response.status !== 200) {
       return { error: response.data || "Registeration failed" };
     }
@@ -78,7 +75,6 @@ export const registerAction = async ({ request }: ActionFunctionArgs) => {
 
 export const OTPAction = async ({ request }: ActionFunctionArgs) => {
   const authStore = useAuthStore.getState(); //getstate take state or initialState
-  console.log(authStore);
   const data = await request.formData();
   const OTPData = {
     username: authStore?.username,
@@ -87,10 +83,8 @@ export const OTPAction = async ({ request }: ActionFunctionArgs) => {
     token: authStore?.token,
     otp: data.get("otp"),
   };
-  console.log(OTPData);
   try {
     const response = await authAPI.post("auth/verify-Otp", OTPData);
-    console.log(response);
     if (response.status !== 200) {
       return { error: response.data || "Verification OTP failed" };
     }
@@ -106,7 +100,6 @@ export const OTPAction = async ({ request }: ActionFunctionArgs) => {
     return redirect("/register/confirm-password");
     //
   } catch (error) {
-    console.log(error);
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Verification OTP Failed" };
     } else {
@@ -137,7 +130,6 @@ export const ConfirmPwdAction = async ({ request }: ActionFunctionArgs) => {
     return redirect("/");
     //
   } catch (error) {
-    console.log(error);
     if (error instanceof AxiosError) {
       return error.response?.data || { message: "Registeration failed" };
     } else {

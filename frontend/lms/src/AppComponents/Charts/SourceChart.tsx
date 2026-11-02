@@ -1,17 +1,16 @@
 import React from "react";
+import { Database } from "lucide-react";
+
+import { EmptyState } from "../../components/ui/empty-state";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  XAxis,
-} from "recharts";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "../../components/ui/chart";
-import { chartConfig } from "../../pages/Dashboard-stats";
+  Panel,
+  PanelContent,
+  PanelDescription,
+  PanelEyebrow,
+  PanelHeader,
+  PanelHeading,
+  PanelTitle,
+} from "../../components/ui/panel";
 
 type SourceData = {
   _count: number;
@@ -23,46 +22,52 @@ type SourceChartProps = {
 };
 
 const SourceChart: React.FC<SourceChartProps> = ({ sources }) => {
-  const chartData = sources.map((item) => ({
-    source: item.source,
-    count: item._count,
-  }));
+  const maxCount = Math.max(...sources.map((source) => source._count), 1);
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-4">
-      {/* Chart title */}
-      <h3 className="text-lg font-semibold mb-2 text-gray-700">
-        Total created sources
-      </h3>
-      <p className="text-sm text-gray-500 mb-4">
-        This chart shows the count of sources created by this user.
-      </p>
+    <Panel className="h-full">
+      <PanelHeader>
+        <PanelHeading>
+          <PanelEyebrow>Coverage</PanelEyebrow>
+          <PanelTitle className="mt-1">Source activity</PanelTitle>
+          <PanelDescription>Volume by connected source</PanelDescription>
+        </PanelHeading>
+        <span className="font-mono text-[10px] font-medium text-ink-muted tabular-nums">
+          {sources.length} sources
+        </span>
+      </PanelHeader>
 
-      <ChartContainer config={chartConfig}>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={chartData}>
-            <CartesianGrid vertical={false} stroke="#e5e7eb" />
-            <XAxis
-              dataKey="source"
-              tickLine={false}
-              tickMargin={10}
-              axisLine={false}
-              style={{ fontSize: 12, fill: "#234f23" }}
-            />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent hideLabel />}
-            />
-            <Bar
-              dataKey="count"
-              fill="#a3cec2"
-              radius={[5, 5, 0, 0]}
-              barSize={60}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartContainer>
-    </div>
+      {sources.length === 0 ? (
+        <EmptyState
+          icon={Database}
+          title="No sources"
+          description="Source volume will appear once events are ingested."
+        />
+      ) : (
+        <PanelContent className="space-y-3">
+          {sources.map((source, index) => (
+            <div key={`${source.source}-${index}`} className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[10px] font-medium tracking-[0.06em] text-ink uppercase">
+                  {source.source}
+                </span>
+                <span className="font-mono text-[10px] text-ink-muted tabular-nums">
+                  {source._count.toLocaleString()}
+                </span>
+              </div>
+              <div className="h-1 overflow-hidden rounded-full bg-surface-muted">
+                <div
+                  className="h-full rounded-full bg-brand"
+                  style={{
+                    width: `${Math.max((source._count / maxCount) * 100, 4)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </PanelContent>
+      )}
+    </Panel>
   );
 };
 

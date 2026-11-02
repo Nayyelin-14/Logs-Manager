@@ -34,14 +34,14 @@ export interface UserFilters {
 
 export interface PaginatedUsersResponse {
   usersList: User[];
-  newCursor: number | null; // cursor for the next page (null if no more pages)
-  prevCursor?: number | null; // optional if you also support going back
+  newCursor: number | null;
+  prevCursor?: number | null;
 }
 
 export interface DashboardStats {
   recentAlert: AlertTableProps[];
   tenants: { tenant: string }[];
-  totalEvents: LogTypes[];
+  totalEvents: number;
   topIPs: { ip: string; count: number }[];
   topUsers: { user: string; count: number }[];
   topEventTypes: { type: string; count: number }[];
@@ -61,12 +61,23 @@ export interface DashboardStats {
     createdAt: string;
     _count: { id: number };
   }[];
+  severityCounts: { severity: number; count: number }[];
+  eventsByTenant: { tenant: string; count: number }[];
+  alertCountsByStatus: { status: string; count: number }[];
+  alertCountsBySeverity: { severity: string; count: number }[];
+  ruleCountsByEnabled: { enabled: boolean; count: number }[];
   sources: SourceData[];
   tenant: string;
+}
+export interface PaginatedAlertsResponse {
+  alerts: (AlertTableProps & { description: string; eventIds: string[]; rule: { name: string; description: string | null } })[];
+  newCursor: string | null;
+  hasNextPage: boolean;
 }
 export type SourceData = {
   _count: number;
   source: string;
+  latestEventAt?: string | null;
 };
 export interface LogTypes {
   id: string;
@@ -82,7 +93,7 @@ export interface LogTypes {
   severityLevel: string | null;
 }
 export interface AlertConditionType {
-  type: "threshold_count" | "field_value" | "severity_min";
+  type: "event_type" | "field_value" | "repeated_failures" | "threshold_count" | "severity_min";
   field?: string;
   value?: unknown;
   threshold?: number;
@@ -106,7 +117,7 @@ export interface AlertRuleType {
 export interface SecurityEventFilters {
   date: string;
   search: string;
-  severity: number | null;
+  severity: string | null;
   eventType: string | null;
   tenant: string | null;
 }
@@ -118,14 +129,14 @@ export interface RulesFilters {
 
 export interface PaginatedLogsResponse {
   logs: LogTypes[];
-  newCursor: number | null; // cursor for the next page (null if no more pages)
-  prevCursor?: number | null; // optional if you also support going back
+  newCursor: string | null; // cursor for the next page (null if no more pages)
+  prevCursor?: string | null;
 }
 
 export interface PaginatedRulesResponse {
   rules: AlertRuleType[];
-  newCursor: number | null; // cursor for the next page (null if no more pages)
-  prevCursor?: number | null; // optional if you also support going back
+  newCursor: string | null;
+  prevCursor?: string | null;
 }
 
 export enum Source {

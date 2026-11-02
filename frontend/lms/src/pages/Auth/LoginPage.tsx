@@ -5,18 +5,15 @@ import { toast } from "sonner";
 import { useEffect } from "react";
 function LoginPage() {
   const actionData = useActionData();
-  console.log(actionData);
   useEffect(() => {
     if (actionData) {
-      if (actionData?.isSuccess === false) {
-        toast.error(actionData.message);
-      } else {
-        toast.success(actionData.message);
-      }
+      toast.error(
+        actionData.message ?? actionData.error ?? "Sign in failed. Please try again."
+      );
     }
   }, [actionData]);
   return (
-    <div className="flex w-full min-h-screen place-content-center px-4  overflow-hidden">
+    <div className="w-full">
       <AuthForm formName="login" />
     </div>
   );

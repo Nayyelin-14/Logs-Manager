@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { redisConnection } from "../../config/redisClient";
+import { redisConnection, reportRedisError } from "../../config/redisClient";
 console.log("cache worker is working");
 const cacheWorker = new Worker(
   "cache-invalidation",
@@ -20,6 +20,10 @@ cacheWorker.on("completed", (job) => {
 
 cacheWorker.on("failed", (job, error) => {
   console.log(`Job is  ${job!.id} failed  with ${error.message}`);
+});
+
+cacheWorker.on("error", (err) => {
+  reportRedisError("REDIS-CACHE-WORKER", err);
 });
 
 const invalidateCache = async (pattern: string) => {

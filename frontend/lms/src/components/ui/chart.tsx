@@ -141,7 +141,7 @@ function ChartTooltipContent({
 
     if (labelFormatter) {
       return (
-        <div className={cn("font-medium", labelClassName)}>
+        <div className={cn("font-mono text-[9px] font-semibold tracking-[0.08em] text-ink-muted uppercase", labelClassName)}>
           {labelFormatter(value, payload)}
         </div>
       )
@@ -151,7 +151,11 @@ function ChartTooltipContent({
       return null
     }
 
-    return <div className={cn("font-medium", labelClassName)}>{value}</div>
+    return (
+      <div className={cn("font-mono text-[9px] font-semibold tracking-[0.08em] text-ink-muted uppercase", labelClassName)}>
+        {value}
+      </div>
+    )
   }, [
     label,
     labelFormatter,
@@ -171,7 +175,7 @@ function ChartTooltipContent({
   return (
     <div
       className={cn(
-        "border-border/50 bg-background grid min-w-[8rem] items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-xl",
+        "border-border bg-popover grid min-w-[9rem] items-start gap-1.5 rounded-sm border px-3 py-2 text-[11px] shadow-[0_12px_32px_-12px_rgba(16,24,40,0.25)]",
         className
       )}
     >
@@ -228,12 +232,12 @@ function ChartTooltipContent({
                     >
                       <div className="grid gap-1.5">
                         {nestLabel ? tooltipLabel : null}
-                        <span className="text-muted-foreground">
+                        <span className="text-ink-muted">
                           {itemConfig?.label || item.name}
                         </span>
                       </div>
                       {item.value && (
-                        <span className="text-foreground font-mono font-medium tabular-nums">
+                        <span className="text-ink font-mono font-medium tabular-nums">
                           {item.value.toLocaleString()}
                         </span>
                       )}

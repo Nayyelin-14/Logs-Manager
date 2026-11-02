@@ -7,7 +7,10 @@ export const AlertRuleSchema = z.object({
   conditions: z
     .array(
       z.object({
-        type: z.string().min(1, "Condition type is required"),
+        type: z.enum(
+          ["event_type", "severity_min", "field_value", "repeated_failures"],
+          { message: "Choose a supported condition type" }
+        ),
         field: z.string().optional(),
         value: z.string().optional(),
         threshold: z.string().optional(),

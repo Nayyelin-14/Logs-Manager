@@ -1,26 +1,19 @@
-import {
-  PrismaClient,
-  SecurityEvent,
-  AlertRule,
-  Prisma,
-} from "../generated/prisma";
+import { SecurityEvent, AlertRule, Prisma } from "../generated/prisma";
 import { AlertEmailQueue } from "./queueHelper";
-
-const prisma = new PrismaClient();
+import { prisma } from "../config/PrismaClient";
 
 export class AlertService {
   async checkAlerts(event: SecurityEvent) {
-    console.log("incoming", event);
     const rules = await prisma.alertRule.findMany({
       where: {
         tenant: event.tenant,
+        enabled: true,
       },
     });
 
     const triggeredAlerts: any[] = [];
 
     for (const rule of rules) {
-      console.log(rule, "rule");
       if (await this.evaluateRule(rule, event)) {
         const alert = await this.triggerAlert(rule, event);
         if (alert?.success) {
@@ -41,7 +34,6 @@ export class AlertService {
       rule.conditions as Prisma.JsonValue[] | undefined
     )?.[0] as Record<string, any> | undefined;
 
-    console.log("condition", condition);
     if (!condition) return false;
 
     switch (condition.type) {
@@ -54,6 +46,7 @@ export class AlertService {
       case "field_value":
         return event[condition.field] === condition.value;
 
+      case "threshold_count":
       case "repeated_failures":
         const threshold = parseInt(condition.threshold, 10) || 1;
         const windowSeconds = parseInt(condition.windowSeconds, 10) || 300;
@@ -95,27 +88,27 @@ export class AlertService {
         },
       });
 
-      if (!event.user) {
-        throw new Error("Event has no associated user");
+      if (event.user) {
+        const user = await prisma.user.findFirst({
+          where: { username: event.user, tenant: createdAlert.tenant },
+          select: { email: true },
+        });
+
+        if (user?.email) {
+          try {
+            await AlertEmailQueue({
+              email: user.email,
+              username: event.user,
+              tenant: createdAlert.tenant,
+              title: createdAlert.title,
+              description: createdAlert.description,
+              severity: createdAlert.severity,
+            });
+          } catch (emailError) {
+            console.error("Could not queue alert notification:", emailError);
+          }
+        }
       }
-
-      const user = await prisma.user.findFirst({
-        where: { username: event.user },
-        select: { email: true },
-      });
-
-      if (!user || !user.email) {
-        throw new Error(`No email found for user: ${event.user}`);
-      }
-
-      await AlertEmailQueue({
-        email: user.email,
-        username: event.user,
-        tenant: createdAlert.tenant,
-        title: createdAlert.title,
-        description: createdAlert.description,
-        severity: createdAlert.severity,
-      });
 
       return {
         success: true,

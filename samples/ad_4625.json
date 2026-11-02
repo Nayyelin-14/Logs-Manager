@@ -1,0 +1,12 @@
+{
+  "source": "ad",
+  "EventID": 4625,
+  "TargetUserName": "alice",
+  "SubjectUserName": "alice",
+  "Computer": "DC01.corp.example.com",
+  "IpAddress": "10.0.0.77",
+  "LogonType": 3,
+  "Status": "0xC000006D",
+  "Message": "An account failed to log on",
+  "TimeCreated": "2026-10-30T22:19:00Z"
+}

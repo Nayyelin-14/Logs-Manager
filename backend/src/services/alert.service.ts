@@ -1,6 +1,5 @@
-import { AlertRule, PrismaClient } from "../generated/prisma";
-
-const prisma = new PrismaClient();
+import { AlertRule } from "../generated/prisma";
+import { prisma } from "../config/PrismaClient";
 
 export interface CreateAlertRuleInput {
   name: string;
@@ -38,7 +37,7 @@ export const createNewAlertRule = async (
     name,
     description,
     tenant,
-
+    enabled = true,
     conditions,
   } = data;
 
@@ -47,6 +46,7 @@ export const createNewAlertRule = async (
       name,
       description,
       tenant,
+      enabled,
       conditions,
     },
   });

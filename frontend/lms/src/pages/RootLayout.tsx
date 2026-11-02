@@ -1,16 +1,25 @@
-import { Outlet } from "react-router";
-import Navbar from "../AppComponents/Navbar";
-import Footer from "../AppComponents/Footer";
+import { Outlet, useLocation } from "react-router";
+
+import AppShell from "../AppComponents/layout/AppShell";
+import AuthShell from "../AppComponents/layout/AuthShell";
 
 const RootLayout = () => {
-  return (
-    <>
-      <Navbar />
-      <div className="max-w-[80%] mx-auto my-10">
+  const { pathname } = useLocation();
+  const isAuthRoute =
+    pathname === "/login" || pathname.startsWith("/register");
+
+  if (isAuthRoute) {
+    return (
+      <AuthShell>
         <Outlet />
-      </div>
-      <Footer />
-    </>
+      </AuthShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   );
 };
 

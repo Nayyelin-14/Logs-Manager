@@ -1,0 +1,11 @@
+{
+  "source": "m365",
+  "Operation": "UserLoggedIn",
+  "Workload": "AzureActiveDirectory",
+  "RecordType": 15,
+  "UserId": "alice@example.com",
+  "ClientIP": "203.0.113.20",
+  "ResultStatus": "Success",
+  "CreationTime": "2026-10-30T22:18:00Z",
+  "OrganizationId": "11111111-2222-3333-4444-555555555555"
+}

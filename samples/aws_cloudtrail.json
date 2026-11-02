@@ -1,0 +1,28 @@
+{
+  "source": "aws",
+  "eventVersion": "1.09",
+  "userIdentity": {
+    "type": "IAMUser",
+    "principalId": "AIDAEXAMPLE",
+    "arn": "arn:aws:iam::123456789012:user/alice",
+    "accountId": "123456789012",
+    "userName": "alice"
+  },
+  "eventTime": "2026-10-30T22:17:00Z",
+  "eventSource": "iam.amazonaws.com",
+  "eventName": "CreateUser",
+  "awsRegion": "us-east-1",
+  "sourceIPAddress": "203.0.113.10",
+  "userAgent": "aws-cli/2.15.0",
+  "requestParameters": {
+    "userName": "bob"
+  },
+  "responseElements": {
+    "user": {
+      "userName": "bob",
+      "userId": "AIDAEXAMPLEBOB",
+      "arn": "arn:aws:iam::123456789012:user/bob"
+    }
+  },
+  "recipientAccountId": "123456789012"
+}

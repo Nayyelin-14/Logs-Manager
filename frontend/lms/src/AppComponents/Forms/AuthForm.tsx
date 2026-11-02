@@ -1,40 +1,33 @@
-import {
-  Link,
-  //   useActionData,
-  useNavigation,
-  useSubmit,
-} from "react-router-dom";
-import { cn } from "../../lib/utils";
-
+import { Link, useNavigation, useSubmit } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ArrowRight, LoaderCircle } from "lucide-react";
 
-import { LoaderCircle } from "lucide-react";
+import { cn } from "../../lib/utils";
 import { LoginSchema, RegisterSchema } from "../../Schemas/AuthSchema";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "../../components/ui/form";
 import { Input } from "../../components/ui/input";
-import { PassworInput } from "./PasswordInput";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardHeader } from "../../components/ui/card";
+import { AuthPanel } from "../layout/AuthPanel";
+import { PassworInput } from "./PasswordInput";
 
 type FormName = "login" | "register";
 interface AuthFormProps extends React.ComponentProps<"div"> {
   formName: FormName;
 }
+
 export function AuthForm({ formName, className, ...props }: AuthFormProps) {
   const submit = useSubmit();
-  const navigate = useNavigation();
-  //   const actionData = useActionData() as { error?: string; message?: string };
-  const submitting = navigate.state === "submitting";
+  const navigation = useNavigation();
+  const submitting = navigation.state === "submitting";
 
   const defaultValues =
     formName === "login"
@@ -46,6 +39,7 @@ export function AuthForm({ formName, className, ...props }: AuthFormProps) {
     resolver: zodResolver(schema),
     defaultValues,
   });
+
   const authSubmit = (values: z.infer<typeof schema>) => {
     const actionUrl = formName === "login" ? "/login" : ".";
     const formData = new FormData();
@@ -56,157 +50,141 @@ export function AuthForm({ formName, className, ...props }: AuthFormProps) {
     submit(formData, { method: "post", action: actionUrl });
   };
 
+  const isLogin = formName === "login";
+
   return (
-    <div
-      className={cn(
-        "flex flex-col items-center justify-center w-full",
-        className
-      )}
-      {...props}
-    >
-      <Card className="overflow-hidden  w-[80%] xl:w-[50%] mb-4">
-        <CardHeader>
-          <div className="flex flex-col items-center text-center">
-            <h1 className="text-2xl font-bold">Welcome</h1>
-            <p className="text-balance text-muted-foreground">
-              Enter your email number below
+    <div className={cn("w-full", className)} {...props}>
+      <AuthPanel
+        eyebrow={isLogin ? "Workspace access" : "Create workspace access"}
+        title={isLogin ? "Sign in to LogManager" : "Create your account"}
+        description={
+          isLogin
+            ? "Use your workspace credentials to open the security console."
+            : "Provision a tenant-scoped account for monitoring and triage."
+        }
+        footer={
+          <div className="space-y-3">
+            <p className="text-center text-xs text-ink-muted">
+              {isLogin ? "New to LogManager? " : "Already have an account? "}
+              <Link
+                to={isLogin ? "/register" : "/login"}
+                className="font-medium text-ink underline underline-offset-4 hover:text-brand"
+              >
+                {isLogin ? "Create an account" : "Sign in"}
+              </Link>
+            </p>
+            <p className="text-center text-[10px] leading-5 text-ink-muted/80">
+              By continuing, you agree to the{" "}
+              <a href="#" className="underline underline-offset-2 hover:text-ink">
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a href="#" className="underline underline-offset-2 hover:text-ink">
+                Privacy Policy
+              </a>
+              .
             </p>
           </div>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(authSubmit)}
-              className="space-y-6"
-            >
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        id="email"
-                        type="text"
-                        placeholder="abc@gmail.com"
-                        required
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      This is your public display name.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {formName === "login" && (
+        }
+      >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(authSubmit)} className="space-y-4">
+            {!isLogin && (
+              <div className="grid gap-4 sm:grid-cols-2">
                 <FormField
                   control={form.control}
-                  name="password"
+                  name="username"
                   render={({ field }) => (
                     <FormItem>
-                      <div className="flex items-center">
-                        <FormLabel>Password</FormLabel>
-                        <Link
-                          to="/reset-password"
-                          className="ml-auto text-sm underline-offset-2 hover:underline"
-                        >
-                          Forgot your password?
-                        </Link>
-                      </div>
+                      <FormLabel>Display name</FormLabel>
                       <FormControl>
-                        <PassworInput
-                          {...field}
-                          id="password"
-                          required
-                          inputMode="numeric"
-                        />
+                        <Input placeholder="analyst" autoComplete="name" {...field} />
                       </FormControl>
-                      <FormDescription>
-                        This is your public display name.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="tenant"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tenant</FormLabel>
+                      <FormControl>
+                        <Input placeholder="demoA" autoComplete="organization" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      id="email"
+                      type="email"
+                      placeholder="you@company.com"
+                      autoComplete="email"
+                      required
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
               )}
-              {formName === "register" && (
+            />
+
+            {isLogin && (
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel>Password</FormLabel>
+                    </div>
+                    <FormControl>
+                      <PassworInput
+                        {...field}
+                        id="password"
+                        autoComplete="current-password"
+                        required
+                        inputMode="numeric"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <Button
+              type="submit"
+              className="mt-1 w-full"
+              disabled={submitting}
+            >
+              {submitting ? (
                 <>
-                  <FormField
-                    control={form.control}
-                    name="username"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Username</FormLabel>
-                        <FormControl>
-                          <Input placeholder="shadcn" {...field} />
-                        </FormControl>
-                        <FormDescription>
-                          This is your public display name.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="tenant"
-                    render={({ field }) => (
-                      <FormItem className="w-[50%]">
-                        <FormLabel>Tenant</FormLabel>
-                        <FormControl>
-                          <Input placeholder="demoA" {...field} />
-                        </FormControl>
-                        <FormDescription>
-                          Please enter a valid email
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  Verifying
+                </>
+              ) : (
+                <>
+                  {isLogin ? "Sign in" : "Create account"}
+                  <ArrowRight className="size-3.5" />
                 </>
               )}
-
-              <Button
-                type="submit"
-                className={cn(
-                  `${
-                    submitting && "bg-gray-300 text-black"
-                  } w-full cursor-pointer hover:bg-black/60`
-                )}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
-                  `${formName === "login" ? "Sign In" : "Sign Up"}`
-                )}
-              </Button>
-            </form>
-          </Form>
-
-          <div className="flex flex-col gap-4 mt-5">
-            <div className="text-center text-sm">
-              {formName === "login"
-                ? " Don&apos;t have an account? "
-                : "Already had an account? "}
-
-              <Link
-                to={formName === "login" ? "/register" : "/login"}
-                className="underline underline-offset-4"
-              >
-                {formName === "login" ? "Sign Up" : "Sign In"}
-              </Link>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <div className="text-balance  text-center text-xs text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary">
-        By clicking continue, you agree to our <a href="#">Terms of Service</a>{" "}
-        and <a href="#">Privacy Policy</a>.
-      </div>
+            </Button>
+          </form>
+        </Form>
+      </AuthPanel>
     </div>
   );
 }

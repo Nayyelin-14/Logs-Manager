@@ -40,7 +40,6 @@ export function useAppMutation<
         url,
         method === "delete" ? undefined : payload
       );
-      console.log(res);
       return transformResponse ? transformResponse(res.data) : res.data;
     },
     onSuccess: async (data) => {
@@ -60,9 +59,7 @@ export function useAppMutation<
       }
     },
     onError: (err: any) => {
-      console.log(errorMessage, err);
-
-      toast.error("Something went wrong");
+      toast.error(err?.response?.data?.message || errorMessage);
     },
   });
 

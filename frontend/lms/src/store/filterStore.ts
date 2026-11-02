@@ -1,6 +1,6 @@
 // store/createFilterStore.ts
 import { create } from "zustand";
-import type { SecurityEventFilters, UserFilters } from "../types/types";
+import type { RulesFilters, SecurityEventFilters, UserFilters } from "../types/types";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 type FilterState<T> = {
@@ -43,3 +43,8 @@ export const useSecurityEventFilterStore =
     eventType: null,
     tenant: null,
   });
+export const useRuleFilterStore = createFilterStore<RulesFilters>({
+  date: "",
+  search: "",
+  tenant: null,
+});

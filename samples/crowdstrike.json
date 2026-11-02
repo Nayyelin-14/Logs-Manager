@@ -1,0 +1,15 @@
+{
+  "source": "crowdstrike",
+  "event": {
+    "DetectName": "MalwareDetected",
+    "ComputerName": "WIN-ENG-01",
+    "UserName": "alice",
+    "FileName": "invoice.exe",
+    "CommandLine": "C:\\Users\\alice\\Downloads\\invoice.exe",
+    "Severity": 8,
+    "SHA256String": "9f2c1d7b4a6e8f0c3b5d7a9e1f2c4b6d8e0f1a3c5b7d9e1f2a4c6b8d0e1f3a5c",
+    "SourceIpAddress": "10.0.0.42",
+    "timestamp": "2026-10-30T22:16:00Z",
+    "DetectDescription": "Malicious executable blocked by Falcon"
+  }
+}

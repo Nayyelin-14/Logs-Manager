@@ -12,10 +12,8 @@ export default function OtpPage() {
     }
   }, [message]);
   return (
-    <div className=" flex items-center justify-center min-h-[600px]">
-      <div className="w-full max-w-sm">
-        <InputOTPForm />
-      </div>
+    <div className="w-full">
+      <InputOTPForm />
     </div>
   );
 }

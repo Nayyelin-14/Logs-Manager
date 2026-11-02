@@ -1,0 +1,2 @@
+source,event_name,event_source,user_name,source_ip_address,aws_region,recipient_account_id,event_time,error_code
+aws,CreateUser,iam.amazonaws.com,alice,203.0.113.11,us-east-1,123456789012,2026-10-30T22:21:00Z,

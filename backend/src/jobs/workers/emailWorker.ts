@@ -1,6 +1,6 @@
 // workers/emailWorker.ts
 import { Worker, Job } from "bullmq";
-import { redisConnection } from "../../config/redisClient";
+import { redisConnection, reportRedisError } from "../../config/redisClient";
 import { sendAlertEmail, sendOTPEmail } from "../../actions/emailAction";
 
 // Create a worker that listens to the "otp_email" queue
@@ -8,10 +8,9 @@ const emailWorker = new Worker(
   "email-Queue",
   async (job: Job) => {
     // job.data should contain { email, otpCode }
-    console.log(job);
     if (job.name === "OtpEmail") {
       const { email, otpCode } = job.data;
-      console.log(`📤 Sending OTP email to ${email} with code ${otpCode}`);
+      console.log("Sending OTP email");
 
       const result = await sendOTPEmail(email, otpCode);
 
@@ -60,6 +59,10 @@ emailWorker.on("failed", (job, err) => {
   } else {
     console.error(`Job failed, but job is undefined: ${err.message}`);
   }
+});
+
+emailWorker.on("error", (err) => {
+  reportRedisError("REDIS-EMAIL-WORKER", err);
 });
 
 console.log("🚀 Email worker is running...");

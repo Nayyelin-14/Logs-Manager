@@ -39,13 +39,19 @@ In this setup:
 3. Update your `.env` file in `/backend/.env`:
 
    ```env
-   DATABASE_URL="postgres://user:password@ep-mydatabase.neon.tech:5432/logdb?sslmode=require"
+   DATABASE_URL="postgresql://user:password@ep-mydatabase.region.aws.neon.tech/logdb?sslmode=require"
    ```
 
-4. Run Prisma migrations locally:
+   Use the **direct** connection string for local development and Prisma
+   migrations. If you run the backend in a serverless environment (many
+   short-lived connections), use Neon's **pooled** connection string instead and
+   append `&pgbouncer=true&connect_timeout=15`.
+
+4. Generate the Prisma client and run Prisma migrations:
 
    ```bash
    cd backend
+   npx prisma generate
    npx prisma migrate deploy
    ```
 
@@ -72,9 +78,18 @@ In this setup:
 
    - **Environment Variables** (copy from `.env`):
 
-     ```
+     ```env
+     NODE_ENV=production
+     PORT=4500
      DATABASE_URL=<your Neon Postgres URL>
-     JWT_SECRET=<your_secret>
+     ACCESS_TOKEN_SECRET=<your access token secret>
+     REFRESH_TOKEN_SECRET=<your refresh token secret>
+     REDIS_URL=<your Redis URL>
+     CORS_ORIGINS=https://log-frontend.vercel.app
+     GMAIL_USER=<your Gmail address>
+     GMAIL_PASS=<your Gmail app password>
+     INGEST_API_KEY=<long random ingestion key>
+     INGEST_API_TENANT=demoA
      ```
 
 4. Deploy. After successful build, you’ll get a public URL, e.g.:
@@ -92,7 +107,7 @@ In this setup:
 3. Configure environment variables:
 
    ```
-   NEXT_PUBLIC_API_URL=https://log-backend.onrender.com
+   VITE_API_URL=https://log-backend.onrender.com/api
    ```
 
 4. Deploy. After successful build, you’ll get a public URL, e.g.:
@@ -120,13 +135,15 @@ In this setup:
 
 ## 7. Multi-Tenant Support
 
-- Tenants are separated via a `tenant` parameter in API requests.
-- Example API call:
+- Browser requests use the authenticated account's tenant. Machine ingestion
+  uses an API key bound to one tenant through `INGEST_API_TENANT` or
+  `INGEST_API_KEYS`; callers cannot override that tenant.
+- Example machine ingestion call:
 
   ```bash
   curl -X POST https://log-backend.onrender.com/api/ingest \
   -H "Content-Type: application/json" \
-  -H "X-Tenant: demoA" \
+  -H "X-API-Key: <your ingestion key>" \
   -d '{
     "source":"api",
     "event_type":"login_failed",
@@ -177,7 +194,8 @@ In this setup:
    ```bash
    curl -X POST https://log-backend.onrender.com/api/ingest \
    -H "Content-Type: application/json" \
-   -d '{"tenant":"demoA","source":"api","event_type":"test_event","user":"alice","ip":"1.2.3.4","@timestamp":"2025-10-03T10:00:00Z"}'
+  -H "X-API-Key: <your ingestion key>" \
+  -d '{"source":"api","event_type":"test_event","user":"alice","ip":"1.2.3.4","@timestamp":"2025-10-03T10:00:00Z"}'
    ```
 
 4. Refresh dashboard → You should see the new log.

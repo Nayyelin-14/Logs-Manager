@@ -4,12 +4,34 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Ubuntu Mono", monospace;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-signal: var(--signal);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-soft: var(--signal-soft);
+  --color-signal-ink: var(--signal-ink);
+  --color-warning: var(--warning);
+  --color-critical: var(--critical);
+  --color-info: var(--info);
+  --color-rail: var(--rail);
+  --color-rail-foreground: var(--rail-foreground);
+  --color-rail-muted: var(--rail-muted);
+  --color-rail-line: var(--rail-line);
+  --color-rail-raised: var(--rail-raised);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -42,85 +64,168 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+  --radius: 0.375rem;
+  color-scheme: dark;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --canvas: #111418;
+  --surface: #0f1216;
+  --surface-muted: #181c22;
+  --ink: #f1f3f7;
+  --ink-muted: #9ca3af;
+  --brand: #f97316;
+  --brand-hover: #ffb690;
+  --brand-soft: #422c1b;
+
+  --signal: #f97316;
+  --signal-hover: #ffb690;
+  --signal-soft: #422c1b;
+  --signal-ink: #ffffff;
+
+  --warning: #fbbf24;
+  --critical: #f87171;
+  --info: #94a3b8;
+
+  --rail: #0a0c0f;
+  --rail-foreground: #f1f3f7;
+  --rail-muted: #9ca3af;
+  --rail-line: #2c323d;
+  --rail-raised: #13161c;
+
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: #13161c;
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--brand);
+  --primary-foreground: #ffffff;
+  --secondary: #9ca3af;
+  --secondary-foreground: #2b313b;
+  --muted: #1e2229;
+  --muted-foreground: #9ca3af;
+  --accent: #262b33;
+  --accent-foreground: #afb5c2;
+  --destructive: var(--critical);
+  --border: #2c323d;
+  --input: #232830;
+  --ring: var(--brand);
+  --chart-1: #f97316;
+  --chart-2: #34d399;
+  --chart-3: #fbbf24;
+  --chart-4: #94a3b8;
+  --chart-5: #f87171;
+  --sidebar: var(--rail);
+  --sidebar-foreground: var(--rail-foreground);
+  --sidebar-primary: var(--signal);
+  --sidebar-primary-foreground: var(--rail);
+  --sidebar-accent: var(--rail-raised);
+  --sidebar-accent-foreground: var(--rail-foreground);
+  --sidebar-border: var(--rail-line);
+  --sidebar-ring: var(--signal);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  html {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    min-height: 100%;
+    font-family: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    letter-spacing: -0.012em;
+  }
+
+  button, input, select, textarea {
+    font-family: "Plus Jakarta Sans", "Ubuntu Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  code, kbd, pre, samp {
+    font-family: "JetBrains Mono", "Ubuntu Mono", monospace;
+  }
+
+  ::selection {
+    background-color: rgb(249 115 22 / 0.32);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3a4652 transparent;
   }
 }
+
 html,
 body {
   margin: 0;
   padding: 0;
-  height: 100%;
+}
+
+@layer components {
+  .app-panel {
+    @apply overflow-hidden rounded-[5px] border border-border/90 bg-card;
+  }
+
+  .app-panel-header {
+    @apply flex flex-col gap-3 border-b border-border/80 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between;
+  }
+
+  .app-eyebrow {
+    @apply text-[10px] font-medium tracking-[0.045em] text-ink-muted;
+  }
+
+  .app-metric {
+    @apply font-mono text-3xl font-semibold tracking-tight text-ink tabular-nums;
+  }
+
+  .app-data {
+    @apply font-mono text-xs tabular-nums;
+  }
+
+  [data-slot="panel"] {
+    background-image: none;
+    box-shadow: none;
+  }
+
+  [data-slot="table-head"] {
+    letter-spacing: 0.035em;
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: none;
+  }
+
+  [data-slot="table-cell"] { padding-top: 11px; padding-bottom: 11px; }
+  [data-slot="table-row"]:hover { background: rgb(255 255 255 / 0.025); }
+  [data-slot="input"], [data-slot="select-trigger"] {
+    background-color: color-mix(in srgb, var(--canvas) 54%, var(--surface));
+  }
+
+}
+
+@layer utilities {
+  .font-mono.uppercase {
+    text-transform: none;
+    letter-spacing: 0.015em;
+  }
+}
+
+@font-face {
+  font-family: "Ubuntu Sans";
+  src: url("/fonts/UbuntuSans.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Ubuntu Sans Mono";
+  src: url("/fonts/UbuntuMono.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
 }

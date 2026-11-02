@@ -2,7 +2,7 @@ import { errorCode } from "../config/errrorcode";
 import { handleError } from "./errorHandeling";
 
 export const checkExistedAlertRule = async (rule: any) => {
-  if (!rule) {
+  if (Array.isArray(rule) ? rule.length > 0 : Boolean(rule)) {
     throw handleError(
       "This rule is already existed.",
       400,

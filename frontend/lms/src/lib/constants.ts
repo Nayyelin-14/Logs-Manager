@@ -20,33 +20,50 @@ export const severityOptions = [
 ];
 export const getStatusBadge = (status: Status) => {
   const statusStyles = {
-    ACTIVE: "bg-green-100 text-green-800",
-    INACTIVE: "bg-gray-100 text-gray-800",
-    FREEZE: "bg-red-100 text-red-800",
+    ACTIVE: "border-brand/25 bg-brand-soft text-brand-hover",
+    INACTIVE: "border-border bg-surface-muted text-ink-muted",
+    FREEZE: "border-critical/25 bg-critical/10 text-critical",
   };
-  return statusStyles[status] || "bg-gray-100 text-gray-800";
+  return statusStyles[status] || statusStyles.INACTIVE;
 };
 export const getRoleBadge = (role: Role) => {
   const roleStyles = {
-    ADMIN: "bg-purple-100 text-purple-800",
-    USER: "bg-blue-100 text-blue-800",
+    ADMIN: "border-signal/70 bg-signal-soft text-signal-ink",
+    USER: "border-border bg-card text-ink-muted",
   };
-  return roleStyles[role] || "bg-gray-100 text-gray-800";
+  return roleStyles[role] || roleStyles.USER;
 };
 
 export const getSeverityStyle = (severity: string | null) => {
   switch (severity?.toLowerCase()) {
     case "low":
-      return { bg: "bg-gray-200", text: "text-gray-800", label: "Low" };
+      return {
+        bg: "border-border bg-surface-muted",
+        text: "text-ink-muted",
+        dot: "bg-ink-muted/70",
+        label: "Low",
+      };
     case "medium":
-      return { bg: "bg-yellow-200", text: "text-yellow-800", label: "Medium" };
+      return {
+        bg: "border-warning/25 bg-warning/10",
+        text: "text-warning",
+        dot: "bg-warning",
+        label: "Medium",
+      };
     case "high":
-      return { bg: "bg-red-200", text: "text-red-800", label: "High" };
+    case "critical":
+      return {
+        bg: "border-critical/25 bg-critical/10",
+        text: "text-critical",
+        dot: "bg-critical",
+        label: severity?.toLowerCase() === "critical" ? "Critical" : "High",
+      };
     default:
       return {
-        bg: "bg-gray-200",
-        text: "text-gray-800",
-        label: severity || "Low",
+        bg: "border-border bg-surface-muted",
+        text: "text-ink-muted",
+        dot: "bg-ink-muted/70",
+        label: severity || "Unknown",
       };
   }
 };

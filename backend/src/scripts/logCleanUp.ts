@@ -1,6 +1,4 @@
-import { PrismaClient } from "../generated/prisma";
-
-const prisma = new PrismaClient();
+import { prisma } from "../config/PrismaClient";
 
 export async function cleanupOldLogs() {
   const sevenDaysAgo = new Date();

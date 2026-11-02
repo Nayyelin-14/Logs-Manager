@@ -10,12 +10,22 @@ import router from "./routes.tsx";
 createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     <RouterProvider router={router} />
-    <ReactQueryDevtools initialIsOpen={true} />
+    <ReactQueryDevtools initialIsOpen={false} />
     <Toaster
       position="bottom-right"
-      richColors={true}
       duration={5000}
       closeButton
+      theme="dark"
+      richColors
+      style={{
+        "--normal-bg": "#202c36",
+        "--normal-text": "#f0eee8",
+        "--normal-border": "#45545e",
+      } as React.CSSProperties}
+      toastOptions={{
+        className:
+          "rounded-md border border-border bg-card text-ink shadow-[0_16px_40px_-12px_rgba(0,0,0,0.45)] font-sans",
+      }}
     />
   </QueryClientProvider>
 );

@@ -1,0 +1,2 @@
+source,operation,workload,record_type,user_id,client_ip,result_status,creation_time
+m365,UserLoggedIn,AzureActiveDirectory,15,bob@example.com,203.0.113.21,Success,2026-10-30T22:22:00Z

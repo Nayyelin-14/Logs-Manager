@@ -1,33 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "../../components/ui/button";
-import "react-day-picker/style.css";
 import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../../components/ui/table";
-import {
-  Search,
-  Plus,
   ChevronDown,
-  Users,
-  Filter,
-  Calendar,
-  Trash,
-  LoaderCircle,
-  User,
+  CircleCheck,
+  Plus,
+  RefreshCcw,
+  ShieldCheck,
+  TriangleAlert,
+  UserRound,
+  UserRoundX,
+  X,
 } from "lucide-react";
-import type { Role, Status } from "../../types/types";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../../components/ui/popover";
-import { DayPicker } from "react-day-picker";
+import { useSearchParams } from "react-router";
+import { useInfiniteQuery } from "@tanstack/react-query";
+
+import { Button } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -36,45 +22,38 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../../components/ui/dialog";
-import CreateForm from "../Forms/CreateForm";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui/popover";
+import { Panel } from "../../components/ui/panel";
 import { cn } from "../../lib/utils";
-import { useSearchParams } from "react-router";
 import { useUserFilterStore } from "../../store/filterStore";
-import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   invalidateAllDataCount,
   invalidateUserQueries,
   queryClient,
   UsersInfiniteQueryWithFilters,
 } from "../../api/query";
-import {
-  getRoleBadge,
-  getStatusBadge,
-  roleOptions,
-  statusOptions,
-} from "../../lib/constants";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "../../components/ui/alert-dialog";
+import { roleOptions, statusOptions } from "../../lib/constants";
 import { useAppMutation } from "../../hooks/useMutationApi";
+import CreateForm from "../Forms/CreateForm";
+import {
+  SearchInput,
+  TableLoading,
+  TablePagination,
+} from "./shared/TableControls";
+import { DateFilterPopover } from "./shared/DateFilterPopover";
+import { UserTable } from "./UserTable";
+
 interface TenantType {
   tenant: string;
 }
 
 const UserManagementTable = ({ tenant }: TenantType) => {
-  const [loading] = useState(false);
   const [, setSearchParams] = useSearchParams();
-
   const [open, setOpen] = useState(false);
-
   const [isOpen, setIsOpen] = useState(false);
   const { filterValues, updateFilter, removeFilters } = useUserFilterStore();
   const [showFilters, setShowFilters] = useState({
@@ -96,6 +75,7 @@ const UserManagementTable = ({ tenant }: TenantType) => {
     isFetchingNextPage,
     fetchNextPage,
     hasNextPage,
+    refetch,
   } = useInfiniteQuery(
     UsersInfiniteQueryWithFilters({ ...filterValues, tenant })
   );
@@ -107,7 +87,6 @@ const UserManagementTable = ({ tenant }: TenantType) => {
       updateFilter(filterType, value);
 
       if (filterType === "date") setOpen(false);
-
       setShowFilters((prev) => ({ ...prev, [filterType]: false }));
 
       const newParams = new URLSearchParams();
@@ -123,24 +102,27 @@ const UserManagementTable = ({ tenant }: TenantType) => {
     [filterValues, setSearchParams, updateFilter]
   );
 
-  const clearFilters = () => {
-    removeFilters(); // Zustand store
-    setShowFilters({ role: false, status: false, date: false }); // UI
-    setSearchParams(new URLSearchParams()); // Reset URL
+  const clearFilters = useCallback(() => {
+    removeFilters();
+    setShowFilters({ role: false, status: false, date: false });
+    setSearchParams(new URLSearchParams());
     setSearchTerm("");
     queryClient.removeQueries({
       queryKey: ["users", "infinite", filterValues],
     });
-  };
+  }, [filterValues, removeFilters, setSearchParams]);
 
   const allUsers = data?.pages.flatMap((page) => page.usersList) ?? [];
+
   useEffect(() => {
+    if (searchTerm === (filterValues.search || "")) return;
+
     const handler = setTimeout(() => {
       handleFilterChange("search", searchTerm);
-    }, 400); // 400ms debounce
+    }, 400);
 
     return () => clearTimeout(handler);
-  }, [searchTerm]);
+  }, [filterValues.search, handleFilterChange, searchTerm]);
 
   const { mutate: deleteUser, isPending: userDeleting } = useAppMutation({
     endpoint: (userId: number) => `/delete-user/${userId}`,
@@ -149,7 +131,6 @@ const UserManagementTable = ({ tenant }: TenantType) => {
       await invalidateUserQueries();
       await invalidateAllDataCount(tenant);
     },
-
     successMessage: "User has been deleted successfully.",
     errorMessage: "Failed to delete user.",
   });
@@ -157,30 +138,68 @@ const UserManagementTable = ({ tenant }: TenantType) => {
   const handleConfirm = (userId: number) => {
     deleteUser(userId);
   };
-  return status === "error" ? (
-    <p className="flex items-center justify-center h-screen text-2xl text-red-600">
-      {error.message}
-    </p>
-  ) : (
-    <div
-      className="border border-gray-100 p-4 rounded-md shadow-md "
-      id="users"
-    >
-      <div className="flex items-center justify-between py-4  ">
-        <h1 className="text-2xl font-extrabold">All users list</h1>
+
+  const roleLabel =
+    roleOptions.find((option) => option.value === filterValues.role)?.label ??
+    "All roles";
+  const statusLabel =
+    statusOptions.find((option) => option.value === filterValues.status)
+      ?.label ?? "All status";
+
+  if (status === "error") {
+    return (
+      <Panel id="users" className="scroll-mt-20">
+        <div className="flex min-h-56 flex-col items-center justify-center gap-3 p-6 text-center">
+          <span className="flex size-10 items-center justify-center rounded-sm border border-critical/20 bg-critical/10 text-critical">
+            <TriangleAlert className="size-5" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-ink">
+              Users could not be loaded
+            </p>
+            <p className="mt-1 max-w-md text-xs leading-5 text-ink-muted">
+              {error.message}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCcw className="size-3.5" />
+            Retry query
+          </Button>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <header className="space-y-5">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <p className="app-eyebrow">Platform / Management</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink sm:text-[30px]">Workspace Users</h1>
+            <p className="mt-1.5 max-w-2xl text-[13px] leading-5 text-ink-muted">Manage identity access, roles, and tenant authorization across your workspace.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3.5 py-2 text-xs">
+              <span className="size-2 rounded-full bg-brand" />
+              <span className="font-medium text-ink">{tenant === "all" ? "All authorized tenants" : tenant}</span>
+              <span className="text-ink-muted">{tenant === "all" ? "Cross-tenant scope" : "Tenant scope"}</span>
+            </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
-            <button className="bg-blue-600 hover:bg-blue-700 text-white p-2 sm:px-4 sm:py-2 rounded-lg flex items-center gap-2 text-xs md:text-base">
-              <Plus size={16} />
-              New User
-            </button>
+            <Button variant="signal" size="sm" className="h-10 rounded-xl px-4">
+              <Plus className="size-3.5" />
+              Add User
+            </Button>
           </DialogTrigger>
-
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Create New User</DialogTitle>
+              <DialogTitle>Create user</DialogTitle>
+              <DialogDescription>
+                Add an account and assign its workspace role.
+              </DialogDescription>
             </DialogHeader>
-            <div className="mt-4">
+            <div className="mt-1">
               <CreateForm
                 formName="Create User"
                 setOpen={setIsOpen}
@@ -189,307 +208,161 @@ const UserManagementTable = ({ tenant }: TenantType) => {
             </div>
           </DialogContent>
         </Dialog>
-      </div>
-      <div>
-        <div className="relative flex-1 max-w-[500px]">
-          <Search
-            className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-            size={20}
-          />
-          <input
-            type="text"
-            placeholder="Search by username or email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
         </div>
-        <div className=" flex flex-col md:flex-row md:items-center   gap-4 my-4">
-          <div className="relative">
-            <button
-              onClick={() =>
-                setShowFilters((prev) => ({ ...prev, role: !prev.role }))
-              }
-              className={cn(
-                "flex items-center gap-2  p-2 md:px-4 md:py-2 border border-gray-300 rounded-lg hover:bg-gray-50",
-                filterValues.role && "bg-green-200"
-              )}
-            >
-              <User size={16} />
-              <span className="md:text-base text-sm">
-                {" "}
-                Role: {filterValues.role || "All"}
-              </span>
-              <ChevronDown size={16} />
-            </button>
-            {showFilters.role && (
-              <div className="absolute top-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-32">
-                {roleOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleFilterChange("role", option.value)}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="relative">
-            <button
-              onClick={() =>
-                setShowFilters((prev) => ({ ...prev, status: !prev.status }))
-              }
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50",
-                filterValues.status && "bg-blue-200"
-              )}
-            >
-              <Filter size={16} />
-              <span className="md:text-base text-sm">
-                {" "}
-                Status: {filterValues.status || "All Status"}
-              </span>
+        </div>
+        <section aria-label="Workspace user metrics" className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[
+            { label: "Users loaded", value: allUsers.length, icon: UserRound, tone: "text-ink-muted" },
+            { label: "Active", value: allUsers.filter((user) => user.status === "ACTIVE").length, icon: CircleCheck, tone: "text-positive" },
+            { label: "Frozen", value: allUsers.filter((user) => user.status === "FREEZE").length, icon: UserRoundX, tone: "text-critical" },
+            { label: "Administrators", value: allUsers.filter((user) => user.role === "ADMIN").length, icon: ShieldCheck, tone: "text-brand" },
+          ].map(({ label, value, icon: Icon, tone }) => (
+            <div key={label} className="flex items-center justify-between rounded-xl border border-border/40 bg-card px-4 py-3.5">
+              <div><p className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">{label}</p><p className={`mt-1 text-xl font-semibold tabular-nums ${tone}`}>{value}</p></div>
+              <Icon className={`size-5 opacity-75 ${tone}`} />
+            </div>
+          ))}
+        </section>
+      </header>
 
-              <ChevronDown size={16} />
-            </button>
-            {showFilters.status && (
-              <div className="absolute top-12 left-0 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-32">
-                {statusOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => handleFilterChange("status", option.value)}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {/* Date Filter */}
-          <div className="flex flex-col gap-3">
-            <Popover open={open} onOpenChange={setOpen}>
+    <Panel id="users" className="scroll-mt-20 rounded-2xl border-border/50 bg-card shadow-sm">
+
+      <div className="flex flex-col gap-2 border-b border-border/60 bg-surface-muted/30 p-3">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <SearchInput
+            value={searchTerm}
+            onChange={setSearchTerm}
+            placeholder="Search by username or email..."
+            wrapperClassName="relative w-full md:max-w-md"
+          />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Popover
+              open={showFilters.role}
+              onOpenChange={(value) =>
+                setShowFilters((prev) => ({ ...prev, role: value }))
+              }
+            >
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  id="date"
+                  size="sm"
                   className={cn(
-                    filterValues.date && "bg-yellow-200",
-                    "w-48 justify-between font-normal"
+                    "h-9 gap-1.5 px-2.5 font-normal",
+                    filterValues.role &&
+                      "border-brand/30 bg-brand-soft text-brand-hover"
                   )}
                 >
-                  <Calendar />
-                  {filterValues.date
-                    ? new Date(filterValues.date).toLocaleDateString()
-                    : "Select date"}
-                  <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
+                  <ShieldCheck className="size-3.5" />
+                  <span className="text-[11px]">Role: {roleLabel}</span>
+                  <ChevronDown className="size-3.5 opacity-50" />
                 </Button>
               </PopoverTrigger>
-
-              <PopoverContent
-                className="w-auto overflow-hidden p-0"
-                align="start"
-              >
-                <DayPicker
-                  animate
-                  mode="single"
-                  selected={selected}
-                  onSelect={(d) => {
-                    if (d) {
-                      setSelected(d);
-                      handleFilterChange("date", d.toISOString().split("T")[0]);
-                      setOpen(false);
-                    }
-                  }}
-                />
+              <PopoverContent align="start" className="w-44 p-1">
+                {roleOptions.map((option) => (
+                  <button
+                    key={option.value || "all-roles"}
+                    onClick={() => handleFilterChange("role", option.value)}
+                    className={cn(
+                      "flex w-full items-center rounded-sm px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-surface-muted",
+                      filterValues.role === option.value &&
+                        "bg-brand-soft text-brand-hover"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </PopoverContent>
             </Popover>
-          </div>
-          {activeFiltersCount > 0 && (
-            <button
-              onClick={clearFilters}
-              className="text-red-600 cursor-pointer hover:text-red-700 px-3 py-2 text-sm font-medium"
+
+            <Popover
+              open={showFilters.status}
+              onOpenChange={(value) =>
+                setShowFilters((prev) => ({ ...prev, status: value }))
+              }
             >
-              Clear Filters ({activeFiltersCount})
-            </button>
-          )}
-        </div>
-      </div>
-      {isFetching && !isFetchingNextPage ? (
-        <div className="flex items-center justify-center h-[300px]">
-          <LoaderCircle className="animate-spin text-blue-600" size={40} />
-        </div>
-      ) : (
-        <Table>
-          <TableCaption>A list of all users.</TableCaption>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Tenant</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Created Date</TableHead>
-              <TableHead>Action</TableHead>
-            </TableRow>
-          </TableHeader>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-9 gap-1.5 px-2.5 font-normal",
+                    filterValues.status &&
+                      "border-brand/30 bg-brand-soft text-brand-hover"
+                  )}
+                >
+                  <span className="size-1.5 rounded-full bg-ink-muted/70" />
+                  <span className="text-[11px]">Status: {statusLabel}</span>
+                  <ChevronDown className="size-3.5 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-44 p-1">
+                {statusOptions.map((option) => (
+                  <button
+                    key={option.value || "all-status"}
+                    onClick={() => handleFilterChange("status", option.value)}
+                    className={cn(
+                      "flex w-full items-center rounded-sm px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-surface-muted",
+                      filterValues.status === option.value &&
+                        "bg-brand-soft text-brand-hover"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
 
-          <TableBody className="text-left">
-            {allUsers && allUsers.length > 0 ? (
-              allUsers.map((user, index) => (
-                <TableRow key={index}>
-                  <TableCell>{user.username}</TableCell>
-                  <TableCell>{user.email}</TableCell>
-                  <TableCell>{user.tenant}</TableCell>
-                  <TableCell>
-                    <span
-                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(
-                        user.status as Status
-                      )}`}
-                    >
-                      {user.status}
-                    </span>
-                  </TableCell>
+            <DateFilterPopover
+              value={filterValues.date}
+              selected={selected}
+              open={open}
+              onOpenChange={setOpen}
+              onSelect={(date) => {
+                setSelected(date);
+                handleFilterChange("date", date.toISOString().split("T")[0]);
+                setOpen(false);
+              }}
+              format="locale"
+              id="date"
+              buttonClassName="w-[148px]"
+            />
 
-                  <TableCell>
-                    <span
-                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleBadge(
-                        user.role as Role
-                      )}`}
-                    >
-                      {user.role}
-                    </span>
-                  </TableCell>
-
-                  <TableCell>
-                    {user.createAt &&
-                      new Date(user.createAt).toISOString().split("T")[0]}
-                  </TableCell>
-                  <TableCell className="flex items-center gap-3">
-                    <Button className="cursor-pointer">Edit</Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <button
-                          className="inline-flex items-center justify-center rounded-md bg-red-500 text-white hover:bg-red-600 
-               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 
-               transition-colors p-2"
-                        >
-                          <Trash className="h-5 w-5" />
-                        </button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Are you absolutely sure?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This action cannot be undone. This will permanently
-                            delete your account and remove your data from our
-                            servers.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel
-                            disabled={userDeleting}
-                            onClick={() => {}}
-                          >
-                            Cancel
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            disabled={userDeleting}
-                            onClick={() => handleConfirm(user.id)}
-                          >
-                            Continue
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={10} className="p-0">
-                  <div className=" overflow-hidden flex items-center justify-center">
-                    {loading ? (
-                      <div className="flex items-center justify-center py-12">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                        <span className="ml-3 text-gray-600">
-                          Loading users...
-                        </span>
-                      </div>
-                    ) : allUsers.length === 0 ? (
-                      <div className="mx-auto text-center  py-12">
-                        <Users className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">
-                          No users found
-                        </h3>
-                        <p className="text-gray-500 mb-4">
-                          {activeFiltersCount > 0
-                            ? "No users match your current filters. Try adjusting your search criteria."
-                            : "Get started by creating your first user account."}
-                        </p>
-                        {activeFiltersCount > 0 ? (
-                          <button
-                            onClick={clearFilters}
-                            className="text-blue-600 hover:text-blue-700 font-medium"
-                          >
-                            Clear all filters
-                          </button>
-                        ) : (
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg inline-flex items-center gap-2">
-                                <Plus size={16} />
-                                Create New User
-                              </button>
-                            </DialogTrigger>
-                            <DialogContent>
-                              <DialogHeader>
-                                <DialogTitle>
-                                  Are you absolutely sure?
-                                </DialogTitle>
-                                <DialogDescription>
-                                  This action cannot be undone. This will
-                                  permanently delete your account and remove
-                                  your data from our servers.
-                                </DialogDescription>
-                              </DialogHeader>
-                            </DialogContent>
-                          </Dialog>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                </TableCell>
-              </TableRow>
+            {activeFiltersCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="h-9 gap-1.5 px-2 text-ink-muted"
+              >
+                <X className="size-3.5" />
+                Clear ({activeFiltersCount})
+              </Button>
             )}
-          </TableBody>
-        </Table>
-      )}
-      {/* Pagination */}
-      <div className="bg-gray-50 px-6 py-3 flex items-center justify-between border-t">
-        <div className="text-sm text-gray-700">
-          Showing {allUsers.length} users
+          </div>
         </div>
-        {/* {hasNextPage && ( */}
-        <Button
-          onClick={() => fetchNextPage()}
-          disabled={!hasNextPage || isFetchingNextPage}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm cursor-pointer"
-          variant={!hasNextPage ? "ghost" : "secondary"}
-        >
-          {isFetchingNextPage // when data is loading, it shows:
-            ? "Loading more"
-            : hasNextPage
-            ? "Load more" //If there are more pages to load
-            : "Nothing more"}
-          {/* //no more posts */}
-        </Button>
-        {/* )} */}
       </div>
+
+      {isFetching && !isFetchingNextPage ? (
+        <TableLoading />
+      ) : (
+        <UserTable
+          allUsers={allUsers}
+          userDeleting={userDeleting}
+          activeFiltersCount={activeFiltersCount}
+          clearFilters={clearFilters}
+          onDelete={handleConfirm}
+        />
+      )}
+
+      <TablePagination
+        count={allUsers.length}
+        countLabel="users"
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        fetchNextPage={fetchNextPage}
+      />
+    </Panel>
     </div>
   );
 };

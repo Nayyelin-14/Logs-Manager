@@ -1,10 +1,9 @@
-import { PrismaClient } from "../../generated/prisma";
 import { getUserByEmail } from "../../services/auth.service";
 import { checkUserIfNotExist } from "../../utils/auth.utils";
 import { CustomRequest } from "../../utils/refreshToken";
 import { Response } from "express";
+import { prisma } from "../../config/PrismaClient";
 
-const prisma = new PrismaClient();
 export const getUserDashboardStats = async (
   req: CustomRequest,
   res: Response
@@ -21,11 +20,11 @@ export const getUserDashboardStats = async (
     }
 
     const endDate = new Date();
-    endDate.setHours(23, 59, 59, 999);
-
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7);
+    const requestedRange = String(req.query.range || "7d");
+    const days = requestedRange === "1d" ? 1 : requestedRange === "3d" ? 3 : 7;
+    const startDate = new Date(endDate);
     startDate.setHours(0, 0, 0, 0);
+    startDate.setDate(startDate.getDate() - (days - 1));
 
     const dateFilter = { gte: startDate, lte: endDate };
 
@@ -34,24 +33,29 @@ export const getUserDashboardStats = async (
       topIPs,
       topEventTypes,
       eventsBySource,
+      alertsRuleByDay,
       alertsByDay,
       recentAlert,
       sources,
+      severityCounts,
+      eventsByTenant,
+      alertCountsByStatus,
+      alertCountsBySeverity,
+      ruleCountsByEnabled,
     ] = await Promise.all([
-      prisma.securityEvent.findMany({
+      prisma.securityEvent.count({
         where: {
-          tenant: user?.tenant!, // strictly tenant from user
-          user: user?.username!, // strict username match
+          tenant: user?.tenant!,
+          user: user?.username ?? user?.email!,
           timestamp: dateFilter,
         },
-        orderBy: { timestamp: "desc" },
       }),
 
       prisma.securityEvent.groupBy({
         by: ["srcIp"],
         where: {
           tenant: user?.tenant!, // strictly tenant from user
-          user: user?.username!, // strict username match
+          user: user?.username ?? user?.email!,
           timestamp: dateFilter,
           srcIp: { not: null },
         },
@@ -63,7 +67,7 @@ export const getUserDashboardStats = async (
         by: ["eventType"],
         where: {
           tenant: user?.tenant!,
-          user: user?.username!,
+          user: user?.username ?? user?.email!,
           timestamp: dateFilter,
         },
         _count: true,
@@ -74,18 +78,22 @@ export const getUserDashboardStats = async (
         by: ["tenant", "source", "timestamp"],
         where: {
           tenant: user?.tenant!,
-          user: user?.username!,
+          user: user?.username ?? user?.email!,
           timestamp: dateFilter,
         },
         _count: { id: true },
       }),
 
+      prisma.alertRule.groupBy({
+        by: ["tenant", "createdAt"],
+        where: { tenant: user?.tenant!, createdAt: dateFilter },
+        _count: { id: true },
+      }),
       prisma.alert.groupBy({
         by: ["tenant", "triggeredAt"],
         where: { tenant: user?.tenant!, triggeredAt: dateFilter },
         _count: { id: true },
       }),
-
       prisma.alert.findMany({
         where: { tenant: user?.tenant! },
         orderBy: { triggeredAt: "desc" },
@@ -95,11 +103,46 @@ export const getUserDashboardStats = async (
         by: ["source"],
         where: {
           tenant: user?.tenant!,
-          user: user?.username!,
+          user: user?.username ?? user?.email!,
           timestamp: dateFilter,
         },
         _count: true,
-        orderBy: { _count: { eventType: "desc" } },
+        _max: { timestamp: true },
+        orderBy: { _count: { source: "desc" } },
+      }),
+      prisma.securityEvent.groupBy({
+        by: ["severity"],
+        where: {
+          tenant: user?.tenant!,
+          user: user?.username ?? user?.email!,
+          timestamp: dateFilter,
+        },
+        _count: { id: true },
+        orderBy: { severity: "asc" },
+      }),
+      prisma.securityEvent.groupBy({
+        by: ["tenant"],
+        where: {
+          tenant: user?.tenant!,
+          user: user?.username ?? user?.email!,
+          timestamp: dateFilter,
+        },
+        _count: { id: true },
+      }),
+      prisma.alert.groupBy({
+        by: ["status"],
+        where: { tenant: user?.tenant!, triggeredAt: dateFilter },
+        _count: { id: true },
+      }),
+      prisma.alert.groupBy({
+        by: ["severity"],
+        where: { tenant: user?.tenant!, triggeredAt: dateFilter },
+        _count: { id: true },
+      }),
+      prisma.alertRule.groupBy({
+        by: ["enabled"],
+        where: { tenant: user?.tenant! },
+        _count: { id: true },
       }),
     ]);
 
@@ -111,9 +154,34 @@ export const getUserDashboardStats = async (
         count: item._count,
       })),
       eventsBySource,
+      alertsRuleByDay,
       alertsByDay,
       recentAlert,
-      sources,
+      sources: sources.map((item) => ({
+        source: item.source,
+        _count: item._count,
+        latestEventAt: item._max.timestamp,
+      })),
+      severityCounts: severityCounts.map((item) => ({
+        severity: item.severity ?? 0,
+        count: item._count.id,
+      })),
+      eventsByTenant: eventsByTenant.map((item) => ({
+        tenant: item.tenant,
+        count: item._count.id,
+      })),
+      alertCountsByStatus: alertCountsByStatus.map((item) => ({
+        status: item.status,
+        count: item._count.id,
+      })),
+      alertCountsBySeverity: alertCountsBySeverity.map((item) => ({
+        severity: item.severity,
+        count: item._count.id,
+      })),
+      ruleCountsByEnabled: ruleCountsByEnabled.map((item) => ({
+        enabled: item.enabled,
+        count: item._count.id,
+      })),
     });
   } catch (error) {
     console.error("Error fetching user dashboard stats:", error);

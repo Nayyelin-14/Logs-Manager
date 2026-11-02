@@ -1,8 +1,6 @@
 import { cn } from "../../lib/utils";
-
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
-
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Link,
@@ -10,28 +8,31 @@ import {
   useNavigation,
   useSubmit,
 } from "react-router-dom";
-
-import { LoaderCircle, LockIcon } from "lucide-react";
-import { PassworInput } from "./PasswordInput";
+import { LoaderCircle } from "lucide-react";
 import { useState } from "react";
+
+import { PassworInput } from "./PasswordInput";
 import { confirmPwdSchema } from "../../Schemas/AuthSchema";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "../../components/ui/form";
 import { Button } from "../../components/ui/button";
+import { AuthPanel } from "../layout/AuthPanel";
+
 export function ConfirmPwdForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
   const submit = useSubmit();
-  const navigate = useNavigation();
-  const isSubmitting = navigate.state === "submitting";
-  const actionData = useActionData();
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting";
+  const actionData = useActionData() as { message?: string } | undefined;
   const [clientError, setClientError] = useState<string | null>(null);
   const form = useForm<z.infer<typeof confirmPwdSchema>>({
     resolver: zodResolver(confirmPwdSchema),
@@ -40,117 +41,106 @@ export function ConfirmPwdForm({
       confirmPassword: "",
     },
   });
+
   const passwordSubmit = (values: z.infer<typeof confirmPwdSchema>) => {
     if (values.password !== values.confirmPassword) {
-      setClientError("Password is not match");
+      setClientError("Passwords do not match.");
       return;
     }
     setClientError(null);
-    submit(values, { method: "post", action: "/register/confirm-password" }); // dot (.) means current route , cause form under register page with index true
-    console.log(values);
+    submit(values, { method: "post", action: "/register/confirm-password" });
   };
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col items-center gap-2">
-          <a href="#" className="flex flex-col items-center gap-2 font-medium">
-            <div className="flex size-8 items-center justify-center rounded-md">
-              <LockIcon className="h-10 w-10" aria-hidden="true" />
-            </div>
-            <span className="sr-only">Confirm password</span>
-          </a>
-          <h1 className="text-xl font-bold">Confirm your password</h1>
-          <div className="text-center text-sm">
-            <p className="font-semibold">
-              Password must be 8 digits long and contain only numbers. They must
-              match
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-col gap-6">
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(passwordSubmit)}
-              className="space-y-6"
+    <div className={cn("w-full", className)} {...props}>
+      <AuthPanel
+        eyebrow="Account security"
+        title="Confirm your password"
+        description="Set an 8-digit numeric password for your account. Both entries must match."
+        footer={
+          <p className="text-center text-xs text-ink-muted">
+            <Link
+              to="/register"
+              className="font-medium text-ink underline underline-offset-4 hover:text-brand"
             >
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <PassworInput
-                        {...field}
-                        id="password"
-                        required
-                        inputMode="numeric"
-                      />
-                    </FormControl>
-
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />{" "}
-              <FormField
-                control={form.control}
-                name="confirmPassword"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Confirm Password</FormLabel>
-                    <FormControl>
-                      <PassworInput
-                        {...field}
-                        id="phone"
-                        required
-                        inputMode="numeric"
-                      />
-                    </FormControl>
-
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {actionData && (
-                <div className="flex items-center gap-4">
-                  <p className="text-sm text-red-700">{actionData?.message}</p>
-                  <Link
-                    to={"/register"}
-                    className="text-sm hover:underline cursor-pointer"
-                  >
-                    Go back to register
-                  </Link>
-                </div>
+              Back to registration
+            </Link>
+          </p>
+        }
+      >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(passwordSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Password</FormLabel>
+                  <FormControl>
+                    <PassworInput
+                      {...field}
+                      id="password"
+                      autoComplete="new-password"
+                      required
+                      inputMode="numeric"
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Exactly 8 digits. Numbers only.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
               )}
-              {clientError && (
-                <p className="text-sm text-red-700">{clientError}</p>
-              )}
-              <Button
-                type="submit"
-                className={cn(
-                  `${
-                    isSubmitting && "bg-gray-300 text-black"
-                  } w-full cursor-pointer hover:bg-black/60`
-                )}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <LoaderCircle className="animate-spin" />
-                ) : (
-                  "Submit"
-                )}
-              </Button>
-            </form>
-          </Form>
-        </div>
-      </div>
+            />
 
-      <div className="text-muted-foreground *:[a]:hover:text-primary text-center text-xs text-balance *:[a]:underline *:[a]:underline-offset-4">
-        By clicking continue, you agree to our
-        <Link to="#">Terms of Service</Link> and{" "}
-        <Link to="#">Privacy Policy</Link>.
-      </div>
+            <FormField
+              control={form.control}
+              name="confirmPassword"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Confirm password</FormLabel>
+                  <FormControl>
+                    <PassworInput
+                      {...field}
+                      id="confirmPassword"
+                      autoComplete="new-password"
+                      required
+                      inputMode="numeric"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {actionData?.message && (
+              <p className="rounded-sm border border-critical/20 bg-critical/10 px-2.5 py-2 text-[11px] text-critical">
+                {actionData.message}
+              </p>
+            )}
+            {clientError && (
+              <p className="rounded-sm border border-critical/20 bg-critical/10 px-2.5 py-2 text-[11px] text-critical">
+                {clientError}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              className="mt-1 w-full"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  Saving
+                </>
+              ) : (
+                "Save password"
+              )}
+            </Button>
+          </form>
+        </Form>
+      </AuthPanel>
     </div>
   );
 }

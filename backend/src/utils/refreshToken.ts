@@ -44,6 +44,12 @@ export const generateNewToken = async (
   const user = await getUserByEmail(decoded.email);
   await checkUserIfNotExist(user);
 
+  if (user?.status && user.status !== "ACTIVE") {
+    return next(
+      handleError("This account is not active.", 401, errorCode.unthenticated)
+    );
+  }
+
   const validUser = user?.email === decoded.email;
 
   if (!validUser) {
@@ -54,6 +60,7 @@ export const generateNewToken = async (
 
   const TokenPayload = {
     userId: user!.id,
+    username: user!.username,
     email: user!.email,
     tenant: user!.tenant,
     role: user!.role,
@@ -89,6 +96,7 @@ export const generateNewToken = async (
   };
   req.user = {
     userId: user!.id,
+    username: user!.username ?? undefined,
     email: user!.email,
     tenant: user!.tenant!,
     role: user!.role,

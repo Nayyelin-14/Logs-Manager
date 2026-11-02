@@ -1,0 +1,2 @@
+source,event_id,target_user_name,subject_user_name,computer_name,ip_address,logon_type,status,time_created,message
+ad,4625,bob,bob,DC01.corp.example.com,10.0.0.78,3,0xC000006D,2026-10-30T22:23:00Z,"An account failed to log on"

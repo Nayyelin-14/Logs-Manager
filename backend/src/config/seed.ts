@@ -1,7 +1,5 @@
-import { PrismaClient } from "../generated/prisma";
 import { sample_seed_data, hashedPassword } from "./sampleData";
-
-const prisma = new PrismaClient();
+import { prisma } from "./PrismaClient";
 
 async function main() {
   console.log("Starting seeding...");

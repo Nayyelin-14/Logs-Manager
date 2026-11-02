@@ -12,15 +12,27 @@ import route from "./routes/index.route";
 import { cleanupOldLogs } from "./scripts/logCleanUp";
 
 export const app = express();
-const whitelist = ["http://localhost:5173", "https://yourdomain.com"];
+const whitelist = new Set(
+  [
+    "http://localhost:5173",
+    ...(process.env.CORS_ORIGINS || "").split(","),
+    process.env.FRONTEND_URL || "",
+  ]
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
 
 const corsOptions: CorsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    if (whitelist.includes(origin)) {
+    if (whitelist.has(origin)) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      const error = new Error("Not allowed by CORS") as Error & {
+        status?: number;
+      };
+      error.status = 403;
+      callback(error);
     }
   },
   credentials: true,
@@ -48,7 +60,7 @@ app.use(
 app.use(route);
 app.use((error: any, req: Request, res: Response, next: NextFunction) => {
   console.log(error);
-  const status = error.status || 404;
+  const status = error.status || 500;
   const message = error.message || "Something went wrong";
   const errorCode = error.code || "Error_code";
   res.status(status).json({ message, error: errorCode });

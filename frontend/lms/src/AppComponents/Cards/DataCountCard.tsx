@@ -1,92 +1,34 @@
-import { AlertTriangle, Settings, FileText, Users } from "lucide-react";
-import { useNavigate } from "react-router";
+import { ArrowUpRight, BellRing, FileText, SlidersHorizontal, UsersRound } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Panel } from "../../components/ui/panel";
 
 type DataCount = {
-  data: {
-    allLogs: number;
-    allUsers: number;
-    allAlerts: number;
-    allRules: number;
-    tenants?: { tenant: string }[];
-  };
+  data: { allLogs: number; allUsers: number; allAlerts: number; allRules: number };
 };
 
-const DataCountCard = ({ dataCount }: { dataCount: DataCount }) => {
-  const navigate = useNavigate();
-  const handleClick = (target: string) => {
-    // If the section is on the same page, scroll
-    if (target === "logs" || target === "users" || target === "rules") {
-      const element = document.getElementById(target);
-      if (element) element.scrollIntoView({ behavior: "smooth" });
-    } else {
-      // Navigate to /dashboard with a hash or query
-      navigate(`/dashboard#${target}`);
-    }
-  };
+const DataCountCard = ({ dataCount, tenant }: { dataCount: DataCount; tenant: string }) => {
+  const scope = tenant === "all" ? "All tenants" : tenant;
+  const suffix = tenant === "all" ? "" : `?tenant=${encodeURIComponent(tenant)}`;
+  const inventory = [
+    { label: "Alert rules", value: dataCount.data.allRules, icon: SlidersHorizontal, to: `/rules${suffix}`, detail: "Detection logic" },
+    { label: "Users", value: dataCount.data.allUsers, icon: UsersRound, to: `/users${suffix}`, detail: "Workspace access" },
+    { label: "Triggered alerts", value: dataCount.data.allAlerts, icon: BellRing, to: `/alerts${suffix}`, detail: "Detection queue" },
+  ];
 
-  return (
-    <div className="grid grid-cols-4 gap-6">
-      <div
-        onClick={() => handleClick("logs")}
-        className="cursor-pointer p-6 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-medium text-blue-600">Logs</div>
-          <div className="bg-blue-500 p-2 rounded-lg">
-            <FileText className="w-5 h-5 text-white" />
-          </div>
-        </div>
-        <div className="text-3xl font-bold text-blue-900">
-          {dataCount.data.allLogs.toLocaleString()}
-        </div>
-      </div>
-
-      <div
-        onClick={() => handleClick("users")}
-        className="cursor-pointer p-6 bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-medium text-green-600">Users</div>
-          <div className="bg-green-500 p-2 rounded-lg">
-            <Users className="w-5 h-5 text-white" />
-          </div>
-        </div>
-        <div className="text-3xl font-bold text-green-900">
-          {dataCount.data.allUsers.toLocaleString()}
-        </div>
-      </div>
-
-      <div
-        onClick={() => handleClick("alerts")}
-        className="cursor-pointer p-6 bg-gradient-to-br from-red-50 to-red-100 border border-red-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-medium text-red-600">Alerts</div>
-          <div className="bg-red-500 p-2 rounded-lg">
-            <AlertTriangle className="w-5 h-5 text-white" />
-          </div>
-        </div>
-        <div className="text-3xl font-bold text-red-900">
-          {dataCount.data.allAlerts.toLocaleString()}
-        </div>
-      </div>
-
-      <div
-        onClick={() => handleClick("rules")}
-        className="cursor-pointer p-6 bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-medium text-purple-600">Rules</div>
-          <div className="bg-purple-500 p-2 rounded-lg">
-            <Settings className="w-5 h-5 text-white" />
-          </div>
-        </div>
-        <div className="text-3xl font-bold text-purple-900">
-          {dataCount.data.allRules.toLocaleString()}
-        </div>
-      </div>
+  return <Panel className="grid overflow-hidden lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+    <div className="relative flex min-h-44 flex-col justify-between overflow-hidden border-b border-border/70 bg-surface-muted/35 p-5 sm:p-6 lg:border-r lg:border-b-0">
+      <div className="flex items-center justify-between"><span className="inline-flex items-center gap-2 text-xs font-medium text-ink-muted"><FileText className="size-3.5 text-brand" />Indexed security events</span><span className="rounded-sm border border-border bg-canvas/60 px-2 py-1 text-[10px] text-ink-muted">{scope}</span></div>
+        <div className="mt-5 flex items-end justify-between gap-4"><div><p className="font-mono text-4xl font-semibold tracking-[-0.04em] text-ink tabular-nums sm:text-5xl">{dataCount.data.allLogs.toLocaleString()}</p><p className="mt-1.5 text-xs text-ink-muted">Events retained in the selected workspace scope</p></div><Link to={`/logs${suffix}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-border px-3 py-2 text-xs font-medium text-ink transition-colors hover:border-brand/50 hover:bg-surface-muted">Browse events<ArrowUpRight className="size-3.5 text-brand" /></Link></div>
     </div>
-  );
+    <div className="divide-y divide-border/70 px-4 sm:px-5">
+      {inventory.map((item) => <Link key={item.label} to={item.to} className="group flex min-h-[72px] items-center gap-3 py-3 transition-colors hover:bg-surface-muted/25">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-sm border border-border bg-surface-muted/55 text-ink-muted transition-colors group-hover:text-brand"><item.icon className="size-4" /></span>
+        <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">{item.label}</span><span className="mt-0.5 block text-[10px] text-ink-muted">{item.detail}</span></span>
+        <span className="font-mono text-lg font-medium text-ink tabular-nums">{item.value.toLocaleString()}</span>
+        <ArrowUpRight className="size-3.5 text-ink-muted/50 transition-colors group-hover:text-brand" />
+      </Link>)}
+    </div>
+  </Panel>;
 };
 
 export default DataCountCard;

@@ -21,5 +21,15 @@ export const authcheck = async (
   const user = await getUserById(userId!);
   await checkUserIfNotExist(user);
 
-  return res.status(200).json({ message: "Authenticated user", user });
+  return res.status(200).json({
+    message: "Authenticated user",
+    user: {
+      id: user!.id,
+      username: user!.username,
+      email: user!.email,
+      role: user!.role,
+      tenant: user!.tenant,
+      status: user!.status,
+    },
+  });
 };

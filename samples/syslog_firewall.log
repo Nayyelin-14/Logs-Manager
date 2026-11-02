@@ -1,0 +1,1 @@
+<134>Oct 30 22:14:15 fw01 vendor=Fortinet product=FortiGate action=DENY src=10.0.0.5 dst=8.8.8.8 spt=54321 dpt=53 proto=UDP msg="DNS query blocked" policy=block-dns if=wan1 event=traffic mac=00:11:22:33:44:55 reason=policy

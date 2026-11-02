@@ -1,0 +1,1 @@
+<190>Oct 30 22:15:01 router01 source=network vendor=Cisco product=IOS action=ALLOW src=192.168.1.10 dst=1.1.1.1 spt=51515 dpt=443 proto=TCP msg="outbound https" event=traffic if=Gi0/1 mac=aa:bb:cc:dd:ee:ff

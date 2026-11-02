@@ -1,0 +1,4 @@
+{"source":"aws","eventName":"CreateUser","eventSource":"iam.amazonaws.com","userIdentity":{"userName":"carol"},"sourceIPAddress":"203.0.113.30","awsRegion":"eu-west-1","recipientAccountId":"123456789012","eventTime":"2026-10-30T22:24:00Z"}
+{"source":"m365","Operation":"UserLoggedIn","Workload":"AzureActiveDirectory","UserId":"carol@example.com","ClientIP":"203.0.113.31","ResultStatus":"Success","CreationTime":"2026-10-30T22:24:10Z"}
+{"source":"ad","EventID":4625,"TargetUserName":"dave","Computer":"DC01.corp.example.com","IpAddress":"10.0.0.79","LogonType":3,"Status":"0xC000006D","TimeCreated":"2026-10-30T22:24:20Z"}
+{"source":"crowdstrike","event":{"DetectName":"MalwareDetected","ComputerName":"WIN-ENG-03","UserName":"dave","FileName":"trojan.exe","Severity":9,"SHA256String":"abc123","SourceIpAddress":"10.0.0.44","timestamp":"2026-10-30T22:24:30Z"}}

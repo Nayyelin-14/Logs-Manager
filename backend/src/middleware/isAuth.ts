@@ -1,11 +1,9 @@
-import { PrismaClient } from "@prisma/client";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { handleError } from "../utils/errorHandeling";
 
 import { generateNewToken } from "../utils/refreshToken";
 import { errorCode } from "../config/errrorcode";
-const prisma = new PrismaClient();
 
 interface TokenPayload extends JwtPayload {
   userId: number;
@@ -43,6 +41,7 @@ async function authMiddleware(
       ) as TokenPayload;
       req.user = {
         userId: decoded.userId,
+        username: decoded.username,
         role: decoded.role,
         tenant: decoded.tenant,
         email: decoded.email,
@@ -76,6 +75,7 @@ async function authMiddleware(
         ) as TokenPayload;
         req.user = {
           userId: decoded.userId,
+          username: decoded.username,
           role: decoded.role,
           tenant: decoded.tenant,
           email: decoded.email,

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import authRoutes from "./auth.route";
+import ingestRoutes from "./ingest.route";
 import logRoutes from "./logs.route";
 import manageRoutes from "./manage.route";
 import alertRoutes from "./alert.route";
@@ -8,6 +9,7 @@ import { authroiseMiddleware } from "../middleware/authorization";
 const route = Router();
 
 route.use("/api/auth", authRoutes);
+route.use("/api", ingestRoutes);
 route.use("/api", authMiddleware, logRoutes);
 route.use(
   "/api",

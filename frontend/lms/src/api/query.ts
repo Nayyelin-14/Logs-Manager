@@ -3,6 +3,7 @@ import { adminApi, API } from ".";
 import type {
   DashboardStats,
   PaginatedLogsResponse,
+  PaginatedAlertsResponse,
   PaginatedRulesResponse,
   PaginatedUsersResponse,
   RulesFilters,
@@ -38,7 +39,7 @@ const fetchInfiniteUsersWithFilters = async ({
   filters?: UserFilters | null;
 }) => {
   // base query string
-  let query = pageParam ? `?limit=5&cursor=${pageParam}` : "?limit=5";
+  let query = pageParam ? `?limit=25&cursor=${pageParam}` : "?limit=25";
 
   // add filters dynamically
 
@@ -82,7 +83,7 @@ export const fetchDashboardStats = async (
   if (range) params.append("range", range);
   let url;
   if (userId) {
-    url = `/user-dashboard/${userId}`;
+    url = `/user-dashboard/${userId}?${params.toString()}`;
   } else {
     url = `/dashboard?${params.toString()}`;
   }
@@ -119,11 +120,11 @@ const fetchInfiniteLogsWithFilters = async ({
   pageParam = null,
   filters = null,
 }: {
-  pageParam?: number | null;
+  pageParam?: string | null;
   filters?: SecurityEventFilters | null;
 }) => {
   // base query string
-  let query = pageParam ? `?limit=3&cursor=${pageParam}` : "?limit=3";
+  let query = pageParam ? `?limit=25&cursor=${pageParam}` : "?limit=25";
 
   // add filters dynamically
 
@@ -148,13 +149,26 @@ export const LogsInfiniteQueryWithFilters = (
   filters: SecurityEventFilters | null = null
 ) => ({
   queryKey: ["logs", "infinite", JSON.stringify(filters ?? {})],
-  queryFn: ({ pageParam }: { pageParam: number | null }) =>
+  queryFn: ({ pageParam }: { pageParam: string | null }) =>
     fetchInfiniteLogsWithFilters({ pageParam, filters }),
 
   initialPageParam: null,
   getNextPageParam: (lastPage: PaginatedLogsResponse) =>
     lastPage.newCursor ?? undefined,
   // getPreviouspageParam: (firstPage, pages) => firstPage.prevCursor ?? undefined,
+});
+
+export const AlertsInfiniteQuery = (filters: { tenant?: string; status?: string; severity?: string; search?: string }) => ({
+  queryKey: ["alerts", "infinite", JSON.stringify(filters)],
+  queryFn: async ({ pageParam }: { pageParam: string | null }) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (pageParam) params.set("cursor", pageParam);
+    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    const response = await API.get(`/get-alerts?${params.toString()}`);
+    return response.data as PaginatedAlertsResponse;
+  },
+  initialPageParam: null as string | null,
+  getNextPageParam: (page: PaginatedAlertsResponse) => page.newCursor ?? undefined,
 });
 
 export const invalidateUserQueries = async () => {
@@ -174,7 +188,6 @@ export const invalidateLogQueries = async () => {
 const fetchAllDataCount = async (tenant?: string | null) => {
   const query = tenant ? `?tenant=${tenant}` : "";
   const res = await adminApi.get(`/get-all-data${query}`);
-  console.log(res);
   return res.data;
 };
 
@@ -193,11 +206,11 @@ const fetchInfiniteRulesWithFilters = async ({
   pageParam = null,
   filters = null,
 }: {
-  pageParam?: number | null;
+  pageParam?: string | null;
   filters?: RulesFilters | null;
 }) => {
   // base query string
-  let query = pageParam ? `?limit=3&cursor=${pageParam}` : "?limit=3";
+  let query = pageParam ? `?limit=25&cursor=${pageParam}` : "?limit=25";
 
   // add filters dynamically
 
@@ -222,7 +235,7 @@ export const RulesInfiniteQueryWithFilters = (
   filters: RulesFilters | null = null
 ) => ({
   queryKey: ["rules", "infinite", JSON.stringify(filters ?? {})],
-  queryFn: ({ pageParam }: { pageParam: number | null }) =>
+  queryFn: ({ pageParam }: { pageParam: string | null }) =>
     fetchInfiniteRulesWithFilters({ pageParam, filters }),
   initialPageParam: null,
   getNextPageParam: (lastPage: PaginatedRulesResponse) =>

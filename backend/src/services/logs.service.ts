@@ -1,6 +1,4 @@
-import { PrismaClient } from "../generated/prisma";
-
-const prisma = new PrismaClient();
+import { prisma } from "../config/PrismaClient";
 export const getAllLogsListByPagi = async (options: any) => {
   return await prisma.securityEvent.findMany(options);
 };
