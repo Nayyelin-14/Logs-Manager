@@ -1,0 +1,25 @@
+from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index
+from sqlalchemy.orm import relationship
+from app.models.base import Base
+from app.models.enums import Role, Status
+
+
+class User(Base):
+    __tablename__ = "User"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), nullable=True)
+    email = Column(String(255), unique=True, nullable=False)
+    password = Column(String(255), nullable=True)
+    role = Column(SQLEnum(Role, name="Role", native_enum=True), default=Role.USER, nullable=False)
+    tenant = Column(String(100), nullable=True)
+    status = Column(SQLEnum(Status, name="Status", native_enum=True), default=Status.ACTIVE, nullable=False)
+    create_at = Column("createAt", DateTime(timezone=True), server_default="now()", nullable=False)
+    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate="now()", nullable=False)
+
+    __table_args__ = (
+        Index("ix_User_tenant", "tenant"),
+        Index("ix_User_role", "role"),
+        Index("ix_User_create_at", "createAt"),
+        Index("ix_User_status", "status"),
+    )
