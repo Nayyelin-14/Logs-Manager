@@ -1,0 +1,154 @@
+"""Pytest configuration.
+
+Forces every test run onto a dedicated test database (never Neon/production)
+and prepares schema + demo seed before the first test executes.
+
+Run inside the backend container:
+    docker compose -f backend-fastapi/docker-compose.yml exec -T backend pytest -v
+or on the host with the project venv:
+    backend-fastapi/.venv/bin/python -m pytest -v
+"""
+
+import asyncio
+import os
+import pathlib
+import subprocess
+import sys
+
+BACKEND_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+IN_CONTAINER = os.path.exists("/.dockerenv")
+_HOST = "postgres" if IN_CONTAINER else "localhost"
+
+DEFAULT_TEST_DB = (
+    f"postgresql+asyncpg://logs:postgres_pass@{_HOST}:5432/logs_manager_test?sslmode=disable"
+)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DB)
+
+if "neon" in TEST_DATABASE_URL.lower():
+    raise RuntimeError(
+        f"Refusing to run tests against a Neon database ({TEST_DATABASE_URL}). "
+        "Use TEST_DATABASE_URL pointing at a disposable test database."
+    )
+
+# Bind settings/engine to the test database BEFORE any app import.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Local .env points at a shared Upstash Redis; tests use the local Docker Redis.
+os.environ["REDIS_URL"] = f"redis://{_HOST}:6379"
+os.environ["SYSLOG_ENABLED"] = "false"
+# NullPool: connections are never reused across the pytest/TestClient event loops.
+os.environ["DATABASE_POOL"] = "null"
+
+import pytest  # noqa: E402
+
+
+def _connection_kwargs(database: str) -> dict:
+    from urllib.parse import unquote, urlparse
+
+    url = urlparse(TEST_DATABASE_URL.replace("+asyncpg", ""))
+    return {
+        "host": url.hostname or _HOST,
+        "port": url.port or 5432,
+        "user": unquote(url.username or "logs"),
+        "password": unquote(url.password or "postgres_pass"),
+        "database": database,
+        "ssl": False,
+    }
+
+
+def _ensure_database_exists() -> None:
+    """Create the test database if it does not exist yet."""
+    import asyncpg
+
+    target = TEST_DATABASE_URL.replace("+asyncpg", "").split("?")[0].rsplit("/", 1)[-1]
+
+    async def _ensure() -> None:
+        try:
+            conn = await asyncpg.connect(**_connection_kwargs(target))
+        except asyncpg.InvalidCatalogNameError:
+            admin = await asyncpg.connect(**_connection_kwargs("postgres"))
+            try:
+                await admin.execute(f'CREATE DATABASE "{target}"')
+            finally:
+                await admin.close()
+            conn = await asyncpg.connect(**_connection_kwargs(target))
+        await conn.close()
+
+    asyncio_run = asyncio.run
+    asyncio_run(_ensure())
+
+
+def _run(args: list, *, check: bool = True) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["DATABASE_URL"] = TEST_DATABASE_URL
+    return subprocess.run(
+        args,
+        cwd=str(BACKEND_DIR),
+        env=env,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def test_database():
+    """Create schema (alembic) and seed demo data once per test session."""
+    _ensure_database_exists()
+
+    result = _run([sys.executable, "-m", "alembic", "upgrade", "head"])
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"
+        )
+
+    result = _run([sys.executable, "scripts/seed_demo_data.py"])
+    output = f"{result.stdout}\n{result.stderr}"
+    if result.returncode != 0 or "Seed error" in output:
+        raise RuntimeError(f"seed_demo_data failed:\n{output}")
+
+    yield
+
+
+@pytest.fixture()
+def client():
+    """FastAPI test client (no lifespan: listeners/scheduler stay off)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture()
+def api_key() -> str:
+    from app.core.config import get_settings
+
+    return get_settings().INGEST_API_KEY
+
+
+def login(client, email: str, password: str):
+    """Log in and return the response (session cookies stay on the client)."""
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, f"login failed: {response.status_code} {response.text}"
+    return response
+
+
+@pytest.fixture()
+def admin_client(client):
+    login(client, "admin@demo.local", "Admin123!")
+    return client
+
+
+@pytest.fixture()
+def viewer_a_client(client):
+    login(client, "viewerA@demo.local", "ViewerA123!")
+    return client
+
+
+@pytest.fixture()
+def viewer_b_client(client):
+    login(client, "viewerB@demo.local", "ViewerB123!")
+    return client
