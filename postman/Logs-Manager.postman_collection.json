@@ -1,0 +1,175 @@
+{
+  "info": {
+    "name": "Logs Manager",
+    "description": "Ingestion, query, alerting, and admin API for the Logs Manager.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4500" },
+    { "key": "apiKey", "value": "dev_ingest_key_change_me" },
+    { "key": "tenant", "value": "demoA" },
+    { "key": "ruleId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/healthz"
+      }
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (stores cookies)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Auth check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/auth-check"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ingestion",
+      "item": [
+        {
+          "name": "Single event (API key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{apiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"api\",\n  \"tenant\": \"{{tenant}}\",\n  \"event_type\": \"login_failed\",\n  \"user\": \"alice\",\n  \"ip\": \"203.0.113.7\",\n  \"severity\": 7\n}"
+            },
+            "url": "{{baseUrl}}/api/ingest"
+          }
+        },
+        {
+          "name": "Batch event array (API key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{apiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  { \"source\": \"api\", \"event_type\": \"batch_1\", \"user\": \"alice\" },\n  { \"source\": \"aws\", \"eventName\": \"CreateUser\", \"eventSource\": \"iam.amazonaws.com\" }\n]"
+            },
+            "url": "{{baseUrl}}/api/ingest/batch"
+          }
+        },
+        {
+          "name": "Batch file upload (API key)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "samples/batch_sample.jsonl" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/ingest/batch"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Logs and alerts",
+      "item": [
+        {
+          "name": "List logs",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-logs?limit=25&tenant={{tenant}}"
+          }
+        },
+        {
+          "name": "List alerts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-alerts?limit=25"
+          }
+        },
+        {
+          "name": "User dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/user-dashboard/1?range=7d"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/dashboard?range=7d&tenant={{tenant}}"
+          }
+        },
+        {
+          "name": "List rules",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-rules?limit=25"
+          }
+        },
+        {
+          "name": "Create rule",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Brute force - repeated failures\",\n  \"description\": \"5 failures from one IP in 5 minutes\",\n  \"tenant\": \"{{tenant}}\",\n  \"conditions\": [\n    { \"type\": \"repeated_failures\", \"threshold\": 5, \"windowSeconds\": 300 }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/create-alertRule"
+          }
+        },
+        {
+          "name": "Toggle rule",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"enabled\": false\n}" },
+            "url": "{{baseUrl}}/api/rules/{{ruleId}}/enabled"
+          }
+        },
+        {
+          "name": "Data counts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-all-data?tenant={{tenant}}"
+          }
+        }
+      ]
+    }
+  ]
+}
