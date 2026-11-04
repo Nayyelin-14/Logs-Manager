@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 export const AlertRuleSchema = z.object({
-  tenant: z.string(),
-  name: z.string(),
+  tenant: z.string().min(1, "Tenant is required"),
+  name: z.string().min(1, "Rule name is required").max(100, "Rule name too long"),
   description: z.string().optional(),
+  enabled: z.boolean(),
+  severity: z.enum(["low", "medium", "high", "critical"]),
   conditions: z
     .array(
       z.object({
@@ -15,6 +17,7 @@ export const AlertRuleSchema = z.object({
         value: z.string().optional(),
         threshold: z.string().optional(),
         windowSeconds: z.string().optional(),
+        groupBy: z.enum(["srcIp", "user", "host"]).optional(),
       })
     )
     .min(1, "At least one condition is required")
@@ -26,13 +29,16 @@ export const defaultValues = {
   tenant: "",
   name: "",
   description: "",
+  enabled: true,
+  severity: "medium" as const,
   conditions: [
     {
-      type: "",
+      type: "event_type" as const,
       field: "",
       value: "",
       threshold: "1",
       windowSeconds: "60",
+      groupBy: "srcIp" as const,
     },
   ],
 };

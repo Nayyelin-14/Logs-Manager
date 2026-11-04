@@ -1,6 +1,7 @@
 import { PieChart as PieChartIcon } from "lucide-react";
-import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
+import { chartTooltipStyle } from "../Charts/chartTheme";
 import { EmptyState } from "../../components/ui/empty-state";
 import {
   Panel,
@@ -72,6 +73,10 @@ const EventTypeChart = ({ eventTypes }: eventTypeProps) => {
                     />
                   ))}
                 </Pie>
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  formatter={(value, name) => [Number(value).toLocaleString(), String(name)]}
+                />
               </PieChart>
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">

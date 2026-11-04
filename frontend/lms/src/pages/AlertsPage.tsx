@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDot, RefreshCw, Search, Shield, X } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { Activity, AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDot, RefreshCw, Search, Shield, X, ExternalLink } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 
 import { AlertsInfiniteQuery } from "../api/query";
 import { Button } from "../components/ui/button";
@@ -10,6 +10,7 @@ import { SeverityBadge } from "../AppComponents/Tables/shared/SeverityBadge";
 import { useAppMutation } from "../hooks/useMutationApi";
 import { useUserStore } from "../store/userStore";
 import type { PaginatedAlertsResponse } from "../types/types";
+import { useSecurityEventFilterStore } from "../store/filterStore";
 
 type AlertRecord = PaginatedAlertsResponse["alerts"][number];
 const isResolved = (status: string) => ["resolved", "closed"].includes(status.toLowerCase());
@@ -46,7 +47,7 @@ export default function AlertsPage() {
     <div className="relative flex flex-col gap-5">
       <section className="flex flex-col gap-5">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-          <div><div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-ink-muted"><span>Detection &amp; response</span><span className="size-1 rounded-full bg-border" /><span className="font-mono tracking-normal text-brand-hover normal-case">Focused queue</span></div><h1 className="text-2xl font-semibold tracking-tight text-ink">Alert Triage</h1><p className="mt-1 text-sm text-ink-muted">Active detection queue and incident response</p></div>
+          <div><div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-ink-muted"><span>Detection & response</span><span className="size-1 rounded-full bg-border" /><span className="font-mono tracking-normal text-brand-hover normal-case">Focused queue</span></div><h1 className="text-2xl font-semibold tracking-tight text-ink">Alert Triage</h1><p className="mt-1 text-sm text-ink-muted">Active detection queue and incident response</p></div>
           <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3.5 py-2 text-xs"><span className="size-2 rounded-full bg-emerald-400" /><span className="font-medium text-ink">{tenant === "all" ? "All authorized tenants" : tenant || "Workspace"}</span>{tenant && tenant !== "all" && <span className="font-mono text-xs text-ink-muted">{tenant}</span>}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -73,7 +74,7 @@ export default function AlertsPage() {
         <section className="flex flex-col gap-3 xl:col-span-7">
           <div className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm">
             <div className="grid grid-cols-12 gap-2 bg-surface-muted px-4 py-3 text-xs font-semibold uppercase tracking-wider text-ink-muted">
-              <div className="col-span-2">Severity</div><div className="col-span-5">Detection &amp; Context</div><div className="col-span-3">Rule signature</div><div className="col-span-2 text-right">Triggered</div>
+              <div className="col-span-2">Severity</div><div className="col-span-5">Detection & Context</div><div className="col-span-3">Rule signature</div><div className="col-span-2 text-right">Triggered</div>
             </div>
             {query.isLoading ? <div className="p-8 text-center text-sm text-ink-muted">Loading alert queue…</div> : query.isError ? <div className="p-8 text-center text-sm text-critical">Unable to load alerts. <button className="underline" onClick={() => query.refetch()}>Retry</button></div> : alerts.length === 0 ? <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center"><AlertTriangle className="size-5 text-ink-muted" /><p className="mt-3 text-sm font-medium text-ink">No matching alerts</p><p className="mt-1 text-xs text-ink-muted">Try another search or filter, or wait for a detection to match.</p></div> : <div className="divide-y divide-border/50">
               {alerts.map((alert) => <QueueRow key={alert.id} alert={alert} selected={selected?.id === alert.id} onClick={() => setSelectedId(alert.id)} />)}
@@ -111,12 +112,28 @@ function QueueRow({ alert, selected, onClick }: { alert: AlertRecord; selected: 
 
 function AlertDetail({ alert, admin, isPending, onResolve, onClose }: { alert: AlertRecord; admin: boolean; isPending: boolean; onResolve: () => void; onClose: () => void }) {
   const time = new Date(alert.triggeredAt);
+  const navigate = useNavigate();
+  const { updateFilter } = useSecurityEventFilterStore();
+
+  const handleViewRelatedLogs = () => {
+    // Set the tenant filter and navigate to logs page
+    if (alert.tenant) {
+      updateFilter("tenant", alert.tenant);
+    }
+    // Use the first event ID as search query to find related logs
+    const firstEventId = alert.eventIds[0];
+    if (firstEventId) {
+      updateFilter("search", firstEventId);
+    }
+    navigate("/logs");
+  };
+
   return <div className="flex flex-col gap-5 rounded-3xl border border-border/50 bg-card p-5 shadow-sm sm:p-6" aria-label="Alert detail workspace">
     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 flex flex-wrap items-center gap-2"><SeverityBadge severity={alert.severity} /><span className="rounded-md bg-brand/10 px-2 py-1 font-mono text-xs font-semibold uppercase text-brand-hover">{alert.status}</span></div><h2 className="text-base font-semibold tracking-tight text-ink">{alert.title}</h2><div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-ink-muted"><span>{alert.rule?.name || "Unlinked rule"}</span><span>·</span><span>{Number.isNaN(time.getTime()) ? "Unknown time" : time.toLocaleString()}</span></div></div><button onClick={onClose} aria-label="Clear selected alert" title="Clear selected alert" className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink"><X className="size-4" /></button></div>
     <section className="flex flex-col gap-2"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Detection context</h3><p className="rounded-2xl border border-border/35 bg-surface-muted/50 p-3.5 text-xs leading-5 text-ink">{alert.description || alert.rule?.description || "No additional detection narrative is available."}</p></section>
     <section className="flex flex-col gap-2.5"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Affected entities</h3><div className="grid grid-cols-2 gap-2"><Entity label="Tenant" value={alert.tenant} /><Entity label="Alert ID" value={alert.id} mono /></div></section>
     <section className="flex flex-col gap-2.5"><div className="flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Linked telemetry</h3><span className="inline-flex items-center gap-1 font-mono text-xs text-ink-muted"><Activity className="size-3" />{alert.eventIds.length} events</span></div>{alert.eventIds.length ? <div className="flex flex-col gap-1.5">{alert.eventIds.map((id) => <div key={id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-border/30 bg-surface-muted/40 px-3.5 py-2.5"><span className="truncate font-mono text-xs text-ink">{id}</span><ChevronRight className="size-3 shrink-0 text-ink-muted" /></div>)}</div> : <p className="rounded-xl bg-surface-muted/40 px-3 py-2.5 text-xs text-ink-muted">No linked event IDs were recorded.</p>}</section>
-    <div className="mt-auto border-t border-border/40 pt-4"><div className="flex items-center gap-2 text-xs text-ink-muted"><Shield className="size-3.5 text-emerald-400" /><span>{userRoleLabel(admin)}</span></div>{admin && !isResolved(alert.status) && <Button onClick={onResolve} disabled={isPending} className="mt-3 h-11 w-full gap-2 rounded-xl bg-brand text-white hover:opacity-90"><Check className="size-4" />{isPending ? "Resolving alert…" : "Resolve alert"}</Button>}{isResolved(alert.status) && <div className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 py-3 text-xs font-medium text-emerald-400"><Check className="size-4" /> Alert resolved</div>}</div>
+    <div className="mt-auto border-t border-border/40 pt-4"><div className="flex items-center gap-2 text-xs text-ink-muted"><Shield className="size-3.5 text-emerald-400" /><span>{userRoleLabel(admin)}</span></div>{admin && !isResolved(alert.status) && <Button onClick={onResolve} disabled={isPending} className="mt-3 h-11 w-full gap-2 rounded-xl bg-brand text-white hover:opacity-90"><Check className="size-4" />{isPending ? "Resolving alert…" : "Resolve alert"}</Button>}{isResolved(alert.status) && <div className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 py-3 text-xs font-medium text-emerald-400"><Check className="size-4" /> Alert resolved</div>}{alert.eventIds.length > 0 && <Button variant="outline" onClick={handleViewRelatedLogs} className="mt-3 h-11 w-full gap-2 rounded-xl border border-brand/30 bg-brand/5 text-brand hover:bg-brand/10"><ExternalLink className="size-4" />View Related Logs</Button>}</div>
   </div>;
 }
 

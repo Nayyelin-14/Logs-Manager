@@ -1,10 +1,20 @@
 import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
-
+import { useRouteError } from "react-router-dom";
+import { useEffect } from "react";
 import { Button } from "../components/ui/button";
 import { Panel } from "../components/ui/panel";
 
 const NotFound = () => {
+  const error = useRouteError();
+  const isError = error instanceof Error;
+  const errorMessage = isError ? error.message : String(error);
+  const errorStack = isError ? error.stack : undefined;
+  
+  useEffect(() => {
+    console.error("Route error:", errorMessage);
+  }, [errorMessage]);
+
   return (
     <div className="flex min-h-svh items-center justify-center bg-canvas px-4 py-10">
       <Panel className="w-full max-w-lg p-6 sm:p-8">
@@ -22,15 +32,24 @@ const NotFound = () => {
           </div>
         </div>
 
-        <p className="mt-10 font-mono text-[10px] font-semibold tracking-[0.2em] text-ink-muted uppercase">
+        <h1 className="mt-10 font-mono text-[10px] font-semibold tracking-[0.2em] text-ink-muted uppercase">
           Error / 404
-        </p>
+        </h1>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">
           Route not found
         </h1>
         <p className="mt-2 max-w-sm text-sm leading-6 text-ink-muted">
           The requested console view does not exist or is no longer available.
         </p>
+
+        <div className="mt-10">
+          <details className="border rounded-md p-4">
+            <summary className="cursor-pointer text-sm font-medium text-ink-muted">
+              Click to see technical error details
+            </summary>
+            <pre className="mt-2 text-xs font-mono text-ink-muted overflow-auto max-h-60">{isError ? (errorStack || errorMessage) : errorMessage}</pre>
+          </details>
+        </div>
 
         <Button asChild className="mt-6">
           <Link to="/">

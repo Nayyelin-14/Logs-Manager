@@ -1,14 +1,8 @@
 import * as React from "react";
 import { Activity } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, Line, XAxis, YAxis } from "recharts";
 
-import {
-  type ChartConfig,
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "../components/ui/chart";
 import { EmptyState } from "../components/ui/empty-state";
+import { GradientAreaChart } from "./Charts/GradientAreaChart";
 import {
   Panel,
   PanelContent,
@@ -36,11 +30,6 @@ export interface ChartAreaInteractiveProps {
   totalEvents?: number;
   className?: string;
 }
-
-const chartConfig = {
-  events: { label: "Events", color: "var(--chart-1)" },
-  triggeredAlerts: { label: "Alerts triggered", color: "var(--chart-3)" },
-} satisfies ChartConfig;
 
 const legend = [
   { label: "Events", color: "bg-brand" },
@@ -207,81 +196,33 @@ export function ChartAreaInteractive({
             description="No events or alerts were recorded in the selected window."
           />
         ) : (
-          <ChartContainer
-            config={chartConfig}
-            className="h-[270px] w-full [&_.recharts-cartesian-axis-tick_text]:fill-ink-muted [&_.recharts-cartesian-axis-tick_text]:text-[10px]"
-          >
-            <AreaChart
-              data={filteredData}
-              margin={{ top: 8, right: 10, bottom: 0, left: 0 }}
-            >
-              <defs>
-                <linearGradient id="analytics-event-area" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.24} />
-                  <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.01} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid
-                vertical={false}
-                stroke="var(--border)"
-                strokeDasharray="3 3"
-              />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={10}
-                minTickGap={28}
-                tickFormatter={(value) => {
-                  const date = new Date(value);
-                  return range === "1d" || range === "today"
-                    ? `${date.toLocaleTimeString("en-US", { hour: "2-digit", hour12: false, timeZone: "UTC" })}:00`
-                    : date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-                }}
-              />
-              <YAxis
-                yAxisId="events"
-                width={30}
-                tickLine={false}
-                axisLine={false}
-                allowDecimals={false}
-                tickMargin={4}
-              />
-              <YAxis yAxisId="detections" orientation="right" hide domain={[0, "dataMax + 1"]} />
-              <ChartTooltip
-                cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
-                content={
-                  <ChartTooltipContent
-                    indicator="line"
-                    labelFormatter={(value) => new Date(value).toLocaleString("en-US", {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      ...(range === "1d" || range === "today" ? { hour: "2-digit", timeZone: "UTC" } : { timeZone: "UTC" }),
-                    })}
-                  />
-                }
-              />
-              <Area
-                yAxisId="events"
-                dataKey="events"
-                type="monotone"
-                stroke="var(--chart-1)"
-                strokeWidth={2}
-                fill="url(#analytics-event-area)"
-                activeDot={{ r: 3.5, strokeWidth: 2, stroke: "var(--surface)" }}
-              />
-              <Line
-                yAxisId="detections"
-                dataKey="triggeredAlerts"
-                type="monotone"
-                stroke="var(--chart-3)"
-                strokeWidth={1.7}
-                dot={false}
-                activeDot={{ r: 3, strokeWidth: 0 }}
-              />
-            </AreaChart>
-          </ChartContainer>
+          <GradientAreaChart
+            className="h-[270px] w-full"
+            data={filteredData}
+            xKey="date"
+            series={[
+              { dataKey: "events", label: "Events", color: "var(--chart-1)" },
+              {
+                dataKey: "triggeredAlerts",
+                label: "Alerts triggered",
+                color: "var(--chart-3)",
+                kind: "line",
+                yAxisId: "right",
+              },
+            ]}
+            xTickFormatter={(value) => {
+              const date = new Date(value);
+              return range === "1d" || range === "today"
+                ? `${date.toLocaleTimeString("en-US", { hour: "2-digit", hour12: false, timeZone: "UTC" })}:00`
+                : date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+            }}
+            tooltipLabelFormatter={(value) => new Date(value).toLocaleString("en-US", {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              ...(range === "1d" || range === "today" ? { hour: "2-digit", timeZone: "UTC" } : { timeZone: "UTC" }),
+            })}
+          />
         )}
       </PanelContent>
     </Panel>

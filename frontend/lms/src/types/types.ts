@@ -99,6 +99,7 @@ export interface AlertConditionType {
   threshold?: number;
   windowSeconds?: number;
   severity_min?: number;
+  groupBy?: "srcIp" | "user" | "host";
 }
 
 export interface AlertRuleType {
@@ -107,6 +108,7 @@ export interface AlertRuleType {
   description?: string;
   tenant: string;
   enabled: boolean;
+  severity: "low" | "medium" | "high" | "critical";
   createdAt: string;
   updatedAt: string;
   actions: Record<string, unknown>;

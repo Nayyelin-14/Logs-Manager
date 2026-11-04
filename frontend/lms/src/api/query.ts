@@ -81,12 +81,8 @@ export const fetchDashboardStats = async (
   const params = new URLSearchParams();
   if (tenant) params.append("tenant", tenant);
   if (range) params.append("range", range);
-  let url;
-  if (userId) {
-    url = `/user-dashboard/${userId}?${params.toString()}`;
-  } else {
-    url = `/dashboard?${params.toString()}`;
-  }
+  if (userId) params.append("userId", userId);
+  const url = `/dashboard?${params.toString()}`;
   const response = await API.get(url);
   return response.data;
 };

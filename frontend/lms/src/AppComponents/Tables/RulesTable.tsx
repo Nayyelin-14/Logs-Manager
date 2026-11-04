@@ -54,6 +54,12 @@ const severityTone: Record<Exclude<SeverityFilter, "all">, { label: string; clas
 };
 
 const getRuleSeverity = (rule: AlertRuleType): Exclude<SeverityFilter, "all"> => {
+  // First, check if rule has explicit severity field
+  if (rule.severity) {
+    return rule.severity;
+  }
+  
+  // Fallback: check for severity_min condition
   const condition = rule.conditions?.find((item) => item.type === "severity_min");
   if (!condition) return "unscoped";
 

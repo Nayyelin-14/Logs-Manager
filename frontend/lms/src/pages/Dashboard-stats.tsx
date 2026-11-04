@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Activity, ArrowRight, ExternalLink, Radio, RefreshCcw, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { GradientAreaChart } from "../AppComponents/Charts/GradientAreaChart";
 import PageHeader from "../AppComponents/layout/PageHeader";
 import DashboardSkeleton from "./DashboardSkeleton";
 import { Button } from "../components/ui/button";
@@ -67,26 +67,26 @@ function EventPulse({ data, range }: { data: DashboardStats; range: string }) {
       </div>
     </div>
     <div className="mt-3 h-[215px] sm:h-[240px]">
-      {hasEvents ? <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={points} margin={{ top: 10, right: 6, left: -20, bottom: 0 }}>
-          <defs><linearGradient id="event-pulse-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--brand)" stopOpacity={0.28} /><stop offset="92%" stopColor="var(--brand)" stopOpacity={0.01} /></linearGradient></defs>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="2 5" />
-          <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={10} tick={{ fill: "var(--ink-muted)", fontSize: 10 }} tickFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })} />
-          <YAxis yAxisId="events" tickLine={false} axisLine={false} width={42} tick={{ fill: "var(--ink-muted)", fontSize: 9 }} tickFormatter={(value) => Number(value).toLocaleString()} />
-          <YAxis yAxisId="alerts" orientation="right" hide domain={[0, "dataMax + 1"]} />
-          <Tooltip labelFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })} formatter={(value, name) => [Number(value).toLocaleString(), name === "events" ? "Events" : "Detections"]} contentStyle={{ background: "var(--popover)", borderColor: "var(--border)", borderRadius: 5, color: "var(--ink)", fontSize: 11 }} />
-          <Area yAxisId="events" dataKey="events" type="monotone" stroke="var(--brand)" strokeWidth={2.1} fill="url(#event-pulse-fill)" activeDot={{ r: 3.5, fill: "var(--brand)", stroke: "var(--surface)", strokeWidth: 2 }} />
-          <Line yAxisId="alerts" dataKey="alerts" type="monotone" stroke="var(--chart-2)" strokeWidth={1.7} dot={false} activeDot={{ r: 3, fill: "var(--chart-2)", stroke: "var(--surface)", strokeWidth: 2 }} />
-        </AreaChart>
-      </ResponsiveContainer> : <div className="flex h-full items-center justify-center border-y border-dashed border-border/80 text-xs text-ink-muted">No activity recorded in this window</div>}
+      {hasEvents ? <GradientAreaChart
+        className="h-full w-full"
+        data={points}
+        xKey="date"
+        series={[
+          { dataKey: "events", label: "Events", color: "var(--brand)" },
+          { dataKey: "alerts", label: "Detections", color: "var(--chart-2)", kind: "line", yAxisId: "right" },
+        ]}
+        xTickFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        yTickFormatter={(value) => Number(value).toLocaleString()}
+        tooltipLabelFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+      /> : <div className="flex h-full items-center justify-center border-y border-dashed border-border/80 text-xs text-ink-muted">No activity recorded in this window</div>}
     </div>
     <div className="mt-2 flex items-center justify-between border-t border-border/70 pt-3 text-xs text-ink-muted"><span>Daily event volume</span><span>Detection count uses the right-side scale</span></div>
   </div>;
 }
 
 function DetectionRail({ data, range }: { data: DashboardStats; range: string }) {
-  const counts = new Map(data.alertCountsBySeverity.map((item) => [item.severity.toLowerCase(), item.count]));
-  const active = data.alertCountsByStatus.filter((item) => !["resolved", "closed"].includes(item.status.toLowerCase())).reduce((sum, item) => sum + item.count, 0);
+  const counts = new Map(data.alertCountsBySeverity.map((item) => [(item.severity ?? "").toLowerCase(), item.count]));
+  const active = data.alertCountsByStatus.filter((item) => !["resolved", "closed"].includes((item.status ?? "").toLowerCase())).reduce((sum, item) => sum + item.count, 0);
   const total = severityOrder.reduce((sum, level) => sum + Number(counts.get(level) ?? 0), 0);
   return <aside className="flex min-h-full flex-col border-t border-border bg-surface-muted/30 px-4 py-5 sm:px-5 xl:border-t-0 xl:border-l">
     <div className="flex items-start justify-between gap-3">
@@ -100,7 +100,7 @@ function DetectionRail({ data, range }: { data: DashboardStats; range: string })
     </div>
     <div className="mt-5 border-t border-border/70 pt-3">
       <div className="mb-1.5 flex items-center justify-between"><p className="text-xs font-medium text-ink">Latest detections</p><Link to="/alerts" className="text-xs text-brand hover:text-brand-hover">View queue</Link></div>
-      {data.recentAlert.length ? <ul className="divide-y divide-border/60">{data.recentAlert.slice(0, 4).map((alert) => <li key={alert.id} className="flex min-w-0 items-center gap-2 py-2"><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: severityColors[alert.severity.toLowerCase()] ?? "#a1aab0" }} /><span title={alert.title} className="min-w-0 flex-1 truncate text-xs text-ink">{alert.title}</span><time className="shrink-0 font-mono text-xs text-ink-muted">{relativeTime(new Date(alert.triggeredAt).toISOString())}</time></li>)}</ul> : <p className="py-3 text-xs text-ink-muted">No detections yet. Rules will appear here when they match events.</p>}
+      {data.recentAlert.length ? <ul className="divide-y divide-border/60">{data.recentAlert.slice(0, 4).map((alert) => <li key={alert.id} className="flex min-w-0 items-center gap-2 py-2"><span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: severityColors[(alert.severity ?? "").toLowerCase()] ?? "#a1aab0" }} /><span title={alert.title} className="min-w-0 flex-1 truncate text-xs text-ink">{alert.title}</span><time className="shrink-0 font-mono text-xs text-ink-muted">{relativeTime(new Date(alert.triggeredAt).toISOString())}</time></li>)}</ul> : <p className="py-3 text-xs text-ink-muted">No detections yet. Rules will appear here when they match events.</p>}
     </div>
     <div className="mt-auto flex items-center gap-1.5 pt-4 text-xs text-ink-muted"><span className="size-1.5 rounded-full bg-chart-2" />Counts reflect {rangeLabel(range).toLowerCase()} data</div>
   </aside>;
@@ -113,7 +113,7 @@ function SourceReadout({ sources }: { sources: DashboardStats["sources"] }) {
     <div className="flex items-center justify-between"><div><h2 className="text-xs font-semibold text-ink">Source activity</h2><p className="mt-1 text-xs text-ink-muted">Most recent event by type</p></div><Radio className="size-4 text-chart-2" /></div>
     {visible.length ? <div className="mt-4 space-y-3">{visible.map((item) => <div key={item.source}>
       <div className="mb-1 flex items-baseline gap-2"><span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{item.source}</span><span className="font-mono text-xs text-ink-muted">{item._count.toLocaleString()}</span><time className="w-12 text-right font-mono text-xs text-ink-muted">{relativeTime(item.latestEventAt)}</time></div>
-      <div className="h-[3px] overflow-hidden bg-surface-muted"><div className="h-full bg-chart-2" style={{ width: `${Math.max(4, item._count / maximum * 100)}%` }} /></div>
+      <div className="h-[3px] overflow-hidden rounded-full bg-surface-muted"><div className="h-full rounded-full" style={{ width: `${Math.max(4, item._count / maximum * 100)}%`, background: "linear-gradient(90deg, var(--chart-2), color-mix(in srgb, var(--chart-2) 35%, transparent))" }} /></div>
     </div>)}</div> : <p className="mt-4 text-xs text-ink-muted">No source activity for this period.</p>}
     <p className="mt-3 text-xs leading-4 text-ink-muted">Event recency only; collector health is not tracked.</p>
   </section>;
@@ -126,7 +126,7 @@ function RuleReadout({ data, created, range }: { data: DashboardStats; created: 
   return <section className="min-w-0">
       <div className="flex items-center justify-between"><div><h2 className="text-xs font-semibold text-ink">Detection rules</h2><p className="mt-1 text-xs text-ink-muted">Enabled across this scope</p></div><SlidersHorizontal className="size-4 text-ink-muted" /></div>
     <div className="mt-4 flex items-end justify-between"><div><span className="font-mono text-[32px] leading-none font-medium tracking-tight text-ink tabular-nums">{enabled}</span><span className="ml-1.5 text-xs text-chart-2">enabled</span></div><span className="font-mono text-xs text-ink-muted tabular-nums">{paused} paused</span></div>
-    <div className="mt-2 flex h-1 overflow-hidden bg-surface-muted"><span className="bg-chart-2" style={{ width: `${total ? enabled / total * 100 : 0}%` }} /></div>
+    <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-surface-muted"><span className="rounded-full" style={{ width: `${total ? enabled / total * 100 : 0}%`, background: "linear-gradient(90deg, var(--chart-2), color-mix(in srgb, var(--chart-2) 35%, transparent))" }} /></div>
     <div className="mt-3 flex items-center justify-between text-xs"><span className="text-ink-muted">Created {rangeLabel(range).toLowerCase()}</span><span className="font-mono text-ink tabular-nums">{created}</span></div>
     <Link to="/rules" className="mt-3 inline-flex items-center gap-1 text-xs text-brand hover:text-brand-hover">Manage rules <ArrowRight className="size-3" /></Link>
   </section>;
@@ -137,7 +137,7 @@ function TopIps({ ips }: { ips: DashboardStats["topIPs"] }) {
   const maximum = Math.max(...visible.map((ip) => ip.count), 1);
   return visible.length ? <div className="space-y-3">{visible.map((ip, index) => <div key={`${ip.ip}-${index}`} className="rounded-xl bg-surface-muted/55 p-3">
     <div className="flex items-center justify-between gap-2"><span className="truncate font-mono text-xs font-semibold text-ink">{ip.ip}</span><span className="rounded bg-surface px-2 py-0.5 font-mono text-xs text-ink-muted">{ip.count.toLocaleString()} events</span></div>
-    <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-critical/80" style={{ width: `${Math.max(4, ip.count / maximum * 100)}%` }} /></div>
+    <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full" style={{ width: `${Math.max(4, ip.count / maximum * 100)}%`, background: "linear-gradient(90deg, var(--critical), color-mix(in srgb, var(--critical) 35%, transparent))" }} /></div>
   </div>)}</div> : <p className="rounded-xl bg-surface-muted/55 p-4 text-xs text-ink-muted">Source IP activity appears as network events are recorded.</p>;
 }
 
