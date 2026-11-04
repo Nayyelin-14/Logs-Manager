@@ -52,7 +52,7 @@
 - Docker Compose not functional in WSL 2 environment
 - Cannot spin disposable PostgreSQL for integration tests
 - All migration/testing done via Python/AST/offline validation
-- **Note**: `backend/` (Express) protected, untouched
+- **Note**: `backend/` (Express) was protected during phases and removed in the FastAPI-only cleanup
 
 ## Honest Inventory
 

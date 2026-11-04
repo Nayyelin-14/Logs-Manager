@@ -146,8 +146,7 @@ async def main():
     print("FASTAPI LOCAL CONNECTIVITY TEST")
     print("="*60)
     print("⚠️  NOTE: This test verifies INFRASTRUCTURE connectivity only.")
-    print("⚠️  AUTH COMPATIBILITY WITH EXPRESS BACKEND IS NOT TESTED HERE.")
-    print("⚠️  Actual auth compatibility testing is a separate phase.")
+    print("ℹ️  Auth compatibility is covered by tests/test_auth_compatibility.py (pytest).")
     print("="*60)
     
     results = []
@@ -171,7 +170,6 @@ async def main():
     print("="*60)
     if all_passed:
         print("🎉 ALL INFRASTRUCTURE CONNECTIVITY TESTS PASSED")
-        print("⚠️  REMINDER: Auth compatibility with Express backend is PENDING")
         return 0
     else:
         print("⚠️  SOME TESTS FAILED")

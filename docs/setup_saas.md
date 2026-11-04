@@ -1,201 +1,197 @@
-# SaaS Deployment Guide
+# Log Manager - SaaS/Cloud Deployment
 
-This document describes how to deploy the **Log Management System** in SaaS.
-In this setup:
+## Prerequisites
 
-- **Backend API** is deployed on **Render**
-- **Frontend UI** is deployed on **Vercel**
-- **Database** is hosted on **Neon (PostgreSQL)**
-- **Prisma** is used as ORM for schema migrations
+- Cloud VM (AWS EC2, Oracle Free Tier, DigitalOcean, etc.)
+- Domain name (recommended for Let's Encrypt) or use IP address
+- Open ports: 22 (SSH), 80 (HTTP), 443 (HTTPS), 514 (Syslog UDP+TCP if needed)
+- 4 GB RAM minimum, 2 vCPU minimum, 40 GB disk
 
----
+## Deployment Steps
 
-## 1. Prerequisites
+### 1. Provision the VM
 
-- GitHub repository containing:
+```bash
+# Example: AWS EC2
+# - Select Ubuntu 22.04 AMI
+# - t2.micro or larger (free tier eligible)
+# - Open ports: 22, 80, 443 (and 514 for syslog)
+# - Create a new volume (minimum 40 GB)
+```
 
-  - `/backend/`
-  - `/frontend/`
-  - `prisma/schema.prisma`
+### 2. Install Docker and Docker Compose
 
-- Accounts on:
+```bash
+# On Ubuntu
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-plugin
+sudo usermod -aG docker $USER
+newgrp docker
 
-  - [Render](https://render.com/) (for backend)
-  - [Vercel](https://vercel.com/) (for frontend)
-  - [Neon](https://neon.tech/) (for Postgres database)
+# Verify
+docker version
+docker compose version
+```
 
----
+### 3. Clone and Configure
 
-## 2. Database Setup (Neon)
+```bash
+git clone <repository-url>
+cd logs-manager
+cp .env.example .env
+```
 
-1. Create a **new project** in [Neon](https://console.neon.tech/).
+Edit `.env` for SaaS production settings:
 
-2. Copy the **connection string** (Postgres URI), e.g.:
+```
+# Database
+POSTGRES_USER=logs
+POSTGRES_PASSWORD=change_this_strong_password
+POSTGRES_DB=logs_manager
 
-   ```
-   postgres://user:password@ep-mydatabase.neon.tech:5432/logdb?sslmode=require
-   ```
+# Redis
+REDIS_URL=redis://:change_this_strong_password@localhost:6379
 
-3. Update your `.env` file in `/backend/.env`:
+# Auth secrets (generate strong secrets!)
+ACCESS_TOKEN_SECRET=change_this_very_long_random_string
+REFRESH_TOKEN_SECRET=change_this_very_long_random_string
 
-   ```env
-   DATABASE_URL="postgresql://user:password@ep-mydatabase.region.aws.neon.tech/logdb?sslmode=require"
-   ```
+# Cookie behavior for HTTPS SaaS
+COOKIE_SECURE=true
+COOKIE_SAME_SITE=none
 
-   Use the **direct** connection string for local development and Prisma
-   migrations. If you run the backend in a serverless environment (many
-   short-lived connections), use Neon's **pooled** connection string instead and
-   append `&pgbouncer=true&connect_timeout=15`.
+# Ingestion
+INGEST_API_KEY=change_this_to_a_long_random_value
+INGEST_API_TENANT=demoA
+INGEST_API_USERNAME=log-forwarder
 
-4. Generate the Prisma client and run Prisma migrations:
+# Syslog (optional)
+SYSLOG_ENABLED=false  # Set to true if accepting external syslog
+SYSLOG_TENANT=demoA
+SYSLOG_SOURCE=firewall
+SYSLOG_UDP_PORT=514
+SYSLOG_TCP_PORT=514
 
-   ```bash
-   cd backend
-   npx prisma generate
-   npx prisma migrate deploy
-   ```
+# CORS for production domain
+CORS_ORIGINS=https://your-domain.com
 
----
+# SMTP for email notifications (optional)
+SMTP_ENABLED=false  # Or true + configure SMTP_HOST, SMTP_PORT, etc.
+GMAIL_USER=your@gmail.com
+GMAIL_PASS=your_app_password
 
-## 3. Backend Deployment (Render)
+# Domain and HTTPS
+DOMAIN=your-domain.com  # For Let's Encrypt
+EMAIL_HOST=smtp.gmail.com
+SMTP_PORT=587
+```
 
-1. Go to [Render Dashboard](https://dashboard.render.com/).
-2. Create a **New Web Service** → Connect your GitHub repo → Select `/backend`.
-3. Configure:
+### 3. Start the Stack
 
-   - **Environment**: Node.js
-   - **Build Command**:
+```bash
+make up
+```
 
-     ```bash
-     npm install && npx prisma generate && npm run build
-     ```
+Wait ~30-60 seconds for services to initialize.
 
-   - **Start Command**:
+### 4. Configure DNS and HTTPS
 
-     ```bash
-     npm run start
-     ```
+If you have a domain name:
 
-   - **Environment Variables** (copy from `.env`):
+```bash
+# Ensure your domain's DNS A record points to the VM's IP address
+# Then Caddy will automatically get Let's Encrypt certificates
 
-     ```env
-     NODE_ENV=production
-     PORT=4500
-     DATABASE_URL=<your Neon Postgres URL>
-     ACCESS_TOKEN_SECRET=<your access token secret>
-     REFRESH_TOKEN_SECRET=<your refresh token secret>
-     REDIS_URL=<your Redis URL>
-     CORS_ORIGINS=https://log-frontend.vercel.app
-     GMAIL_USER=<your Gmail address>
-     GMAIL_PASS=<your Gmail app password>
-     INGEST_API_KEY=<long random ingestion key>
-     INGEST_API_TENANT=demoA
-     ```
+# Or manually run:
+docker exec -it caddy caddy adapt --config /etc/caddy/Caddyfile
+```
 
-4. Deploy. After successful build, you’ll get a public URL, e.g.:
+If no domain name (IP only):
 
-   ```
-   https://log-backend.onrender.com
-   ```
+1. Caddy will start with a self-signed certificate
+2. The frontend will show a "Your connection is not private" warning
+3. Users must accept the risk to proceed
+4. For production use, a real domain name is strongly recommended
 
----
+### 5. Seed the Database
 
-## 4. Frontend Deployment (Vercel)
+```bash
+make seed
+```
 
-1. Go to [Vercel Dashboard](https://vercel.com/).
-2. Import your GitHub repo → Select `/frontend`.
-3. Configure environment variables:
+### 6. Access the System
 
-   ```
-   VITE_API_URL=https://log-backend.onrender.com/api
-   ```
+- **Frontend**: `https://your-domain.com` (or `https://localhost` if using IP+self-signed)
+- **Backend API**: `https://your-domain.com/api/` or `https://localhost:4500/`
+- **API Docs**: `https://your-domain.com/docs`
 
-4. Deploy. After successful build, you’ll get a public URL, e.g.:
+## Sending Test Syslog Messages (SaaS)
 
-   ```
-   https://log-frontend.vercel.app
-   ```
+### UDP
+```bash
+echo '<134>Oct 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=DNS blocked policy=Block-DNS' | nc -u -w1 YOUR_VM_IP 514
+```
 
----
-
-## 5. Connecting Frontend and Backend
-
-- The **frontend** uses `VITE_API_URL` to call the backend APIs.
-- Ensure CORS is enabled in backend (allow `https://log-frontend.vercel.app`).
-- Test by visiting the frontend URL and logging in.
-
----
-
-## 6. TLS/HTTPS
-
-- Both Render and Vercel automatically provide free **HTTPS certificates**.
-- Neon requires SSL mode for connections, which is already included in `DATABASE_URL`.
-
----
-
-## 7. Multi-Tenant Support
-
-- Browser requests use the authenticated account's tenant. Machine ingestion
-  uses an API key bound to one tenant through `INGEST_API_TENANT` or
-  `INGEST_API_KEYS`; callers cannot override that tenant.
-- Example machine ingestion call:
-
-  ```bash
-  curl -X POST https://log-backend.onrender.com/api/ingest \
+### HTTP API
+```bash
+curl -X POST https://your-domain.com/ingest -H "X-API-Key: demoA-key" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: <your ingestion key>" \
-  -d '{
-    "source":"api",
-    "event_type":"login_failed",
-    "user":"alice",
-    "ip":"203.0.113.7",
-    "@timestamp":"2025-08-20T07:20:00Z"
-  }'
-  ```
+  -d @samples/api_login_failed.json
+```
 
----
+### File Upload
+```bash
+curl -F "file=@samples/aws_cloudtrail.json" -F "source=aws" https://your-domain.com/ingest/file
+```
 
-## 8. Retention Policy
+## SaaS vs Appliance Differences
 
-- Logs older than **7 days** are automatically deleted using a daily cron job (`cleanOldLogs` function in backend).
-- Render cron job example:
+| Feature | Appliance (Docker Compose) | SaaS (Cloud VM) |
+|---------|---------------------------|-----------------|
+| TLS | Self-signed cert (accept risk) | Let's Encrypt (via Caddy + domain) |
+| CORS | `http://localhost:5173, http://localhost:8080` | `https://your-domain.com` |
+| SMTP | Disabled (Mailpit for testing) | Configure via .env (SMTP_HOST, SMTP_PORT, etc.) |
+| Syslog port | 514 (host mapped to 5514) | 514 (if firewall rules allow) |
+| Domain | Not required | Recommended for Let's Encrypt |
+| Data persistence | Host `pgdata` and `redisdata` volumes | Host volumes + backup strategy |
+| Support | User-managed | User-managed + possible support options |
 
-- No separate script or background worker is needed; the function runs inside the backend process.
+## Troubleshooting
 
-- Implementation uses node-cron to schedule the task once a week (e.g., every Monday at 05:00 AM UTC):
+### Common Issues
 
-- Backend server must always be running (e.g., Render Web Service).
+1. **Caddy can't get Let's Encrypt**
+   - Ensure domain A record points to VM IP
+   - Ensure ports 80/443 are open in firewall
+   - Try using a self-signed cert instead
 
--Cleanup can be tested manually with
+2. **Syslog not receiving messages**
+   - Verify VM firewall allows UDP/TCP 514
+   - Check `SYSLOG_ENABLED` is `true` in .env
+   - Check container logs: `make logs`
 
-    ```bash
-    "log:cleanup": "ts-node src/scripts/logCleanUp.ts",
-    npm run log:cleanup
-    ```
+3. **Authentication fails**
+   - Verify `.env` secrets match between backend and frontend
+   - Ensure `INGEST_API_KEY` is set and used in requests
+   - Check JWT token expiration
 
----
+4. **No events appearing**
+   - Check `make seed` ran successfully
+   - Verify syslog messages are reaching the container
+   - Search in UI: `source:firewall` or `tenant:demoA`
 
-## 9. Demo URL for Reviewers
+5. **Rate limiting blocks ingestion**
+   - The rate limiter is currently a pass-through in development
+   - For production, configure slowapi rate limits in `app/main.py`
 
-- **Frontend (UI)** → [https://log-frontend.vercel.app](https://log-frontend.vercel.app)
-- **Backend (API)** → [https://log-backend.onrender.com](https://log-backend.onrender.com)
-- **Database** → Hosted on Neon (not public)
+## Making and Sending Sample Logs
 
----
+Same commands as appliance mode, but replace `localhost:514` with your VM's IP address and `localhost:4500` with your domain or VM IP.
 
-## 10. Quick Test
+## Cleanup
 
-1. Go to the frontend URL.
-
-2. Log in as **Admin** user.
-
-3. Send a test log event:
-
-   ```bash
-   curl -X POST https://log-backend.onrender.com/api/ingest \
-   -H "Content-Type: application/json" \
-  -H "X-API-Key: <your ingestion key>" \
-  -d '{"source":"api","event_type":"test_event","user":"alice","ip":"1.2.3.4","@timestamp":"2025-10-03T10:00:00Z"}'
-   ```
-
-4. Refresh dashboard → You should see the new log.
+```bash
+make down   # Stop containers (keeps data volumes)
+# Or manually:
+docker compose down -v
+```

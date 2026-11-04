@@ -61,12 +61,12 @@
 
 **Not yet in database:** `ingested_at` column (would be created by migration if `alembic upgrade head` is run)
 
-## Express Backend Protection
+## Legacy Backend Removal
 
 - **Path:** `~/projects/logs/Logs-Manager/backend/`
-- **Status:** Completely untouched — no files modified
-- **Git diff:** All changes in `backend/` are pre-existing (present before this session started)
-- **Verification:** `git diff --stat backend/` shows only pre-existing modifications
+- **Status:** Removed in the FastAPI-only cleanup (all Express code, Prisma schema, Jest tests, Dockerfile, docker-entrypoint.sh)
+- **Git:** Previously tracked files deleted; untracked Express artifacts (node_modules, dist) removed from disk
+- **Verification:** `ls backend/` returns "No such file or directory" after cleanup
 
 ## Migration Validation Evidence
 
@@ -120,7 +120,7 @@ print('Function structure: OK')
 1. **Determine if `ingested_at` is needed:** If yes, add manually then stamp migration.
 2. **Or stamp migration to `head`** if current DB schema matches migration intent.
 3. **Run FastAPI integration tests** to verify migration works end-to-end.
-4. **Verify Express backend remains functional** (untouched).
+4. **Verify legacy backend removal** (cleanup complete).
 5. **Final delivery** of fixed migration file and updated schema documentation.
 
 ## Files Modified
@@ -129,6 +129,6 @@ print('Function structure: OK')
 - `PHASES_COMPLETION_REPORT.md` — created at `/home/nay/projects/logs/Logs-Manager/backend-fastapi/PHASES_COMPLETION_REPORT.md`
 
 **Files NOT modified:**
-- `~/projects/logs/Logs-Manager/backend/` — Express backend, completely untouched
+- `~/projects/logs/Logs-Manager/backend/` — legacy Express backend (removed)
 - All other migration files in `migrations/versions/`
 - Neon database — no schema changes executed

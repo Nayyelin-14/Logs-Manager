@@ -1,9 +1,9 @@
 # Log Manager / Mini SIEM - FastAPI Backend
 
 ## Important: This is the Python/FastAPI backend only.
-# The Express backend at /backend is completely untouched and remains 
-# the original submission backend. This directory contains the FastAPI 
-# replacement that provides the complete log management pipeline.
+# The legacy Express backend at /backend has been removed.
+# This directory contains the FastAPI implementation that provides
+# the complete log management pipeline.
 
 ## Overview
 
@@ -166,11 +166,10 @@ See docs/setup_appliance.md for detailed steps.
 
 See docs/setup_saas.md for detailed steps.
 
-### Important: Express Backend
+### Legacy Backend
 
-The original Express backend at `/backend` is **completely untouched**.
-Do not modify any files in `/backend`. This FastAPI backend at
-`/backend-fastapi` is the submission replacement.
+The original Express backend at `/backend` has been removed.
+This FastAPI backend at `/backend-fastapi` is the only API implementation.
 
 ### License
 

@@ -51,7 +51,7 @@ test:
 test-models:
 	pytest tests/test_models.py -v
 
-# Start development server (port 4501 to avoid conflict with Express on 4500)
+# Start development server (port 4501 to avoid conflicting with the Docker appliance on 4500)
 run-dev:
 	uvicorn app.main:app --host 0.0.0.0 --port 4501 --reload
 

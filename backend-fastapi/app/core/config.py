@@ -80,7 +80,8 @@ class Settings(BaseSettings):
     def validate_required_not_empty(cls, v: str) -> str:
         if not v or v.strip() == "":
             raise ValueError("Required environment variable cannot be empty")
-        # Check for placeholder values (but allow exact Express config values)
+        # Check for placeholder values (legacy-carried secrets are exempt;
+        # see validate_auth_secrets below)
         placeholder_patterns = [
             "your_",
             "change_me",
@@ -97,11 +98,13 @@ class Settings(BaseSettings):
     def validate_auth_secrets(cls, v: str) -> str:
         if not v or v.strip() == "":
             raise ValueError("Auth secret cannot be empty")
-        # Allow exact Express .env values for JWT compatibility (even if they look like placeholders)
+        # Allow exact secrets carried over during the backend migration so
+        # already-issued JWTs keep validating (even if they look like placeholders)
         return v
 
     def cookie_options(self) -> dict:
-        # Match Express cookieOptions behavior exactly:
+        # Preserve the exact cookie options used by the previous backend so
+        # existing sessions keep working:
         # secure = COOKIE_SECURE or APP_ENV == "production"
         # sameSite = COOKIE_SAME_SITE or (secure ? "none" : "lax")
         secure = self.COOKIE_SECURE or self.APP_ENV == "production"
