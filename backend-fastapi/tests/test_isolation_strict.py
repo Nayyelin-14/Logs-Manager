@@ -23,15 +23,24 @@ import asyncio
 
 SEED_DATA = {}
 
+# Fixed IDs for idempotent seeding
+ISO_LOG_DEMOA = "iso_log_demoa_1"
+ISO_LOG_DEMOB = "iso_log_demob_1"
+ISO_LOG_ADMIN_DELETE = "iso_log_admin_delete"
+ISO_RULE_DEMOA = "iso_rule_demoa"
+ISO_RULE_DEMOB = "iso_rule_demob"
+ISO_ALERT_DEMOA = "iso_alert_demoa"
+ISO_ALERT_DEMOB = "iso_alert_demob"
 
-def _seed_demo_data():
-    """Insert demo data: demoA/demoB logs, alerts, rules."""
-    async def _seed():
-        async with async_session_maker() as session:
-            # demoA log (for viewerB cross-tenant read test + admin positive control)
-            log_a_id = str(uuid.uuid4())[:25]
-            session.add(SecurityEvent(
-                id=log_a_id,
+
+async def _seed_isolation_data():
+    """Insert demo data with fixed ids; idempotent so repeated runs are safe."""
+    async with async_session_maker() as session:
+        # demoA log (for viewerB cross-tenant read test + admin positive control)
+        log_a = await session.get(SecurityEvent, ISO_LOG_DEMOA)
+        if not log_a:
+            log_a = SecurityEvent(
+                id=ISO_LOG_DEMOA,
                 tenant="demoa",
                 source=Source.AD,
                 event_type="LogonFailed",
@@ -42,12 +51,14 @@ def _seed_demo_data():
                 src_ip="203.0.113.77",
                 raw={"_seed": True},
                 tags=["seed"],
-            ))
+            )
+            session.add(log_a)
 
-            # demoB log (for viewerB own-tenant read test)
-            log_b_id = str(uuid.uuid4())[:25]
-            session.add(SecurityEvent(
-                id=log_b_id,
+        # demoB log (for viewerB own-tenant read test)
+        log_b = await session.get(SecurityEvent, ISO_LOG_DEMOB)
+        if not log_b:
+            log_b = SecurityEvent(
+                id=ISO_LOG_DEMOB,
                 tenant="demob",
                 source=Source.AWS,
                 event_type="CreateUser",
@@ -57,12 +68,14 @@ def _seed_demo_data():
                 host="EC2",
                 raw={"_seed": True},
                 tags=["seed"],
-            ))
+            )
+            session.add(log_b)
 
-            # Separate demoA log for admin DELETE positive control (won't interfere with reads)
-            log_admin_delete_id = str(uuid.uuid4())[:25]
-            session.add(SecurityEvent(
-                id=log_admin_delete_id,
+        # demoA admin-delete log (firewall)
+        log_admin_delete = await session.get(SecurityEvent, ISO_LOG_ADMIN_DELETE)
+        if not log_admin_delete:
+            log_admin_delete = SecurityEvent(
+                id=ISO_LOG_ADMIN_DELETE,
                 tenant="demoa",
                 source=Source.FIREWALL,
                 event_type="traffic_blocked",
@@ -73,77 +86,86 @@ def _seed_demo_data():
                 src_ip="10.0.1.10",
                 raw={"_seed": True, "_admin_delete_test": True},
                 tags=["seed"],
-            ))
+            )
+            session.add(log_admin_delete)
 
-            # demoA alert rule + alert
-            rule_a_id = str(uuid.uuid4())[:25]
-            session.add(AlertRule(
-                id=rule_a_id,
+        # demoA alert rule
+        rule_a = await session.get(AlertRule, ISO_RULE_DEMOA)
+        if not rule_a:
+            rule_a = AlertRule(
+                id=ISO_RULE_DEMOA,
                 name="Test Rule A",
                 description="Test",
                 tenant="demoa",
                 enabled=True,
                 severity="high",
-                conditions={},
-            ))
-            alert_a_id = str(uuid.uuid4())[:25]
-            session.add(Alert(
-                id=alert_a_id,
-                rule_id=rule_a_id,
+                conditions=[{"type": "event_type"}],
+            )
+            session.add(rule_a)
+
+        # demoA alert
+        alert_a = await session.get(Alert, ISO_ALERT_DEMOA)
+        if not alert_a:
+            alert_a = Alert(
+                id=ISO_ALERT_DEMOA,
+                rule_id=ISO_RULE_DEMOA,
                 tenant="demoa",
                 description="Test alert A",
-                event_ids=[log_a_id],
+                event_ids=[ISO_LOG_DEMOA],
                 severity="high",
                 status="open",
                 title="Alert A",
                 dedupe_key="test-a",
-            ))
+            )
+            session.add(alert_a)
 
-            # demoB alert rule + alert
-            rule_b_id = str(uuid.uuid4())[:25]
-            session.add(AlertRule(
-                id=rule_b_id,
+        # demoB alert rule
+        rule_b = await session.get(AlertRule, ISO_RULE_DEMOB)
+        if not rule_b:
+            rule_b = AlertRule(
+                id=ISO_RULE_DEMOB,
                 name="Test Rule B",
                 description="Test",
                 tenant="demob",
                 enabled=True,
                 severity="high",
-                conditions={},
-            ))
-            alert_b_id = str(uuid.uuid4())[:25]
-            session.add(Alert(
-                id=alert_b_id,
-                rule_id=rule_b_id,
+                conditions=[{"type": "event_type"}],
+            )
+            session.add(rule_b)
+
+        # demoB alert
+        alert_b = await session.get(Alert, ISO_ALERT_DEMOB)
+        if not alert_b:
+            alert_b = Alert(
+                id=ISO_ALERT_DEMOB,
+                rule_id=ISO_RULE_DEMOB,
                 tenant="demob",
                 description="Test alert B",
-                event_ids=[log_b_id],
+                event_ids=[ISO_LOG_DEMOB],
                 severity="high",
                 status="open",
                 title="Alert B",
                 dedupe_key="test-b",
-            ))
+            )
+            session.add(alert_b)
 
-            await session.commit()
+        await session.commit()
 
-            SEED_DATA["demoA_log_id"] = log_a_id
-            SEED_DATA["demoB_log_id"] = log_b_id
-            SEED_DATA["demoA_admin_delete_log_id"] = log_admin_delete_id
-            SEED_DATA["demoA_alert_id"] = alert_a_id
-            SEED_DATA["demoB_alert_id"] = alert_b_id
-            SEED_DATA["demoA_rule_id"] = rule_a_id
-            SEED_DATA["demoB_rule_id"] = rule_b_id
-
-    asyncio.run(_seed())
-
-
-_seed_demo_data()
+        # Update SEED_DATA for test use
+        SEED_DATA["demoA_log_id"] = ISO_LOG_DEMOA
+        SEED_DATA["demoB_log_id"] = ISO_LOG_DEMOB
+        SEED_DATA["demoA_admin_delete_log_id"] = ISO_LOG_ADMIN_DELETE
+        SEED_DATA["demoA_alert_id"] = ISO_ALERT_DEMOA
+        SEED_DATA["demoB_alert_id"] = ISO_ALERT_DEMOB
+        SEED_DATA["demoA_rule_id"] = ISO_RULE_DEMOA
+        SEED_DATA["demoB_rule_id"] = ISO_RULE_DEMOB
 
 
-@pytest.fixture(scope="session")
-def test_client():
-    """Test client with app loaded."""
-    with TestClient(app) as client:
-        yield client
+@pytest.fixture(scope="module", autouse=True)
+def isolation_seed(test_database):
+    """Ensure the demo rows these tests need exist; runs after session seed."""
+    asyncio.run(_seed_isolation_data())
+    yield
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -157,6 +179,13 @@ def db_info():
 
     asyncio.run(_info())
     return None
+
+
+@pytest.fixture(scope="session")
+def test_client():
+    """Test client with app loaded."""
+    with TestClient(app) as client:
+        yield client
 
 
 @pytest.fixture(scope="session")

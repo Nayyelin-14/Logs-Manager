@@ -13,11 +13,34 @@ from app.main import app
 from app.core.database import async_session_maker
 from app.models.alert import Alert, AlertRule
 from app.models.security_event import SecurityEvent
-from sqlalchemy import select
+from sqlalchemy import select, text
 import uuid
 
 
 MARKER = "phase1-alerting"
+
+TEST_IPS = [
+    "203.0.113.100",
+    "198.51.100.100", "198.51.100.101", "198.51.100.102", "198.51.100.103", "198.51.100.104", "198.51.100.105",
+    "198.51.100.200", "198.51.100.201", "198.51.100.202", "198.51.100.203", "198.51.100.204",
+    "198.51.100.205", "198.51.100.206", "198.51.100.207", "198.51.100.208",
+]
+
+
+@pytest.fixture(autouse=True)
+def _clean_alerting_rows():
+    """Delete only rows created by these tests; never truncate seed data."""
+    async def _delete():
+        async with async_session_maker() as session:
+            for ip in TEST_IPS:
+                await session.execute(text("DELETE FROM alerts WHERE group_key = :ip").bindparams(ip=ip))
+            await session.execute(text("DELETE FROM alerts WHERE tags @> ARRAY['phase1-alerting']::varchar[]"))
+            await session.execute(text("DELETE FROM security_logs WHERE _tags @> ARRAY['phase1-alerting']::varchar[]"))
+            await session.commit()
+
+    asyncio.run(_delete())
+    yield
+    asyncio.run(_delete())
 
 
 def test_alerting_1_five_ad_failures_trigger_one_alert(client, api_key_demoa):
