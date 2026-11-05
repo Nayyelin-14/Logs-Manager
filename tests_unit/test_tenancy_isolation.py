@@ -156,3 +156,128 @@ class TestQueryFiltersForNonAdmin:
         from app.models.user import User
         cols = [c.name for c in User.__table__.columns]
         assert "role" in cols, "User model must have role column"
+
+
+# ===== normalize_tenant unit tests =====
+
+class TestNormalizeTenant:
+    """Unit tests for app.core.tenancy.normalize_tenant."""
+
+    def test_normalize_strip_and_lowercase(self):
+        """' DemoA ' -> 'demoa'."""
+        from app.core.tenancy import normalize_tenant
+        assert normalize_tenant(" DemoA ") == "demoa"
+
+    def test_normalize_valid_name(self):
+        """Valid names pass through unchanged (lowercased)."""
+        from app.core.tenancy import normalize_tenant
+        assert normalize_tenant("demoA") == "demoa"
+        assert normalize_tenant("my-tenant_1") == "my-tenant_1"
+        assert normalize_tenant("ab") == "ab"
+
+    def test_normalize_rejects_all(self):
+        """'all' is rejected with 422."""
+        from app.core.tenancy import normalize_tenant
+        from fastapi import HTTPException
+        try:
+            normalize_tenant("all")
+            assert False, "Expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 422
+
+    def test_normalize_rejects_empty(self):
+        """'' and whitespace-only are rejected with 422."""
+        from app.core.tenancy import normalize_tenant
+        from fastapi import HTTPException
+        for bad in ["", "   ", None]:
+            try:
+                normalize_tenant(bad)
+                assert False, f"Expected HTTPException for {bad!r}"
+            except HTTPException as e:
+                assert e.status_code == 422
+
+    def test_normalize_rejects_too_short(self):
+        """'a' (1 char) is rejected with 422."""
+        from app.core.tenancy import normalize_tenant
+        from fastapi import HTTPException
+        try:
+            normalize_tenant("a")
+            assert False, "Expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 422
+
+    def test_normalize_rejects_invalid_chars(self):
+        """'x;y' is rejected with 422."""
+        from app.core.tenancy import normalize_tenant
+        from fastapi import HTTPException
+        try:
+            normalize_tenant("x;y")
+            assert False, "Expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 422
+
+
+# ===== effective_tenant unit tests =====
+
+class TestEffectiveTenant:
+    """Unit tests for app.core.tenancy.effective_tenant."""
+
+    def _make_user(self, role: str, tenant: str = None):
+        """Create a simple user-like object."""
+        class User:
+            def __init__(self, role, tenant):
+                self.role = role
+                self.tenant = tenant
+        return User(role, tenant)
+
+    def test_viewer_gets_own_tenant(self):
+        """Viewer with requested 'demoA' gets own tenant (demoB), requested ignored."""
+        from app.core.tenancy import effective_tenant
+        user = self._make_user("VIEWER", "demoB")
+        assert effective_tenant(user, "demoA") == "demoB"
+
+    def test_viewer_no_tenant_raises_403(self):
+        """Viewer with no tenant raises 403."""
+        from app.core.tenancy import effective_tenant
+        from fastapi import HTTPException
+        user = self._make_user("VIEWER", None)
+        try:
+            effective_tenant(user, "demoA")
+            assert False, "Expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 403
+
+    def test_admin_none_returns_none(self):
+        """Admin with None requested returns None."""
+        from app.core.tenancy import effective_tenant
+        user = self._make_user("ADMIN", None)
+        assert effective_tenant(user, None) is None
+
+    def test_admin_empty_returns_none(self):
+        """Admin with '' requested returns None."""
+        from app.core.tenancy import effective_tenant
+        user = self._make_user("ADMIN", None)
+        assert effective_tenant(user, "") is None
+
+    def test_admin_all_returns_none(self):
+        """Admin with 'all' requested returns None."""
+        from app.core.tenancy import effective_tenant
+        user = self._make_user("ADMIN", None)
+        assert effective_tenant(user, "all") is None
+
+    def test_admin_normalizes_requested(self):
+        """Admin with ' DemoA ' gets 'demoa'."""
+        from app.core.tenancy import effective_tenant
+        user = self._make_user("ADMIN", None)
+        assert effective_tenant(user, " DemoA ") == "demoa"
+
+    def test_admin_rejects_invalid_tenant_name(self):
+        """Admin with 'x;y' raises 422."""
+        from app.core.tenancy import effective_tenant
+        from fastapi import HTTPException
+        user = self._make_user("ADMIN", None)
+        try:
+            effective_tenant(user, "x;y")
+            assert False, "Expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 422

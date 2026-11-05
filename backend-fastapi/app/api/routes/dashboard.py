@@ -216,7 +216,7 @@ async def get_dashboard_stats(
 
     # Tenants
     tenants = await session.execute(
-        select(SecurityEvent.tenant).distinct()
+        select(SecurityEvent.tenant).distinct().where(SecurityEvent.tenant == tenant if tenant else True)
     )
     
     return {

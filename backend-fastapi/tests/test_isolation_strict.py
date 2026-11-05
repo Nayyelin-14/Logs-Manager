@@ -130,6 +130,8 @@ def _seed_demo_data():
             SEED_DATA["demoA_admin_delete_log_id"] = log_admin_delete_id
             SEED_DATA["demoA_alert_id"] = alert_a_id
             SEED_DATA["demoB_alert_id"] = alert_b_id
+            SEED_DATA["demoA_rule_id"] = rule_a_id
+            SEED_DATA["demoB_rule_id"] = rule_b_id
 
     asyncio.run(_seed())
 
@@ -364,3 +366,225 @@ def test_12_admin_get_logs_all_tenants(test_client, test_data):
     logs = data.get("logs", [])
     tenants = set(log.get("tenant") for log in logs if log.get("tenant"))
     assert "demoA" in tenants and "demoB" in tenants, f"Expected both tenants, got {tenants}"
+
+
+# ===== STEP 4 CREATE-USER TESTS =====
+
+def test_22_admin_create_viewer_without_tenant_422(test_client, test_data):
+    """STEP 4: ADMIN creating VIEWER without tenant -> 422."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["admin_email"],
+        "password": test_data["admin_password"]
+    })
+
+    response = test_client.post("/api/create-user", json={
+        "username": "newviewer",
+        "email": "newviewer@example.com",
+        "tenant": "",
+        "role": "VIEWER",
+        "password": "Password123!"
+    })
+    assert response.status_code == 422, f"Expected 422 for VIEWER without tenant, got {response.status_code}"
+
+
+def test_23_admin_create_admin_tenant_null(test_client, test_data):
+    """STEP 4: ADMIN users are stored with tenant NULL (verified from existing admin)."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["admin_email"],
+        "password": test_data["admin_password"]
+    })
+
+    # Verify existing admin has tenant NULL
+    response = test_client.get("/api/auth/auth-check")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    user_data = response.json().get("user", {})
+    assert user_data.get("tenant") is None or user_data.get("tenant") == "", \
+        f"Expected admin tenant NULL/empty, got {user_data.get('tenant')}"
+    assert user_data.get("role") == "ADMIN", f"Expected role ADMIN, got {user_data.get('role')}"
+
+
+# ===== STEP 1 LEAK TESTS =====
+
+def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
+    """FINDING-TEST: viewerB GET /api/dashboard -> tenants list contains only demoB."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    response = test_client.get("/api/dashboard")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    data = response.json()
+    tenants_list = data.get("tenants", [])
+    tenant_names = [t.get("tenant") for t in tenants_list]
+    assert tenant_names == ["demoB"], f"Expected [demoB], got {tenant_names} - VULNERABILITY: viewerB dashboard shows other tenants"
+
+
+def test_14_admin_dashboard_tenants_both(test_client, test_data):
+    """POSITIVE-CONTROL: admin GET /api/dashboard -> tenants contains demoA and demoB."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["admin_email"],
+        "password": test_data["admin_password"]
+    })
+
+    response = test_client.get("/api/dashboard")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    data = response.json()
+    tenants_list = data.get("tenants", [])
+    tenant_names = [t.get("tenant") for t in tenants_list]
+    assert "demoA" in tenant_names, f"Expected demoA in tenants, got {tenant_names}"
+    assert "demoB" in tenant_names, f"Expected demoB in tenants, got {tenant_names}"
+
+
+def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
+    """ROLE-CHECK: viewerB GET /api/get-all-data -> 403 (admin-only endpoint)."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    response = test_client.get("/api/get-all-data")
+    assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+
+
+def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
+    """ROLE-CHECK: viewerB GET /api/get-all-data?tenant=demoA -> 403 (admin-only)."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    response = test_client.get("/api/get-all-data?tenant=demoA")
+    assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+
+
+def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
+    """FINDING-TEST: viewerB GET /api/get-logs?tenant=all and ?tenant=DemoA -> only demoB rows."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    # ?tenant=all
+    response = test_client.get("/api/get-logs?tenant=all")
+    assert response.status_code == 200, f"Expected 200 for ?tenant=all, got {response.status_code}"
+    data = response.json()
+    logs = data.get("logs", [])
+    for log in logs:
+        assert log.get("tenant") == "demoB", f"VULNERABILITY: viewerB with ?tenant=all sees tenant={log.get('tenant')}"
+
+    # ?tenant=DemoA (mixed case)
+    response = test_client.get("/api/get-logs?tenant=DemoA")
+    assert response.status_code == 200, f"Expected 200 for ?tenant=DemoA, got {response.status_code}"
+    data = response.json()
+    logs = data.get("logs", [])
+    for log in logs:
+        assert log.get("tenant") == "demoB", f"VULNERABILITY: viewerB with ?tenant=DemoA sees tenant={log.get('tenant')}"
+
+
+def test_18_viewer_a_only_sees_demoA(test_client, test_data):
+    """FINDING-TEST: viewerA GET /api/get-logs and /api/get-alerts -> only demoA rows."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_a_email"],
+        "password": test_data["viewer_a_password"]
+    })
+
+    # get-logs
+    response = test_client.get("/api/get-logs")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    data = response.json()
+    logs = data.get("logs", [])
+    for log in logs:
+        assert log.get("tenant") == "demoA", f"VULNERABILITY: viewerA sees tenant={log.get('tenant')}"
+
+    # get-alerts
+    response = test_client.get("/api/get-alerts")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    data = response.json()
+    alerts = data.get("alerts", [])
+    for alert in alerts:
+        assert alert.get("tenant") == "demoA", f"VULNERABILITY: viewerA sees alert tenant={alert.get('tenant')}"
+
+
+def test_19_no_cookie_routes_return_401():
+    """FINDING-TEST: every route except /healthz, /ready, /login called with NO cookie -> exactly 401.
+    Uses a fresh TestClient (no cookies from previous logins)."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    no_auth_client = TestClient(app)
+
+    routes_to_test = [
+        ("GET", "/api/get-logs"),
+        ("GET", "/api/get-alerts"),
+        ("GET", "/api/dashboard"),
+        ("GET", "/api/get-rules"),
+        ("GET", "/api/get-users"),
+        ("POST", "/api/create-user"),
+        ("POST", "/api/create-alertRule"),
+        ("PUT", "/api/update-user"),
+        ("DELETE", "/api/delete-log/demoA"),
+        ("PUT", "/api/update-rule/demoA"),
+        ("PATCH", "/api/rules/demoA/enabled"),
+        ("DELETE", "/api/delete-rule/demoA"),
+        ("PATCH", "/api/alerts/demoA"),
+        ("POST", "/api/ingest"),
+    ]
+
+    for method, path in routes_to_test:
+        if method == "GET":
+            response = no_auth_client.get(path)
+        elif method == "POST":
+            response = no_auth_client.post(path, json={})
+        elif method == "PUT":
+            response = no_auth_client.put(path, json={})
+        elif method == "DELETE":
+            response = no_auth_client.delete(path)
+        elif method == "PATCH":
+            response = no_auth_client.patch(path, json={})
+
+        assert response.status_code == 401, (
+            f"Expected 401 for {method} {path}, got {response.status_code}"
+        )
+
+
+def test_20_viewer_b_rule_id_routes_403(test_client, test_data):
+    """ROLE-CHECK: viewerB with demoA rule id: PUT update-rule, PATCH rules/enabled, DELETE delete-rule -> 403."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    rule_id = SEED_DATA["demoA_rule_id"]
+
+    response = test_client.put(f"/api/update-rule/{rule_id}", json={"name": "Evil", "enabled": True})
+    assert response.status_code == 403, f"Expected 403 for PUT update-rule, got {response.status_code}"
+
+    response = test_client.patch(f"/api/rules/{rule_id}/enabled", json={"enabled": False})
+    assert response.status_code == 403, f"Expected 403 for PATCH rules/enabled, got {response.status_code}"
+
+    response = test_client.delete(f"/api/delete-rule/{rule_id}")
+    assert response.status_code == 403, f"Expected 403 for DELETE delete-rule, got {response.status_code}"
+
+
+def test_21_viewer_b_user_id_routes_403(test_client, test_data):
+    """ROLE-CHECK: viewerB PUT /api/update-user and DELETE /api/delete-user/{id} -> exactly 403."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["viewer_b_email"],
+        "password": test_data["viewer_b_password"]
+    })
+
+    response = test_client.put("/api/update-user", json={
+        "id": 999,
+        "username": "evil",
+        "email": "evil@example.com",
+        "tenant": "demoB",
+        "role": "VIEWER",
+        "password": "Password123!"
+    })
+    assert response.status_code == 403, f"Expected 403 for PUT update-user, got {response.status_code}"
+
+    response = test_client.delete("/api/delete-user/999")
+    assert response.status_code == 403, f"Expected 403 for DELETE delete-user, got {response.status_code}"
