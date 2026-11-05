@@ -60,9 +60,7 @@ REFRESH_TOKEN_SECRET=change_this_very_long_random_string
 COOKIE_SECURE=true
 COOKIE_SAME_SITE=none
 
-# Ingestion
-INGEST_API_KEY=change_this_to_a_long_random_value
-INGEST_API_TENANT=demoA
+# Ingestion (per-tenant API keys managed via /api/tenants)
 INGEST_API_USERNAME=log-forwarder
 
 # Syslog (optional)
@@ -172,7 +170,7 @@ curl -F "file=@samples/aws_cloudtrail.json" -F "source=aws" https://your-domain.
 
 3. **Authentication fails**
    - Verify `.env` secrets match between backend and frontend
-   - Ensure `INGEST_API_KEY` is set and used in requests
+   - Ensure API key is configured via `/api/tenants` and used in `X-API-Key` header
    - Check JWT token expiration
 
 4. **No events appearing**

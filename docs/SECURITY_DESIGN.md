@@ -540,33 +540,60 @@ def verify_password(password: str, hashed: str) -> bool:
 
 ## 7. API Key Authentication
 
-### 7.1 Configuration (Environment-Based)
+### 7.1 Configuration (Database-Backed)
+
+API keys are stored in the `tenants` table with SHA-256 hashes. Each active tenant
+has exactly one API key. Key verification:
 
 ```python
-# app/core/config.py
-class Settings(BaseSettings):
-    INGEST_API_KEY: str
-    INGEST_API_TENANT: str = "demoA"
-    INGEST_API_USERNAME: str = "log-forwarder"
-    INGEST_API_KEYS: str = ""  # JSON: {"key1": "tenantA", "key2": {"tenant": "tenantB", "username": "aws"}}
-    
-    def get_api_key_identity(self, provided_key: str) -> ApiKeyIdentity | None:
-        # Check single key
-        if secrets.compare_digest(provided_key, self.INGEST_API_KEY):
-            return ApiKeyIdentity(
-                tenant=self.INGEST_API_TENANT,
-                username=self.INGEST_API_USERNAME,
-                email=f"{self.INGEST_API_USERNAME}@local"
-            )
-        
-        # Check multiple keys JSON
-        if self.INGEST_API_KEYS:
-            try:
-                keys = json.loads(self.INGEST_API_KEYS)
-                for key, value in keys.items():
-                    if secrets.compare_digest(provided_key, key):
-                        if isinstance(value, str):
-                            return ApiKeyIdentity(tenant=value)
+# app/core/dependencies.py
+async def verify_api_key(request, session) -> TokenPayload:
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
+    result = await session.execute(
+        select(Tenant).where(
+            Tenant.api_key_hash == key_hash,
+            Tenant.is_active == True
+        )
+    )
+    tenant_row = result.scalar_one_or_none()
+
+    if not tenant_row:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return TokenPayload(
+        user_id=0,
+        username=f"ingest-{tenant_row.name}",
+        email=f"ingest-{tenant_row.name}@local",
+        tenant=tenant_row.name,
+        role="VIEWER",
+    )
+```
+
+The `tenants` table schema:
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | String(25) | PK |
+| name | String(50) | UNIQUE, CHECK `^[a-z0-9_-]{2,50}$` AND name <> 'all' |
+| api_key_hash | String(64) | UNIQUE NOT NULL |
+| is_active | Boolean | DEFAULT true |
+| created_at | DateTime(timezone) | DEFAULT now() |
+| alert_webhook_url | String(500) | NULL |
+| alert_emails | String[] | NULL |
+
+### 7.2 Admin Tenant Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/tenants` | POST | Admin | Create tenant, returns API key once |
+| `/api/tenants` | GET | Admin | List tenants (no keys/hashes exposed) |
+| `/api/tenants/{name}` | PATCH | Admin | Activate/deactivate tenant |
+| `/api/tenants/{name}/rotate-key` | POST | Admin | Rotate API key (old key invalidated) |
                         elif isinstance(value, dict):
                             return ApiKeyIdentity(
                                 tenant=value.get("tenant", ""),

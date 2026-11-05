@@ -129,13 +129,6 @@ def client():
         yield test_client
 
 
-@pytest.fixture()
-def api_key() -> str:
-    from app.core.config import get_settings
-
-    return get_settings().INGEST_API_KEY
-
-
 def login(client, email: str, password: str):
     """Log in and return the response (session cookies stay on the client)."""
     response = client.post("/api/auth/login", json={"email": email, "password": password})

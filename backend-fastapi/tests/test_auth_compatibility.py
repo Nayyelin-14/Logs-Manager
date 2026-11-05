@@ -143,7 +143,6 @@ class TestCookieOptionsCompatibility:
             ACCESS_TOKEN_SECRET="test",
             REFRESH_TOKEN_SECRET="test",
             DATABASE_URL="postgresql+asyncpg://test",
-            INGEST_API_KEY="test",
         )
         
         opts = settings.cookie_options()
@@ -163,7 +162,6 @@ class TestCookieOptionsCompatibility:
             ACCESS_TOKEN_SECRET="test",
             REFRESH_TOKEN_SECRET="test",
             DATABASE_URL="postgresql+asyncpg://test",
-            INGEST_API_KEY="test",
         )
         
         opts = settings.cookie_options()

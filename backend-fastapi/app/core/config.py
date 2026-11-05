@@ -48,8 +48,6 @@ class Settings(BaseSettings):
     ALERT_EMAIL_RECIPIENTS: str = ""
 
     # Ingestion
-    INGEST_API_KEY: str
-    INGEST_API_TENANT: str = "demoA"
     INGEST_API_USERNAME: str = "log-forwarder"
     INGEST_DEFAULT_TENANT: str = "demoA"
     INGEST_BATCH_MAX_EVENTS: int = 1000
@@ -78,7 +76,7 @@ class Settings(BaseSettings):
     # Trusted hosts (for TrustedHostMiddleware in production)
     ALLOWED_HOSTS: list[str] = Field(default_factory=lambda: ["localhost", "127.0.0.1", "*.logmanager.local"])
 
-    @field_validator("DATABASE_URL", "REDIS_URL", "INGEST_API_KEY", mode="before")
+    @field_validator("DATABASE_URL", "REDIS_URL", mode="before")
     @classmethod
     def validate_required_not_empty(cls, v: str) -> str:
         if not v or v.strip() == "":
@@ -118,30 +116,6 @@ class Settings(BaseSettings):
             "samesite": same_site,
             "path": "/",
         }
-
-    def get_api_key_identity(self, provided_key: str):
-        import secrets
-        import json
-        from dataclasses import dataclass
-
-        @dataclass
-        class ApiKeyIdentity:
-            tenant: str
-            username: Optional[str] = None
-            email: Optional[str] = None
-
-        # Check single key
-        if secrets.compare_digest(provided_key, self.INGEST_API_KEY):
-            return ApiKeyIdentity(
-                tenant=self.INGEST_API_TENANT,
-                username=self.INGEST_API_USERNAME,
-                email=f"{self.INGEST_API_USERNAME}@local",
-            )
-
-        # Check multiple keys JSON (from INGEST_API_KEYS env var)
-        # This would need to be added to the Settings model if used
-        return None
-
 
 @lru_cache
 def get_settings() -> Settings:

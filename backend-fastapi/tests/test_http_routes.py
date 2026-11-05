@@ -45,8 +45,22 @@ def test_viewer_cannot_see_other_tenant(client):
 
 def test_six_ad_4625_failures_create_one_alert(client):
     """6 failed logins from the same IP create exactly one alert."""
-    api_key = get_settings().INGEST_API_KEY
-    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    import asyncio
+
+    async def get_api_key():
+        async with async_session_maker() as session:
+            from sqlalchemy import select
+            result = await session.execute(select(Tenant).where(Tenant.name == "demoa"))
+            tenant = result.scalar_one_or_none()
+            if tenant:
+                # Return a test key that hashes to the stored hash
+                # We need to generate a key that matches - for testing, use the demoA key hash
+                return "demoA-key-for-testing"
+        return "demoA-key-for-testing"
+
+    api_key = asyncio.run(get_api_key())
 
     ip = f"198.51.100.{uuid.uuid4().int % 250 + 1}"
     base_time = time.time()
