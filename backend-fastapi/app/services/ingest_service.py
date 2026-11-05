@@ -21,6 +21,7 @@ from app.models.security_event import SecurityEvent
 from app.parsers.canonical import infer_source_from_event
 from app.parsers.router import NormalizationService
 from app.services.alert_service import AlertService
+from app.services.alerting.engine import AlertingEngine
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class IngestionService:
         self.session = session
         self.normalizer = NormalizationService()
         self.alert_service = AlertService(session)
+        self.alerting_engine = AlertingEngine(session)
 
     async def ingest(
         self,
@@ -142,7 +144,8 @@ class IngestionService:
         self.session.add(event)
         await self.session.flush()
 
-        alerts = await self.alert_service.check_alerts(event)
+        # Use the new alerting engine which evaluates events against rules
+        alerts = await self.alerting_engine.evaluate_event(event)
 
         # Cache invalidation is an optimization: never fail ingestion on it.
         try:
