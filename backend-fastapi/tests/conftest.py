@@ -124,9 +124,25 @@ def test_database():
 def client():
     """FastAPI test client (no lifespan: listeners/scheduler stay off)."""
     from fastapi.testclient import TestClient
-
+    
     from app.main import app
-
+    
+    # Clear alerts and security_logs before each test
+    from sqlalchemy import text
+    import asyncio
+    
+    async def _clear_test_data():
+        from app.core.database import async_session_maker
+        async with async_session_maker() as session:
+            await session.execute(text('TRUNCATE TABLE alerts RESTART IDENTITY CASCADE'))
+            await session.execute(text('TRUNCATE TABLE security_logs RESTART IDENTITY CASCADE'))
+            await session.commit()
+    
+    try:
+        asyncio.run(_clear_test_data())
+    except Exception:
+        pass
+    
     with TestClient(app) as test_client:
         yield test_client
 
