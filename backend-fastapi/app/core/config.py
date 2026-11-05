@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    
+    # Trusted hosts (for TrustedHostMiddleware in production)
+    ALLOWED_HOSTS: list[str] = Field(default_factory=lambda: ["localhost", "127.0.0.1", "*.logmanager.local"])
 
     @field_validator("DATABASE_URL", "REDIS_URL", "INGEST_API_KEY", mode="before")
     @classmethod

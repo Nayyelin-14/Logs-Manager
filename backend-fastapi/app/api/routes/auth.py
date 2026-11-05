@@ -55,7 +55,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     response.set_cookie(
         "refreshToken",
         refresh_token,
-        max_age=settings.REFRESH_TOKEN_DAYS * 24 * 60 * 60,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         **opts,
     )
 

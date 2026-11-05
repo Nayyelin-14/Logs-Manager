@@ -5,8 +5,7 @@ import AuthShell from "../AppComponents/layout/AuthShell";
 
 const RootLayout = () => {
   const { pathname } = useLocation();
-  const isAuthRoute =
-    pathname === "/login" || pathname.startsWith("/register");
+  const isAuthRoute = pathname === "/login";
 
   if (isAuthRoute) {
     return (
