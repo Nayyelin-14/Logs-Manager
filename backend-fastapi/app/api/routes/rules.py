@@ -232,16 +232,25 @@ async def delete_alert_rule(
     )
     rule = result.scalar_one_or_none()
     if not rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
+        return {"success": False, "message": "Rule not found"}
+    
+    # Capture rule data before deletion for response
+    rule_data = {
+        "id": rule.id,
+        "name": rule.name,
+        "tenant": rule.tenant,
+        "enabled": rule.enabled,
+        "severity": rule.severity,
+    }
     
     # Check if rule has triggered alerts
     alert_count = await session.execute(
         select(func.count()).select_from(Alert).where(Alert.rule_id == rule_id)
     )
     if alert_count.scalar() > 0:
-        raise HTTPException(status_code=409, detail="Cannot delete rule with existing alerts")
+        return {"success": False, "message": "Cannot delete rule with existing alerts"}
     
     await session.delete(rule)
     await session.commit()
     
-    return {"message": "Alert rule deleted"}
+    return {"success": True, "message": "Alert rule deleted", "rule": rule_data}

@@ -58,7 +58,7 @@ async def seed_demo_data():
                     username="viewerA",
                     email="viewerA@demo.local",
                     password=viewer_a_password,
-                    role="USER",
+                    role="VIEWER",
                     tenant="demoA",
                     status="ACTIVE",
                 )
@@ -73,7 +73,7 @@ async def seed_demo_data():
                     username="viewerB",
                     email="viewerB@demo.local",
                     password=viewer_b_password,
-                    role="USER",
+                    role="VIEWER",
                     tenant="demoB",
                     status="ACTIVE",
                 )

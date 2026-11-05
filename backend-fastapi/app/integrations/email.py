@@ -7,10 +7,14 @@ Provides async email sending via aiosmtplib.
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, NamedTuple, Optional
 from aiosmtplib import send
 from app.core.config import get_settings
-from app.core.templates import render_otp_email, render_alert_email
+from app.core.templates import (
+    render_otp_email,
+    render_alert_email,
+    render_alert_email_text,
+)
 
 settings = get_settings()
 
@@ -88,6 +92,7 @@ async def send_alert_email(
     severity: str
 ) -> Dict[str, Any]:
     """Send alert notification email."""
+    severity = str(severity)
     html_body = render_alert_email(username, title, description, severity, tenant)
     text_body = render_alert_email_text(username, title, description, severity, tenant)
     

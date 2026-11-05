@@ -79,7 +79,7 @@ async def require_admin(current_user: TokenPayload = Depends(get_current_user)) 
 
 
 async def require_viewer(current_user: TokenPayload = Depends(get_current_user)) -> TokenPayload:
-    if current_user.role not in ("USER", "ADMIN"):
+    if current_user.role not in ("VIEWER", "ADMIN"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     return current_user
 
@@ -109,7 +109,7 @@ async def verify_api_key(
             username=settings.INGEST_API_USERNAME,
             email=f"{settings.INGEST_API_USERNAME}@local",
             tenant=settings.INGEST_API_TENANT,
-            role="USER",
+            role="VIEWER",
         )
 
     raise HTTPException(status_code=401, detail="Invalid API key")

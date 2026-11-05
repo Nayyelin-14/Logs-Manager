@@ -32,7 +32,7 @@ class TokenPayload(BaseModel):
     username: Optional[str] = None
     email: str
     tenant: str
-    role: str  # "USER" or "ADMIN"
+    role: str  # "VIEWER" or "ADMIN"
     exp: int
     iat: int
     type: str  # "access" or "refresh"
@@ -357,7 +357,7 @@ async def require_admin(current_user: TokenPayload = Depends(get_current_user)) 
     return current_user
 
 async def require_viewer(current_user: TokenPayload = Depends(get_current_user)) -> TokenPayload:
-    if current_user.role not in ("USER", "ADMIN"):
+    if current_user.role not in ("VIEWER", "ADMIN"):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     return current_user
 
@@ -482,7 +482,7 @@ async def verify_api_key(
         username=identity.username or "api-key",
         email=identity.email or "api-key@local",
         tenant=identity.tenant,
-        role="USER"
+        role="VIEWER"
     )
 ```
 
@@ -505,7 +505,7 @@ All resource access by ID must verify tenant ownership for **both VIEWER and ADM
 async def get_alert_by_id(session: AsyncSession, alert_id: str, user: TokenPayload) -> Alert:
     query = select(Alert).where(Alert.id == alert_id)
     
-    # Both VIEWER (USER) and ADMIN are scoped to their own tenant
+    # Both VIEWER and ADMIN are scoped to their own tenant
     query = query.where(Alert.tenant == user.tenant)
     
     alert = await session.scalar(query)

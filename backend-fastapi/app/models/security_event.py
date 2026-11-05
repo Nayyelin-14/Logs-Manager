@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Enum as SQLEnum, JSON, ARRAY, Text, Index, ForeignKey, BigInteger
+from sqlalchemy import Column, String, Integer, DateTime, Enum as SQLEnum, JSON, ARRAY, Text, Index, ForeignKey, BigInteger, func
 from sqlalchemy.dialects.postgresql import JSONB
 from app.models.base import Base
 from app.models.enums import Source, Action
@@ -38,7 +38,7 @@ class SecurityEvent(Base):
     raw = Column(JSONB, nullable=False)
     tags = Column("_tags", ARRAY(String), default=[], nullable=False)
     created_at = Column("created_at", DateTime(timezone=True), server_default="now()", nullable=False)
-    updated_at = Column("updated_at", DateTime(timezone=True), server_default="now()", onupdate="now()", nullable=False)
+    updated_at = Column("updated_at", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
     ip = Column(String(45), nullable=True)
     description = Column(Text, nullable=True)
     event_id = Column("eventId", Integer, nullable=True)

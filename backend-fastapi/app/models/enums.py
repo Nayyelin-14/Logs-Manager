@@ -3,7 +3,7 @@ from sqlalchemy import Enum as SQLEnum
 
 
 class Role(str, enum.Enum):
-    USER = "USER"
+    VIEWER = "VIEWER"
     ADMIN = "ADMIN"
 
 

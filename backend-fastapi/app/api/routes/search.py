@@ -201,7 +201,18 @@ async def delete_log(
     if not log:
         return {"success": False, "message": "Log not found"}
     
+    # Capture log data before deletion for response
+    log_data = {
+        "id": str(log.id),
+        "source": log.source,
+        "tenant": log.tenant,
+        "event_type": log.event_type,
+        "severity": log.severity,
+        "created_at": str(log.created_at) if log.created_at else None,
+        "raw": log.raw
+    }
+    
     await session.delete(log)
     await session.commit()
     
-    return {"success": True, "message": "Log deleted"}
+    return {"success": True, "message": "Log deleted", "deleted_log": log_data}

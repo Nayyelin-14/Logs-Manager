@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, JSON, Index, ForeignKey, ARRAY, Text, Boolean, Integer, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, JSON, Index, ForeignKey, ARRAY, Text, Boolean, Integer, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import Base
@@ -17,7 +17,7 @@ class AlertRule(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     severity = Column(String(50), default="medium", nullable=False)
     created_at = Column("createdAt", DateTime(timezone=True), server_default="now()", nullable=False)
-    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate="now()", nullable=False)
+    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
 
     alerts = relationship("Alert", back_populates="rule")
 
@@ -61,11 +61,28 @@ class EmailNotification(Base):
 
     id = Column(String(150), primary_key=True)
     alert_id = Column("alertId", String(25), ForeignKey("alerts.id"), nullable=True)
-    email_type = Column("emailType", SQLEnum(EmailType, name="EmailType", native_enum=True), nullable=False)
+    email_type = Column(
+        "emailType",
+        SQLEnum(
+            EmailType,
+            name="EmailType",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+    )
     tenant = Column(String(100), nullable=False)
     recipient_email = Column("recipientEmail", String(255), nullable=False)
     subject = Column(String(500), nullable=False)
-    status = Column(SQLEnum(EmailStatus, name="EmailStatus", native_enum=True), default=EmailStatus.PENDING)
+    status = Column(
+        SQLEnum(
+            EmailStatus,
+            name="EmailStatus",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        default=EmailStatus.PENDING,
+    )
     attempts = Column(Integer, default=0)
     last_attempt_at = Column("lastAttemptAt", DateTime(timezone=True), nullable=True)
     last_error = Column("lastError", Text, nullable=True)

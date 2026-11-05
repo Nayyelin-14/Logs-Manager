@@ -336,7 +336,7 @@ Use **Pydantic v2** for all schemas (`app/schemas/`).
 
 ---
 
-## ADR-010: Role Mapping — USER = VIEWER, ADMIN = ADMIN
+## ADR-010: Role Rename — USER → VIEWER, ADMIN = ADMIN
 
 **Status:** Accepted  
 **Date:** 2026-11-03
@@ -345,18 +345,19 @@ Use **Pydantic v2** for all schemas (`app/schemas/`).
 Assignment specifies roles: Admin, Viewer. Existing system uses: USER, ADMIN.
 
 ### Decision
-**Map directly:** `USER` role = Viewer permissions, `ADMIN` role = Admin permissions. No schema change.
+**Rename `USER` to `VIEWER`:** Schema change requires migration, but ensures semantic consistency with assignment requirements and eliminates role name confusion.
 
 ### Rationale
 | Option | Pros | Cons |
 |--------|------|------|
-| **Direct Mapping** | Zero DB changes; existing data works | Name mismatch with assignment |
-| **Rename Roles** | Matches assignment | Destructive migration; breaks existing auth |
+| **Direct Mapping** | Zero DB changes; existing data works | Name mismatch with assignment causes confusion |
+| **Rename Roles** | Matches assignment exactly; clear semantics | Destructive migration; breaks existing auth |
 
 ### Consequences
-- Authorization checks use `role == "ADMIN"` for admin, `role == "USER"` for viewer
-- Documentation notes the mapping
-- Frontend already uses `role === "ADMIN"` checks
+- Authorization checks use `role == "ADMIN"` for admin, `role == "VIEWER"` for viewer
+- Documentation updated to reflect VIEWER naming
+- Migration file updates enum values from USER→VIEWER
+- Frontend updated to use "VIEWER" consistently
 
 ---
 

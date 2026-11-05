@@ -183,9 +183,9 @@ All endpoints preserve:
 - `>=9` → `"critical"` (if used)
 
 **Tenant Scoping:**
-- `VIEWER` (role=USER): Ignores `tenant` query param, forces `tenant = user.tenant`
-- `ADMIN`: Ignores `tenant` query param, forces `tenant = user.tenant`
-- Cross-tenant access: PROHIBITED for both roles
+- `VIEWER` (role=VIEWER): Ignores `tenant` query param, forces `tenant = user.tenant`
+- `ADMIN`: Can override `tenant` via query param, or see all tenants when empty
+- Cross-tenant access: PROHIBITED for VIEWER, ALLOWED for ADMIN
 
 ### 4.2 DELETE `/api/delete-log/:logId`
 
@@ -237,7 +237,7 @@ All endpoints preserve:
 |--------|---------|
 | **Method** | GET |
 | **Path** | `/api/user-dashboard/{userId}` |
-| **Auth** | JWT required, role=USER |
+| **Auth** | JWT required, role=VIEWER |
 | **Query Params** | `range` (`1d`,`3d`,`7d`) |
 | **Response** | Same structure as admin but scoped to user's tenant |
 

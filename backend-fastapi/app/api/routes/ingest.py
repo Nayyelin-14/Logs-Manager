@@ -570,7 +570,7 @@ async def create_user(
     username: str = Form(...),
     email: str = Form(...),
     tenant: str = Form(...),
-    role: str = Form("USER"),
+    role: str = Form("VIEWER"),
     status: str = Form("ACTIVE"),
     password: str = Form(...),
     session: AsyncSession = Depends(get_session),

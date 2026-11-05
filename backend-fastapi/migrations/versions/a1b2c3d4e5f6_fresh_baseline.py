@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column('username', sa.String(length=50), nullable=True),
         sa.Column('email', sa.String(length=255), nullable=False),
         sa.Column('password', sa.String(length=255), nullable=True),
-        sa.Column('role', sa.Enum('USER', 'ADMIN', name='Role'), nullable=False),
+        sa.Column('role', sa.Enum('VIEWER', 'ADMIN', name='Role'), nullable=False),
         sa.Column('tenant', sa.String(length=100), nullable=True),
         sa.Column('status', sa.Enum('FREEZE', 'INACTIVE', 'ACTIVE', name='Status'), nullable=False),
         sa.Column('createAt', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

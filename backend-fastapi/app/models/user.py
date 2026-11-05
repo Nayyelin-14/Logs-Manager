@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index
+from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index, func
 from sqlalchemy.orm import relationship
 from app.models.base import Base
 from app.models.enums import Role, Status
@@ -11,11 +11,11 @@ class User(Base):
     username = Column(String(50), nullable=True)
     email = Column(String(255), unique=True, nullable=False)
     password = Column(String(255), nullable=True)
-    role = Column(SQLEnum(Role, name="Role", native_enum=True), default=Role.USER, nullable=False)
+    role = Column(SQLEnum(Role, name="Role", native_enum=True), default=Role.VIEWER, nullable=False)
     tenant = Column(String(100), nullable=True)
     status = Column(SQLEnum(Status, name="Status", native_enum=True), default=Status.ACTIVE, nullable=False)
     create_at = Column("createAt", DateTime(timezone=True), server_default="now()", nullable=False)
-    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate="now()", nullable=False)
+    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_User_tenant", "tenant"),

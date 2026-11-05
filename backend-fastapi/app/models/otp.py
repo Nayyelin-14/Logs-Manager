@@ -1,6 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index
+from sqlalchemy import Column, Integer, String, DateTime, Index, func
 from app.models.base import Base
-from app.models.enums import Status
 
 
 class Otp(Base):
@@ -14,7 +13,7 @@ class Otp(Base):
     count = Column(Integer, default=0, nullable=False)
     error = Column(Integer, default=0, nullable=False)
     create_at = Column("createAt", DateTime(timezone=True), server_default="now()", nullable=False)
-    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate="now()", nullable=False)
+    updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_Otp_email", "email"),

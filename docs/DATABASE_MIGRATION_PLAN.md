@@ -33,7 +33,7 @@ Safely transition from Prisma ORM (legacy Node.js/TypeScript) to SQLAlchemy 2.x 
 
 | Enum | Values | Prisma Mapping |
 |------|--------|----------------|
-| `Role` | `USER`, `ADMIN` | `Role` enum |
+| `Role` | `VIEWER`, `ADMIN` | `Role` enum |
 | `Status` | `FREEZE`, `INACTIVE`, `ACTIVE` | `Status` enum |
 | `Action` | `ALLOW`, `DENY`, `CREATE`, `DELETE`, `LOGIN`, `LOGOUT`, `ALERT`, `QUARANTINE`, `CREATEUSER` | `Action` enum |
 | `Source` | `FIREWALL`, `CROWDSTRIKE`, `AWS`, `M365`, `AD`, `API`, `NETWORK` | `Source` enum |
@@ -88,7 +88,7 @@ import enum
 from sqlalchemy import Enum
 
 class Role(str, enum.Enum):
-    USER = "USER"
+    VIEWER = "VIEWER"
     ADMIN = "ADMIN"
 
 class Status(str, enum.Enum):
@@ -133,7 +133,7 @@ class User(Base):
     username = Column(String(50), nullable=True)
     email = Column(String(255), unique=True, nullable=False)
     password = Column(String(255), nullable=True)  # bcrypt hash
-    role = Column(SQLEnum(Role, name="Role", native_enum=True), default=Role.USER, nullable=False)
+    role = Column(SQLEnum(Role, name="Role", native_enum=True), default=Role.VIEWER, nullable=False)
     tenant = Column(String(100), nullable=True)
     status = Column(SQLEnum(Status, name="Status", native_enum=True), default=Status.ACTIVE, nullable=False)
     create_at = Column(DateTime(timezone=True), server_default="now()", nullable=False)
@@ -585,7 +585,7 @@ Prisma creates PostgreSQL enum types: `"Role"`, `"Status"`, `"Action"`, `"Source
 # In model definition
 role = Column(
     SQLEnum(Role, name="Role", native_enum=True, create_constraint=True),
-    default=Role.USER,
+    default=Role.VIEWER,
     nullable=False
 )
 ```

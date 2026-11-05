@@ -86,6 +86,35 @@
   --brand: #f97316;
   --brand-hover: #ffb690;
   --brand-soft: #422c1b;
+  --bg-page: #FAFAF8;
+  --bg-card: #FFFFFF;
+  --border-subtle: #E7E5E0;
+  --text-primary: #141414;
+  --text-secondary: #6B6A66;
+  --accent-teal: #0F766E;
+  --accent-teal-hover: #0B5F58;
+  --error-text: #B42318;
+  --error-bg: #FEF3F2;
+  --error-border: #FECDCA;
+  --success-text: #067647;
+  --success-bg: #ECFDF3;
+  --success-border: #ABEFC6;
+  --disabled-bg: #F5F5F3;
+
+  --bg-page: #FAFAF8;
+  --bg-card: #FFFFFF;
+  --border-subtle: #E7E5E0;
+  --text-primary: #141414;
+  --text-secondary: #6B6A66;
+  --accent-teal: #0F766E;
+  --accent-teal-hover: #0B5F58;
+  --error-text: #B42318;
+  --error-bg: #FEF3F2;
+  --error-border: #FECDCA;
+  --success-text: #067647;
+  --success-bg: #ECFDF3;
+  --success-border: #ABEFC6;
+  --disabled-bg: #F5F5F3;
 
   --signal: #f97316;
   --signal-hover: #ffb690;

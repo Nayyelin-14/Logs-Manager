@@ -140,7 +140,7 @@ async def create_user(
     username: str = Form(...),
     email: str = Form(...),
     tenant: str = Form(...),
-    role: str = Form("USER"),
+    role: str = Form("VIEWER"),
     status: str = Form("ACTIVE"),
     password: str = Form(...),
     session: AsyncSession = Depends(get_session),
@@ -238,12 +238,22 @@ async def delete_user(
     )
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        return {"success": False, "message": "User not found"}
+    
+    # Capture user data before deletion for response
+    user_data = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "tenant": user.tenant,
+        "status": user.status,
+    }
     
     await session.delete(user)
     await session.commit()
     
-    return {"message": "User deleted successfully"}
+    return {"success": True, "message": "User deleted successfully", "user": user_data}
 
 
 @router.get("/get-all-data", response_model=dict)
