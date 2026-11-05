@@ -20,6 +20,7 @@ from typing import Any
 import json
 import secrets
 import hashlib
+import uuid
 
 router = APIRouter()
 settings = get_settings()
@@ -396,6 +397,7 @@ async def create_alert_rule(
         raise HTTPException(status_code=400, detail="Invalid condition type")
     
     new_rule = AlertRule(
+        id=uuid.uuid4().hex[:25],
         name=rule.name,
         description=rule.description,
         tenant=rule.tenant,
