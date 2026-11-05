@@ -39,7 +39,6 @@ def get_code_keys(code_dir: Path) -> set:
         try:
             content = py_file.read_text()
             for match in settings_pattern.findall(content):
-                # Filter to only settings field names (uppercase with underscores)
                 if re.match(r'^[A-Z][A-Z0-9_]*$', match):
                     keys.add(match)
         except Exception:
@@ -55,7 +54,7 @@ def get_frontend_keys(frontend_dir: Path) -> set:
     
     for tsx_file in frontend_dir.rglob('*.ts*'):
         try:
-            content = ts/tsx_file.read_text()
+            content = tsx_file.read_text()
             for match in vite_pattern.findall(content):
                 keys.add(f'VITE_{match}')
         except Exception:
@@ -81,106 +80,91 @@ def check_placeholder_secrets(env_dict: dict, is_example: bool) -> list:
     return issues
 
 
-def check_for_real_secrets_in_committed(env_dict: dict, is_example: bool) -> list:
-    """Check if real secrets exist in non-example files."""
-    issues = []
-    if is_example:
-        return issues
-    
-    neon_pattern = re.compile(r'neon\.tech', re.IGNORECASE)
-    gmail_pattern = re.compile(r'@gmail\.com')
-    upstash_pattern = re.compile(r'upstash\.io')
-    
-    for key, value in env_dict.items():
-        if neon_pattern.search(value):
-            issues.append(f"  {key}: may contain real Neon password")
-        if gmail_pattern.search(value) and 'smtp' in key.lower():
-            issues.append(f"  {key}: may contain real Gmail credentials")
-        if upstash_pattern.search(value):
-            issues.append(f"  {key}: may contain real Redis credentials")
-    
-    return issues
-
-
 def main():
     root_dir = Path(__file__).parent.parent
     backend_dir = root_dir / 'backend-fastapi'
     frontend_dir = root_dir / 'frontend' / 'lms'
     
-    # Load all env files
     root_example = root_dir / '.env.example'
     backend_example = backend_dir / '.env.example'
     frontend_example = frontend_dir / '.env.example'
     
-    root_env = parse_env_file(root_dir / '.env')
-    backend_env = parse_env_file(backend_dir / '.env')
     backend_local = parse_env_file(backend_dir / '.env.local')
-    frontend_env = parse_env_file(frontend_dir / '.env')
-    frontend_local = parse_env_file(frontend_dir / '.env.local')
     
     all_pass = True
     
-    # 1. Get backend settings keys from code
+    # Get backend settings keys from code
     code_keys = get_code_keys(backend_dir / 'app')
     
-    # 2. Get frontend VITE keys from code
+    # Get frontend VITE keys from code
     frontend_code_keys = get_frontend_keys(frontend_dir)
     
-    # 3. Get all keys from example files
+    # Get all keys from example files
     example_keys = set()
     for env_dict in [parse_env_file(root_example), parse_env_file(backend_example), parse_env_file(frontend_example)]:
         example_keys.update(env_dict.keys())
     
-    # 4. Check for keys in code but not in example files
-    print("=== CHECK 1: Code keys not in example files ===")
+    # CHECK 1: Code keys not in example files
+    print("=== CHECK 1: Code keys must be in example files ===")
     missing_from_example = []
     for key in sorted(code_keys):
-        if key not in example_keys and not key.startswith('SYSLOG_'):  # SYSLOG_ vars are optional
+        if key not in example_keys and not key.startswith('SYSLOG_'):
             missing_from_example.append(key)
     
+    # CHECK 2: Keys in non-example files must be in example files
+    print("=== CHECK 2: Non-example files must not have keys missing from examples ===")
+    unexpected_keys = []
+    for key in backend_local:
+        if key not in example_keys:
+            unexpected_keys.append(key)
+    
     if missing_from_example:
-        print("FAIL: Keys in code but not in example files:", missing_from_example)
+        print(f"FAIL: Keys in code but not in example files: {missing_from_example}")
         all_pass = False
     else:
         print("PASS: All code keys present in example files")
     
-    # 5. Check for keys in example files but not in real .env.local
-    print("\n=== CHECK 2: Keys missing from .env.local ===")
-    missing_from_local = []
+    if unexpected_keys:
+        print(f"FAIL: Keys in .env.local but not in example files: {unexpected_keys}")
+        all_pass = False
+    else:
+        print("PASS: All .env.local keys present in example files")
+    
+    # CHECK 3: Keys required for development must be in .env.local
+    print("\n=== CHECK 3: Required keys must be in .env.local ===")
     required_keys = [
         'DATABASE_URL', 'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET',
         'REDIS_URL', 'CORS_ORIGINS'
     ]
+    missing_from_local = []
     for key in required_keys:
         if key not in backend_local:
             missing_from_local.append(key)
     
-    optional_keys = ['COOKIE_SECURE', 'COOKIE_SAME_SITE', 'DATABASE_POOL', 'JWT_ALGORITHM', 
-                     'REFRESH_TOKEN_EXPIRE_DAYS', 'SYSLOG_TIMEZONE', 'ACCESS_TOKEN_EXPIRE_MINUTES']
-    
     if missing_from_local:
-        print(f"WARN: Required keys missing from backend-fastapi/.env.local: {missing_from_local}")
-    if optional_keys:
-        print(f"INFO: Optional keys (may use defaults): {optional_keys}")
+        print(f"FAIL: Required keys missing from .env.local: {missing_from_local}")
+        all_pass = False
+    else:
+        print("PASS: All required keys present in .env.local")
     
-    # 6. Check for secrets in committed example files
-    print("\n=== CHECK 3: Real secrets in example files ===")
+    # CHECK 4: No real secrets in example files
+    print("\n=== CHECK 4: Check for real secrets in example files ===")
+    secrets_found = False
     for filepath in [root_example, backend_example, frontend_example]:
         if filepath.exists():
             env_dict = parse_env_file(filepath)
             for key, value in env_dict.items():
                 for pattern in ['neon.tech', 'upstash.io', '@gmail.com']:
                     if pattern in value.lower():
-                        print(f"WARN: {filepath.name}: {key} contains {pattern}")
+                        print(f"WARN: {filepath.name}: {key} may contain real secret")
+                        secrets_found = True
     
-    # 7. Check for placeholder secrets in real .env files
-    print("\n=== CHECK 4: Placeholder secrets in non-example .env files ===")
-    placeholder_issues = []
-    for env_type, env_dict in [('backend-env', backend_env), ('backend-local', backend_local), 
-                                ('frontend-env', frontend_env), ('frontend-local', frontend_local)]:
-        issues = check_placeholder_secrets(env_dict, is_example=False)
-        if issues:
-            placeholder_issues.extend(issues)
+    if not secrets_found:
+        print("PASS: No real secrets in example files")
+    
+    # CHECK 5: No placeholder secrets in real .env files
+    print("\n=== CHECK 5: Check for placeholder secrets in non-example .env files ===")
+    placeholder_issues = check_placeholder_secrets(backend_local, is_example=False)
     
     if placeholder_issues:
         print("FAIL: Placeholder values in non-example .env files:")

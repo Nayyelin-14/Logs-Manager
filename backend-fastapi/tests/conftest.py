@@ -26,10 +26,17 @@ DEFAULT_TEST_DB = (
 )
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DB)
 
+# Guard: refuse to run tests against production/Neon databases
+db_name = TEST_DATABASE_URL.rsplit("/", 1)[-1].split("?")[0]
 if "neon" in TEST_DATABASE_URL.lower():
     raise RuntimeError(
         f"Refusing to run tests against a Neon database ({TEST_DATABASE_URL}). "
         "Use TEST_DATABASE_URL pointing at a disposable test database."
+    )
+if "test" not in db_name.lower():
+    raise RuntimeError(
+        f"Refusing to run tests against a production database ({db_name}). "
+        "TEST_DATABASE_URL must point at a disposable test database containing 'test' in the name."
     )
 
 # Bind settings/engine to the test database BEFORE any app import.
