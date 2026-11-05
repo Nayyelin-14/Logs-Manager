@@ -59,7 +59,7 @@ async def seed_demo_data():
                     email="viewerA@demo.local",
                     password=viewer_a_password,
                     role="VIEWER",
-                    tenant="demoA",
+                    tenant="demoa",
                     status="ACTIVE",
                 )
                 session.add(viewer_a)
@@ -74,7 +74,7 @@ async def seed_demo_data():
                     email="viewerB@demo.local",
                     password=viewer_b_password,
                     role="VIEWER",
-                    tenant="demoB",
+                    tenant="demob",
                     status="ACTIVE",
                 )
                 session.add(viewer_b)
@@ -93,7 +93,7 @@ async def seed_demo_data():
                     id=uuid4().hex[:25],
                     name="Brute force: repeated failed logins",
                     description="Triggers when 5+ failed logins from the same src_ip within 5 minutes",
-                    tenant="demoA",
+                    tenant="demoa",
                     enabled=True,
                     severity="high",
                     conditions=[

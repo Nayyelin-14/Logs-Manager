@@ -12,11 +12,14 @@ from app.core.security import TokenPayload
 from app.models.security_event import SecurityEvent
 from app.models.alert import Alert, AlertRule, EmailNotification, EmailType, EmailStatus
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.services.ingest_service import IngestionService
 from app.integrations.queue import enqueue_alert_email
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any
 import json
+import secrets
+import hashlib
 
 router = APIRouter()
 settings = get_settings()
@@ -712,3 +715,165 @@ async def get_all_data(
         )
         result["data"]["logsByTenant"] = {row[0]: row[1] for row in by_tenant}
     return result
+
+
+# =============================================================================
+# Tenant Management Endpoints (Admin Only)
+# =============================================================================
+
+class TenantCreateRequest(BaseModel):
+    name: str
+    is_active: bool = True
+
+
+class TenantCreateResponse(BaseModel):
+    id: str
+    name: str
+    api_key: str  # Returned ONLY once
+    is_active: bool
+    created_at: str
+
+
+class TenantResponse(BaseModel):
+    id: str
+    name: str
+    is_active: bool
+    created_at: str
+    alert_webhook_url: Optional[str] = None
+    alert_emails: Optional[List[str]] = None
+
+
+class TenantUpdateRequest(BaseModel):
+    is_active: Optional[bool] = None
+
+
+@router.post("/tenants", response_model=TenantCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_tenant(
+    request: TenantCreateRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Create a new tenant. Returns the API key ONCE - store it securely."""
+    from app.models.enums import Role
+
+    # Validate tenant name using normalize_tenant logic
+    name = (request.name or "").strip().lower()
+    if not name:
+        raise HTTPException(status_code=422, detail="Tenant name is required")
+    if name == "all":
+        raise HTTPException(status_code=422, detail="Tenant name 'all' is reserved")
+    import re
+    if not re.match(r"^[a-z0-9_-]{2,50}$", name):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Tenant name '{name}' is invalid. "
+                f"Must be 2-50 chars: lowercase letters, digits, underscore, hyphen."
+            ),
+        )
+
+    # Check for duplicate
+    existing = await session.execute(select(Tenant).where(Tenant.name == name))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"Tenant '{name}' already exists")
+
+    # Generate a 32-byte url-safe API key
+    api_key = secrets.token_urlsafe(32)
+    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    tenant_id = hashlib.sha256(name.encode()).hexdigest()[:25]
+
+    tenant = Tenant(
+        id=tenant_id,
+        name=name,
+        api_key_hash=api_key_hash,
+        is_active=request.is_active,
+    )
+    session.add(tenant)
+    await session.commit()
+    await session.refresh(tenant)
+
+    return TenantCreateResponse(
+        id=tenant.id,
+        name=tenant.name,
+        api_key=api_key,  # Returned ONLY once
+        is_active=tenant.is_active,
+        created_at=tenant.created_at.isoformat() if tenant.created_at else "",
+    )
+
+
+@router.get("/tenants", response_model=List[TenantResponse])
+async def list_tenants(
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """List all tenants. API keys and hashes are NOT exposed."""
+    result = await session.execute(select(Tenant).order_by(Tenant.name))
+    tenants = result.scalars().all()
+    return [
+        TenantResponse(
+            id=t.id,
+            name=t.name,
+            is_active=t.is_active,
+            created_at=t.created_at.isoformat() if t.created_at else "",
+            alert_webhook_url=t.alert_webhook_url,
+            alert_emails=t.alert_emails,
+        )
+        for t in tenants
+    ]
+
+
+@router.patch("/tenants/{name}", response_model=TenantResponse)
+async def update_tenant(
+    name: str,
+    request: TenantUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Activate or deactivate a tenant. Deactivating blocks all its users' logins."""
+    result = await session.execute(select(Tenant).where(Tenant.name == name))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{name}' not found")
+
+    if request.is_active is not None:
+        tenant.is_active = request.is_active
+        await session.commit()
+        await session.refresh(tenant)
+
+    return TenantResponse(
+        id=tenant.id,
+        name=tenant.name,
+        is_active=tenant.is_active,
+        created_at=tenant.created_at.isoformat() if tenant.created_at else "",
+        alert_webhook_url=tenant.alert_webhook_url,
+        alert_emails=tenant.alert_emails,
+    )
+
+
+@router.post("/tenants/{name}/rotate-key", response_model=TenantCreateResponse)
+async def rotate_tenant_key(
+    name: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Rotate a tenant's API key. The old key is invalidated immediately."""
+    result = await session.execute(select(Tenant).where(Tenant.name == name))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{name}' not found")
+
+    # Generate a new 32-byte url-safe API key
+    new_api_key = secrets.token_urlsafe(32)
+    new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
+
+    tenant.api_key_hash = new_key_hash
+    await session.commit()
+    await session.refresh(tenant)
+
+    return TenantCreateResponse(
+        id=tenant.id,
+        name=tenant.name,
+        api_key=new_api_key,  # Returned ONLY once
+        is_active=tenant.is_active,
+        created_at=tenant.created_at.isoformat() if tenant.created_at else "",
+    )
