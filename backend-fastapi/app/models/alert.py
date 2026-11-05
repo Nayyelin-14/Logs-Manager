@@ -38,8 +38,17 @@ class Alert(Base):
     triggered_at = Column("triggeredAt", DateTime(timezone=True), server_default="now()", nullable=False)
     event_ids = Column(ARRAY(String), nullable=False)
     severity = Column(String(50), nullable=False)
-    status = Column(SQLEnum(AlertStatus, name="alert_status"), default="open", nullable=False)
+    status = Column(
+        SQLEnum(
+            AlertStatus,
+            name="alert_status",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        default="open", nullable=False
+    )
     title = Column(String(255), nullable=False)
+    tags = Column("tags", ARRAY(String), default=[], nullable=False)
     dedupe_key = Column("dedupe_key", String(255), nullable=True)
     group_key = Column(String(255), nullable=True)
     count = Column(Integer, default=1, nullable=False)

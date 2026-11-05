@@ -149,21 +149,47 @@ async def seed_demo_data():
                     conditions=[
                         {
                             "type": "repeated_failures",
+                            "groupBy": "src_ip",
                             "threshold": 5,
                             "windowSeconds": 300,
-                            "cooldownSeconds": 86400,
                         }
                     ],
                 )
                 session.add(rule)
-                print("Created brute-force alert rule")
+                print("Created brute-force alert rule for demoa")
                 await session.commit()
             else:
                 print("Brute-force alert rule already exists")
+            
+            # Create rule for demob tenant too
+            rule_b_result = await session.execute(
+                select(AlertRule).where(AlertRule.name == "Brute force: repeated failed logins (demob)")
+            )
+            rule_b = rule_b_result.scalar_one_or_none()
+            if not rule_b:
+                rule_b = AlertRule(
+                    id=uuid4().hex[:25],
+                    name="Brute force: repeated failed logins (demob)",
+                    description="Triggers when 5+ failed logins from the same src_ip within 5 minutes",
+                    tenant="demob",
+                    enabled=True,
+                    severity="high",
+                    conditions=[
+                        {
+                            "type": "repeated_failures",
+                            "groupBy": "src_ip",
+                            "threshold": 5,
+                            "windowSeconds": 300,
+                        }
+                    ],
+                )
+                session.add(rule_b)
+                print("Created brute-force alert rule for demob")
+                await session.commit()
 
             # 4. Idempotent marker check: if seeded events already exist, skip ingestion.
             existing_result = await session.execute(
-                text("SELECT id FROM security_logs WHERE raw->'raw'->>'_seed' = 'true' LIMIT 1")
+                text("SELECT id FROM security_logs WHERE raw->>'_seed' = 'true' LIMIT 1")
             )
             already_seeded = existing_result.scalars().first() is not None
             if already_seeded:

@@ -6,7 +6,7 @@ Alert listing, status updates, and alert rule management.
 
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
@@ -52,9 +52,13 @@ async def list_alerts(
         query = query.where(Alert.severity == severity)
     if search:
         search_term = f"%{search}%"
+        # Use func.array_to_string to search within tags array elements
         query = query.where(
-            (Alert.title.ilike(f"%{search}%")) |
-            (Alert.description.ilike(f"%{search}%"))
+            or_(
+                Alert.title.ilike(f"%{search}%"),
+                Alert.description.ilike(f"%{search}%"),
+                func.array_to_string(Alert.tags, ',').ilike(f"%{search}%")
+            )
         )
     
     query = query.order_by(desc(Alert.triggered_at), desc(Alert.id)).limit(limit + 1)
@@ -80,6 +84,7 @@ async def list_alerts(
             "status": a.status,
             "triggeredAt": a.triggered_at.isoformat() if a.triggered_at else None,
             "eventIds": a.event_ids,
+            "tags": a.tags,
             "rule": {"name": a.rule.name, "description": a.rule.description} if a.rule else None,
             "dedupeKey": a.dedupe_key,
         } for a in alerts],

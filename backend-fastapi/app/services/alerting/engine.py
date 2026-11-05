@@ -163,10 +163,13 @@ class AlertingEngine:
         """Evaluate a count-based rule (event_type, severity_min, field_value, threshold_count)."""
         threshold = int(condition.get("threshold", 1))
         window_seconds = int(condition.get("windowSeconds", DEFAULT_WINDOW_SECONDS))
-        group_by_field = condition.get("groupBy", "src_ip")
+        group_by_field = condition.get("groupBy", condition.get("group_by", "src_ip"))
         
         if group_by_field not in VALID_GROUP_BY_FIELDS:
             return None
+        
+        filters = condition.get("filters", {})
+        outcome_required = filters.get("outcome") if isinstance(filters, dict) else None
         
         # Determine filters based on rule type
         event_type = None
@@ -196,7 +199,7 @@ class AlertingEngine:
             window_end=event.timestamp,
             window_seconds=window_seconds,
             event_type=event_type,
-            outcome_required=None
+            outcome_required=outcome_required
         )
         
         if count < threshold:
@@ -231,19 +234,32 @@ class AlertingEngine:
         if existing:
             existing.count = count
             existing.last_seen = event.timestamp
+            if event.id not in existing.event_ids:
+                existing.event_ids = list(existing.event_ids) + [event.id]
+            if existing.first_seen is None or event.timestamp < existing.first_seen:
+                existing.first_seen = event.timestamp
+            # Merge tags from triggering event
+            if event.tags:
+                existing.tags = list(set(existing.tags or []) | set(event.tags))
+            await self.session.merge(existing)
             return {
                 "id": existing.id,
                 "title": existing.title,
                 "severity": existing.severity,
             }
         
-        # Create new alert
+        # Create new alert - include tags from the triggering event
+        event_tags = event.tags or []
+        
+        # Combine rule description with tags marker if present
+        base_description = rule.description or f"Threshold reached for {group_key}"
+        
         stmt = insert(Alert).values(
             id=str(uuid.uuid4().hex[:25]),
             rule_id=rule.id,
             tenant=event.tenant,
             title=f"Alert: {rule.name}",
-            description=rule.description or f"Threshold reached for {group_key}",
+            description=base_description,
             severity=rule.severity,
             status=AlertStatus.OPEN,
             event_ids=[event.id],
@@ -252,6 +268,7 @@ class AlertingEngine:
             count=count,
             first_seen=event.timestamp,
             last_seen=event.timestamp,
+            tags=list(event_tags),
         )
         
         stmt = stmt.on_conflict_do_nothing()

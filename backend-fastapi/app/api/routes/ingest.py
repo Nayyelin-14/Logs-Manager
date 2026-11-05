@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, asc
+from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.orm import selectinload
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, timezone
@@ -230,8 +230,11 @@ async def list_alerts(
     if search:
         search_term = f"%{search}%"
         query = query.where(
-            (Alert.title.ilike(f"%{search}%")) |
-            (Alert.description.ilike(f"%{search}%"))
+            or_(
+                Alert.title.ilike(f"%{search}%"),
+                Alert.description.ilike(f"%{search}%"),
+                func.array_to_string(Alert.tags, ',').ilike(f"%{search}%")
+            )
         )
     
     query = query.order_by(desc(Alert.triggered_at), desc(Alert.id)).limit(limit + 1)
@@ -257,6 +260,7 @@ async def list_alerts(
             "status": a.status,
             "triggeredAt": a.triggered_at.isoformat() if a.triggered_at else None,
             "eventIds": a.event_ids,
+            "tags": a.tags,
             "rule": {"name": a.rule.name, "description": a.rule.description} if a.rule else None,
             "dedupeKey": a.dedupe_key,
         } for a in alerts],

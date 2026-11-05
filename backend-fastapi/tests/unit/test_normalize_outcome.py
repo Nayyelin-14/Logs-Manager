@@ -86,11 +86,18 @@ class TestDetermineOutcome:
         ) == "failure"
     
     def test_status_denied_returns_failure(self):
-        """status=denied -> failure."""
+        """status=denied -> failure (for non-firewall sources)."""
         assert determine_outcome(
             event_type=None, canonical_event_type=None, status="denied",
             action=None, severity=None, event_id=None, source=None
         ) == "failure"
+    
+    def test_status_denied_returns_unknown_for_firewall(self):
+        """status=denied for firewall source -> unknown."""
+        assert determine_outcome(
+            event_type=None, canonical_event_type=None, status="denied",
+            action=None, severity=None, event_id=None, source="FIREWALL"
+        ) == "unknown"
     
     def test_status_succeeded_returns_success(self):
         """status=succeeded -> success."""
@@ -129,26 +136,26 @@ class TestDetermineOutcome:
             action="FAILURE", severity=None, event_id=None, source=None
         ) == "failure"
     
-    def test_action_deny_returns_failure(self):
-        """action=DENY -> failure."""
+    def test_action_deny_returns_unknown(self):
+        """action=DENY for FIREWALL returns unknown (outcome is for auth only)."""
         assert determine_outcome(
             event_type=None, canonical_event_type=None, status=None,
             action="DENY", severity=None, event_id=None, source="FIREWALL"
-        ) == "failure"
+        ) == "unknown"
     
-    def test_action_allowed_returns_success(self):
-        """action=ALLOWED -> success."""
+    def test_action_allowed_returns_unknown(self):
+        """action=ALLOWED for FIREWALL returns unknown (outcome is for auth only)."""
         assert determine_outcome(
             event_type=None, canonical_event_type=None, status=None,
             action="ALLOWED", severity=None, event_id=None, source="FIREWALL"
-        ) == "success"
+        ) == "unknown"
     
-    def test_action_allow_returns_success(self):
-        """action=ALLOW -> success."""
+    def test_action_allow_returns_unknown(self):
+        """action=ALLOW for FIREWALL returns unknown (outcome is for auth only)."""
         assert determine_outcome(
             event_type=None, canonical_event_type=None, status=None,
             action="ALLOW", severity=None, event_id=None, source="FIREWALL"
-        ) == "success"
+        ) == "unknown"
     
     # Unknown / default cases
     def test_all_none_returns_unknown(self):
@@ -158,21 +165,21 @@ class TestDetermineOutcome:
             action=None, severity=None, event_id=None, source=None
         ) == "unknown"
     
-    def test_firewall_deny_returns_failure(self):
-        """Firewall deny action -> failure."""
+    def test_firewall_deny_returns_unknown(self):
+        """Firewall deny action -> unknown (outcome is not for firewall actions)."""
         assert determine_outcome(
             event_type="deny", canonical_event_type="firewall_deny",
             status=None, action="DENY", severity=None, event_id=None,
             source="FIREWALL"
-        ) == "failure"
+        ) == "unknown"
     
-    def test_firewall_allow_returns_success(self):
-        """Firewall allow action -> success."""
+    def test_firewall_allow_returns_unknown(self):
+        """Firewall allow action -> unknown (outcome is not for firewall actions)."""
         assert determine_outcome(
             event_type="allow", canonical_event_type="firewall_allow",
             status=None, action="ALLOW", severity=None, event_id=None,
             source="FIREWALL"
-        ) == "success"
+        ) == "unknown"
     
     def test_aws_error_code_returns_failure(self):
         """AWS with error code status -> failure."""

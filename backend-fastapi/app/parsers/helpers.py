@@ -103,7 +103,6 @@ def safe_severity(value: Any) -> Optional[int]:
     if not key:
         return None
     
-    # Map string severity to numeric
     severity_map = {
         "info": 2, "informational": 2, "low": 2,
         "medium": 5, "moderate": 5, "warning": 5,
@@ -120,20 +119,17 @@ def safe_timestamp(value: Any) -> str:
         return datetime.now(timezone.utc).isoformat()
     
     if isinstance(value, (int, float)):
-        # Handle Unix timestamps
-        if value < 1e12:  # seconds
+        if value < 1e12:
             value = value * 1000
         from datetime import datetime, timezone
         return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
     
     from datetime import datetime
     try:
-        # Try parsing as ISO format
         return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
     except (ValueError, AttributeError):
         pass
     
-    # Fallback to current time
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
@@ -228,24 +224,20 @@ def determine_outcome(
     """
     Determine the outcome (success/failure/unknown) from event data.
     
-    Priority order:
+    Priority order for authentication-related outcomes:
     1. AD: Event ID 4624 -> success, 4625 -> failure
     2. M365: status field like 'Success', 'Failure'
-    3. API: event_type containing 'failed' or 'failure' -> failure
-    4. AWS: status like 'Failure' -> failure
-    5. Default: unknown
+    3. AWS: status field like 'Failure' (from API response)
+    4. API: event_type containing 'failed' or 'failure' -> failure
+    5. Canonical event types: ad_logon_success/login_success -> success, ad_logon_failed/login_failed -> failure
+    6. Status field: success/successful/succeeded -> success, failure/failed/denied/error -> failure
+    7. Action field: only for LOGIN/LOGOUT events -> failure/error for failures
+    8. Default: unknown (including firewall actions which are not authentication)
     """
     if event_id is not None:
         if event_id == 4624:
             return "success"
         if event_id == 4625:
-            return "failure"
-    
-    if status:
-        status_lower = str(status).lower()
-        if status_lower in ("success", "successful", "succeeded"):
-            return "success"
-        if status_lower in ("failure", "failed", "denied", "error"):
             return "failure"
     
     if canonical_event_type:
@@ -262,11 +254,25 @@ def determine_outcome(
         if "success" in event_lower:
             return "success"
     
+    if status:
+        status_lower = str(status).lower()
+        if status_lower in ("success", "successful", "succeeded"):
+            return "success"
+        if source and str(source).lower() == "firewall":
+            return "unknown"
+        if "failure" in status_lower or "failed" in status_lower or "denied" in status_lower or "error" in status_lower:
+            return "failure"
+    
     if action:
         action_lower = str(action).lower()
-        if action_lower in ("failure", "denied", "error"):
+        if action_lower in ("failure", "error"):
             return "failure"
-        if action_lower in ("success", "allowed"):
-            return "success"
+        if action_lower in ("deny", "drop", "reject", "block", "allow", "permit", "pass"):
+            return "unknown"
+        if action_lower in ("login", "logout"):
+            if source and str(source).lower() == "aws":
+                return "unknown"
+            if source and str(source).lower() == "firewall":
+                return "unknown"
     
     return "unknown"

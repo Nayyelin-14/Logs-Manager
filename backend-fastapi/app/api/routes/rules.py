@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, Annotated
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant, require_admin
@@ -20,11 +20,55 @@ from app.core.config import get_settings
 router = APIRouter()
 
 
+VALID_CONDITION_TYPES = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
+
+
+class ConditionBase(BaseModel):
+    type: str
+    value: Optional[str] = None
+    threshold: Optional[int] = None
+    windowSeconds: Optional[int] = None
+    groupBy: Optional[str] = None
+    filters: Optional[Dict[str, Any]] = None
+    field: Optional[str] = None
+    
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in VALID_CONDITION_TYPES:
+            raise ValueError(f"Unknown condition type: {v}")
+        return v
+    
+    @field_validator("threshold")
+    @classmethod
+    def validate_threshold(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("threshold must be non-negative")
+        return v
+    
+    @field_validator("windowSeconds")
+    @classmethod
+    def validate_window(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None:
+            if v < 1:
+                raise ValueError("windowSeconds must be at least 1")
+            if v > 86400:
+                raise ValueError("windowSeconds must be at most 86400")
+        return v
+    
+    @field_validator("groupBy")
+    @classmethod
+    def validate_group_by(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("src_ip", "user", "host"):
+            raise ValueError(f"Invalid groupBy field: {v}")
+        return v
+
+
 class AlertRuleCreate(BaseModel):
     name: str
     tenant: str
     description: Optional[str] = None
-    conditions: List[dict]
+    conditions: List[Annotated[ConditionBase, "ConditionBase"]] = Field(default_factory=list)
     enabled: bool = True
     severity: str = "medium"
 
@@ -107,25 +151,21 @@ async def create_alert_rule(
     current_user: "TokenPayload" = Depends(require_admin),
 ):
     """Create a new alert rule."""
-    # Validate tenant matches user's tenant
-    if rule.tenant != current_user.tenant:
-        raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
-    
-    # Validate conditions
     if not rule.conditions or len(rule.conditions) != 1:
         raise HTTPException(status_code=400, detail="Exactly one condition required")
     
-    condition = rule.conditions[0]
-    if condition["type"] not in ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]:
-        raise HTTPException(status_code=400, detail="Invalid condition type")
+    import uuid
+    if rule.tenant != current_user.tenant:
+        raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
     
     new_rule = AlertRule(
+        id=uuid.uuid4().hex[:25],
         name=rule.name,
         description=rule.description,
         tenant=rule.tenant,
         enabled=rule.enabled,
         severity=rule.severity,
-        conditions=rule.conditions,
+        conditions=[c.model_dump(exclude_none=True) for c in rule.conditions],
     )
     
     session.add(new_rule)

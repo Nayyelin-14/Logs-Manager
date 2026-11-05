@@ -8,6 +8,7 @@ Migration for PHASE 1 alerting:
 - Add outcome column to security_logs
 - Add indexes for outcome-based queries
 - Add alert columns: group_key, count, first_seen, last_seen, acknowledged_by, acknowledged_at
+- Add tags column to alerts
 - Add partial unique index on dedupe_key for non-resolved alerts
 """
 
@@ -18,7 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'f8e7d6c5b4a3'
-down_revision: Union[str, Sequence[str], None] = '60bf177ba117'
+down_revision: Union[str, Sequence[str], None] = 'a1b2c3d4e5f6'
 branch_labels: Union[str, Sequence[str], None] = 'phase1'
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -34,6 +35,7 @@ def upgrade() -> None:
     op.add_column('alerts', sa.Column('last_seen', sa.DateTime(timezone=True), nullable=True))
     op.add_column('alerts', sa.Column('acknowledged_by', sa.String(length=100), nullable=True))
     op.add_column('alerts', sa.Column('acknowledged_at', sa.DateTime(timezone=True), nullable=True))
+    op.add_column('alerts', sa.Column('tags', postgresql.ARRAY(sa.String()), nullable=True, server_default='{}'))
     
     # 3. Create the alert_status enum type
     op.execute(sa.text("CREATE TYPE alert_status AS ENUM ('open', 'acknowledged', 'resolved')"))
@@ -102,6 +104,7 @@ def downgrade() -> None:
     op.drop_column('alerts', 'last_seen')
     op.drop_column('alerts', 'acknowledged_by')
     op.drop_column('alerts', 'acknowledged_at')
+    op.drop_column('alerts', 'tags')
     
     # Drop the custom enum type
     op.execute(sa.text("DROP TYPE alert_status"))
