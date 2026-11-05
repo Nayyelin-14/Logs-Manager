@@ -15,7 +15,7 @@ from app.models.user import User
 from app.models.tenant import Tenant
 from app.services.ingest_service import IngestionService
 from app.integrations.queue import enqueue_alert_email
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any
 import json
 import secrets
@@ -302,6 +302,39 @@ class AlertRuleCreate(BaseModel):
     conditions: List[dict]
     enabled: bool = True
     severity: str = "medium"
+    
+    @field_validator("conditions")
+    @classmethod
+    def validate_conditions(cls, v: List[dict]) -> List[dict]:
+        if not v or len(v) != 1:
+            raise ValueError("Exactly one condition required")
+        
+        condition = v[0]
+        cond_type = condition.get("type")
+        valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
+        if cond_type not in valid_types:
+            raise ValueError(f"Unknown condition type: {cond_type}")
+        
+        # Validate threshold if present
+        threshold = condition.get("threshold")
+        if threshold is not None and threshold < 1:
+            raise ValueError("threshold must be at least 1")
+        
+        # Validate windowSeconds
+        window = condition.get("windowSeconds")
+        if window is not None:
+            if window < 1:
+                raise ValueError("windowSeconds must be at least 1")
+            if window > 86400:
+                raise ValueError("windowSeconds must be at most 86400")
+        
+        # Validate groupBy
+        group_by = condition.get("groupBy")
+        if group_by is not None and group_by not in ("src_ip", "user", "host"):
+            raise ValueError(f"Invalid groupBy field: {group_by}")
+        
+        return v
+
 
 class AlertRuleUpdate(BaseModel):
     name: Optional[str] = None
@@ -309,6 +342,36 @@ class AlertRuleUpdate(BaseModel):
     conditions: Optional[List[dict]] = None
     enabled: Optional[bool] = None
     severity: Optional[str] = None
+    
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def validate_conditions(cls, v: Optional[List[dict]]) -> Optional[List[dict]]:
+        if v is not None:
+            if not v or len(v) != 1:
+                raise ValueError("Exactly one condition required")
+            
+            condition = v[0]
+            cond_type = condition.get("type")
+            valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
+            if cond_type not in valid_types:
+                raise ValueError(f"Unknown condition type: {cond_type}")
+            
+            threshold = condition.get("threshold")
+            if threshold is not None and threshold < 1:
+                raise ValueError("threshold must be at least 1")
+            
+            window = condition.get("windowSeconds")
+            if window is not None:
+                if window < 1:
+                    raise ValueError("windowSeconds must be at least 1")
+                if window > 86400:
+                    raise ValueError("windowSeconds must be at most 86400")
+            
+            group_by = condition.get("groupBy")
+            if group_by is not None and group_by not in ("src_ip", "user", "host"):
+                raise ValueError(f"Invalid groupBy field: {group_by}")
+        
+        return v
 
 class AlertRuleResponse(BaseModel):
     id: str
@@ -384,17 +447,8 @@ async def create_alert_rule(
     current_user: TokenPayload = Depends(require_admin),
 ):
     """Create a new alert rule."""
-    # Validate tenant ownership (admin may target any tenant)
     if not owns_tenant(current_user, rule.tenant):
         raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
-    
-    # Validate conditions
-    if not rule.conditions or len(rule.conditions) != 1:
-        raise HTTPException(status_code=400, detail="Exactly one condition required")
-    
-    condition = rule.conditions[0]
-    if condition["type"] not in ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]:
-        raise HTTPException(status_code=400, detail="Invalid condition type")
     
     new_rule = AlertRule(
         id=uuid.uuid4().hex[:25],
