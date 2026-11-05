@@ -3,6 +3,10 @@ STRICT INTEGRATION TESTS for tenant isolation (GATE 0).
 Tests MUST hit real database through real HTTP app.
 Uses exact status codes and exact row counts - no ranges.
 No skips, no mocks, no source-text inspection.
+
+Test types:
+  FINDING-TEST: viewerB attempts cross-tenant access -> expects 403/404
+  POSITIVE-CONTROL: admin/owner accesses same id -> expects 200
 """
 
 import pytest
@@ -21,10 +25,10 @@ SEED_DATA = {}
 
 
 def _seed_demo_data():
-    """Insert one demoA log, one demoB log, one demoA alert, one demoB alert, one demoA rule."""
+    """Insert demo data: demoA/demoB logs, alerts, rules."""
     async def _seed():
         async with async_session_maker() as session:
-            # demoA log
+            # demoA log (for viewerB cross-tenant read test + admin positive control)
             log_a_id = str(uuid.uuid4())[:25]
             session.add(SecurityEvent(
                 id=log_a_id,
@@ -40,7 +44,7 @@ def _seed_demo_data():
                 tags=["seed"],
             ))
 
-            # demoB log
+            # demoB log (for viewerB own-tenant read test)
             log_b_id = str(uuid.uuid4())[:25]
             session.add(SecurityEvent(
                 id=log_b_id,
@@ -52,6 +56,22 @@ def _seed_demo_data():
                 user="admin",
                 host="EC2",
                 raw={"_seed": True},
+                tags=["seed"],
+            ))
+
+            # Separate demoA log for admin DELETE positive control (won't interfere with reads)
+            log_admin_delete_id = str(uuid.uuid4())[:25]
+            session.add(SecurityEvent(
+                id=log_admin_delete_id,
+                tenant="demoA",
+                source=Source.FIREWALL,
+                event_type="traffic_blocked",
+                action=Action.DENY,
+                severity=4,
+                user="external",
+                host="FW01",
+                src_ip="10.0.1.10",
+                raw={"_seed": True, "_admin_delete_test": True},
                 tags=["seed"],
             ))
 
@@ -107,6 +127,7 @@ def _seed_demo_data():
 
             SEED_DATA["demoA_log_id"] = log_a_id
             SEED_DATA["demoB_log_id"] = log_b_id
+            SEED_DATA["demoA_admin_delete_log_id"] = log_admin_delete_id
             SEED_DATA["demoA_alert_id"] = alert_a_id
             SEED_DATA["demoB_alert_id"] = alert_b_id
 
@@ -149,8 +170,10 @@ def test_data():
     }
 
 
+# ===== FINDING-TESTS: viewerB cross-tenant access attempts =====
+
 def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
-    """viewerB GET /api/get-logs?tenant=demoA -> status 200, only demoB rows, zero demoA rows."""
+    """FINDING-TEST: viewerB GET /api/get-logs?tenant=demoA -> status 200, only demoB rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -173,7 +196,7 @@ def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
 
 
 def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
-    """viewerB GET /api/get-alerts?tenant=demoA -> status 200, only demoB rows, zero demoA rows."""
+    """FINDING-TEST: viewerB GET /api/get-alerts?tenant=demoA -> status 200, only demoB rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -196,7 +219,7 @@ def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
 
 
 def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
-    """viewerB GET /api/dashboard?tenant=demoA -> counts equal demoB only."""
+    """FINDING-TEST: viewerB GET /api/dashboard?tenant=demoA -> demoB counts only."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -210,40 +233,20 @@ def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
     assert data.get("allAlerts", 0) == 0, f"Expected allAlerts=0 (demoB only), got {data.get('allAlerts')}"
 
 
-# --- IDOR and read-only checks ---
-
-def test_4_viewer_b_get_alerts_demoA_id_404(test_client, test_data):
-    """viewerB GET /api/alerts/{demoA alert id} -> 404.
-    NOTE: Only PATCH exists on /api/alerts/{alert_id}; GET returns 405 Method Not Allowed.
-    The path exists but method is not allowed - viewer cannot retrieve another tenant's alert.
-    """
+def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
+    """FINDING-TEST: viewerB PATCH /api/alerts/{demoA alert id} -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
     })
 
     alert_id = SEED_DATA["demoA_alert_id"]
-    response = test_client.get(f"/api/alerts/{alert_id}")
-    assert response.status_code == 405, f"Expected 405 (route exists, method not allowed), got {response.status_code}"
+    response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "CLOSED"})
+    assert response.status_code == 403, f"Expected 403, got {response.status_code} - VULNERABILITY: viewer can modify another tenant's alert"
 
 
-def test_5_viewer_b_get_logs_demoA_id_404(test_client, test_data):
-    """viewerB GET /api/logs/{demoA log id} -> 404.
-    NOTE: No GET /api/logs/{id} endpoint exists. Only /api/get-logs and /api/delete-log/{id}.
-    Path does not exist at all -> 404.
-    """
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
-
-    log_id = SEED_DATA["demoA_log_id"]
-    response = test_client.get(f"/api/logs/{log_id}")
-    assert response.status_code == 404, f"Expected 404 (no such route), got {response.status_code}"
-
-
-def test_6_viewer_b_delete_demoA_log_403(test_client, test_data):
-    """viewerB DELETE /api/delete-log/{demoA log id} -> 403."""
+def test_5_viewer_b_delete_demoA_log_403(test_client, test_data):
+    """FINDING-TEST: viewerB DELETE /api/delete-log/{demoA log id} -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -254,8 +257,8 @@ def test_6_viewer_b_delete_demoA_log_403(test_client, test_data):
     assert response.status_code == 403, f"Expected 403, got {response.status_code} - VULNERABILITY: viewer can delete another tenant's log"
 
 
-def test_7_viewer_b_delete_demoB_log_403(test_client, test_data):
-    """viewerB DELETE /api/delete-log/{demoB log id} -> 403 (read-only)."""
+def test_6_viewer_b_delete_demoB_log_403(test_client, test_data):
+    """FINDING-TEST: viewerB DELETE /api/delete-log/{demoB log id} -> 403 (read-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -266,8 +269,8 @@ def test_7_viewer_b_delete_demoB_log_403(test_client, test_data):
     assert response.status_code == 403, f"Expected 403, got {response.status_code} - VULNERABILITY: viewer can delete own tenant's log"
 
 
-def test_8_viewer_b_patch_demoB_alert_403(test_client, test_data):
-    """viewerB PATCH /api/alerts/{demoB alert id} -> 403 (read-only, even own tenant)."""
+def test_7_viewer_b_patch_demoB_alert_403(test_client, test_data):
+    """FINDING-TEST: viewerB PATCH /api/alerts/{demoB alert id} -> 403 (read-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -278,32 +281,8 @@ def test_8_viewer_b_patch_demoB_alert_403(test_client, test_data):
     assert response.status_code == 403, f"Expected 403, got {response.status_code} - VULNERABILITY: viewer can modify own tenant's alert"
 
 
-def test_9_admin_get_alerts_demoA_id_200(test_client, test_data):
-    """admin PATCH /api/alerts/{demoA alert id} -> 200 (proves endpoint works for admin).
-    NOTE: Only PATCH exists on /api/alerts/{alert_id}; no GET endpoint for individual alerts.
-    """
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
-
-    alert_id = SEED_DATA["demoA_alert_id"]
-    response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
-    assert response.status_code == 200, f"Expected 200, got {response.status_code} - endpoint may not work for admin"
-
-
-def test_10_register_returns_404(test_client):
-    """POST /api/auth/register -> 404."""
-    response = test_client.post("/api/auth/register", json={
-        "username": "testuser",
-        "email": "test@example.com",
-        "tenant": "test"
-    })
-    assert response.status_code == 404, f"Expected 404, got {response.status_code}"
-
-
-def test_11_viewer_cannot_access_admin_endpoints(test_client, test_data):
-    """viewerB on /api/get-users, /api/create-user, /api/get-rules, /api/create-alertRule -> 403."""
+def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
+    """FINDING-TEST: viewerB on /api/get-users, /api/create-user, /api/get-rules, /api/create-alertRule -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -335,8 +314,44 @@ def test_11_viewer_cannot_access_admin_endpoints(test_client, test_data):
     assert resp.status_code == 403, f"Expected 403 for viewer create-alertRule, got {resp.status_code}"
 
 
+def test_10_register_returns_404(test_client):
+    """FINDING-TEST: POST /api/auth/register -> 404."""
+    response = test_client.post("/api/auth/register", json={
+        "username": "testuser",
+        "email": "test@example.com",
+        "tenant": "test"
+    })
+    assert response.status_code == 404, f"Expected 404, got {response.status_code}"
+
+
+# ===== POSITIVE-CONTROLS: admin/owner accessing same id gets 200 =====
+
+def test_9_admin_patch_demoA_alert_200(test_client, test_data):
+    """POSITIVE-CONTROL: admin PATCH /api/alerts/{demoA alert id} -> 200."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["admin_email"],
+        "password": test_data["admin_password"]
+    })
+
+    alert_id = SEED_DATA["demoA_alert_id"]
+    response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
+    assert response.status_code == 200, f"Expected 200, got {response.status_code} - endpoint may not work for admin"
+
+
+def test_11_admin_delete_demoA_log_200(test_client, test_data):
+    """POSITIVE-CONTROL: admin DELETE /api/delete-log/{demoA admin-delete log id} -> 200."""
+    test_client.post("/api/auth/login", json={
+        "email": test_data["admin_email"],
+        "password": test_data["admin_password"]
+    })
+
+    log_id = SEED_DATA["demoA_admin_delete_log_id"]
+    response = test_client.delete(f"/api/delete-log/{log_id}")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code} - admin delete may not work"
+
+
 def test_12_admin_get_logs_all_tenants(test_client, test_data):
-    """admin GET /api/get-logs without tenant -> rows from both tenants."""
+    """POSITIVE-CONTROL: admin GET /api/get-logs without tenant -> rows from both tenants."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
