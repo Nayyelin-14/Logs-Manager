@@ -185,7 +185,7 @@ def test_alerting_5_2025_timestamps_fire_alert(client, api_key_demoa):
         assert res.status_code == 200
     
     client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER + "_5")
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
     alerts = alert_res.json().get("alerts", [])
     
     assert len(alerts) == 1, f"Expected 1 alert for 2025 timestamps, got {len(alerts)}"
@@ -413,14 +413,18 @@ def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob)
     alert_res = client.get("/api/get-alerts")
     alerts = alert_res.json().get("alerts", [])
     
-    # Filter for our marker
-    our_alerts = [a for a in alerts if MARKER in a.get("description", "")]
-    
-    demoa_alerts = [a for a in our_alerts if a["tenant"] == "demoa"]
-    demob_alerts = [a for a in our_alerts if a["tenant"] == "demob"]
+    demoa_alerts = [a for a in alerts if a["tenant"] == "demoa" and a.get("group_key") == src_ip]
+    demob_alerts = [a for a in alerts if a["tenant"] == "demob" and a.get("group_key") == src_ip]
     
     assert len(demoa_alerts) == 1, f"Expected 1 demoa alert, got {len(demoa_alerts)}"
     assert len(demob_alerts) == 1, f"Expected 1 demob alert, got {len(demob_alerts)}"
+    assert demoa_alerts[0]["tenant"] == "demoa" and demoa_alerts[0]["count"] == 5
+    assert demob_alerts[0]["tenant"] == "demob" and demob_alerts[0]["count"] == 5
+    
+    # viewerA (demoa) must not see demob's alert
+    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    viewer_alerts = client.get("/api/get-alerts").json().get("alerts", [])
+    assert all(a["tenant"] != "demob" for a in viewer_alerts), "viewerA saw demob alerts"
 
 
 def test_alerting_10_viewer_sees_own_tenant_alerts(client):
@@ -584,15 +588,21 @@ def test_alerting_17_rule_validation_group_by(client):
 
 
 def test_alerting_18_tenant_mismatch_403(client):
-    """13f. tenant mismatch -> 403 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    """13f. viewers cannot create rules; admins may create for any tenant."""
+    payload = {
+        "name": "Cross Tenant",
+        "tenant": "demoa",
+        "conditions": [{"type": "event_type", "value": "test"}],
+    }
     
-    res = client.post(
-        "/api/create-alertRule",
-        json={
-            "name": "Cross Tenant",
-            "tenant": "demob",
-            "conditions": [{"type": "event_type", "value": "test"}],
-        }
-    )
-    assert res.status_code == 403, f"Expected 403, got {res.status_code}"
+    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    res = client.post("/api/create-alertRule", json=payload)
+    assert res.status_code == 403, f"Expected 403 for viewerA/demoa, got {res.status_code}"
+    
+    res = client.post("/api/create-alertRule", json={**payload, "tenant": "demob"})
+    assert res.status_code == 403, f"Expected 403 for viewerA/demob, got {res.status_code}"
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    res = client.post("/api/create-alertRule", json={**payload, "tenant": "demob"})
+    assert res.status_code == 201, f"Expected 201 for admin/demob, got {res.status_code}"
+    assert res.json()["createdRule"]["tenant"] == "demob"

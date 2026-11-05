@@ -123,7 +123,10 @@ class IngestionService:
         source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Ingest a single event through the full pipeline."""
+        """Ingest a single event through the full pipeline.
+        
+        Uses batch evaluation internally for consistent alerting behavior.
+        """
         if not isinstance(raw_event, dict):
             raise ValidationError(
                 f"Event must be a JSON object, got {type(raw_event).__name__}."
@@ -132,25 +135,22 @@ class IngestionService:
         resolved_source = resolve_source(source, raw_event)
         normalized = self.normalizer.normalize_event(raw_event, resolved_source)
 
-        # Tenant comes from the trusted ingestion context only.
         context = context or {}
         tenant = context.get("tenant") or normalized.get("tenant") or settings.INGEST_DEFAULT_TENANT
         if not tenant or not str(tenant).strip():
             raise ValidationError("Tenant could not be determined for this event.")
-        tenant = str(tenant).strip().lower()  # Normalize to lowercase for tenant isolation
+        tenant = str(tenant).strip().lower()
 
         event = self._build_event(raw_event, normalized, resolved_source, tenant)
-
         self.session.add(event)
         await self.session.flush()
 
-        # Use the new alerting engine which evaluates events against rules
-        alerts = await self.alerting_engine.evaluate_event(event)
+        # Evaluate alerts for this single event using batch evaluation
+        alerts = await self.alerting_engine.evaluate_batch([event])
 
-        # Cache invalidation is an optimization: never fail ingestion on it.
         try:
             await enqueue_cache_invalidation("logs:*")
-        except Exception as exc:  # pragma: no cover - depends on Redis availability
+        except Exception as exc:
             logger.warning("cache invalidation enqueue failed: %s", exc)
 
         await self.session.commit()
@@ -259,7 +259,7 @@ class IngestionService:
         context: Optional[Dict[str, Any]] = None,
         pre_rejected: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Ingest multiple events, isolating per-record failures."""
+        """Ingest multiple events with ONE alert evaluation and ONE commit."""
         results: Dict[str, Any] = {
             "ingested": 0,
             "failed": 0,
@@ -268,18 +268,32 @@ class IngestionService:
         }
         results["failed"] += len(pre_rejected or [])
 
+        context = context or {}
+        tenant = context.get("tenant")
+        
+        created_events = []
         for idx, event_data in enumerate(events):
             try:
-                result = await self.ingest(event_data, source, context)
+                resolved_source = resolve_source(source, event_data)
+                normalized = self.normalizer.normalize_event(event_data, resolved_source)
+                
+                event_tenant = tenant or normalized.get("tenant") or settings.INGEST_DEFAULT_TENANT
+                if not event_tenant or not str(event_tenant).strip():
+                    raise ValidationError("Tenant could not be determined for this event.")
+                event_tenant = str(event_tenant).strip().lower()
+
+                event = self._build_event(event_data, normalized, resolved_source, event_tenant)
+                self.session.add(event)
+                await self.session.flush()
+                
+                created_events.append(event)
                 results["ingested"] += 1
-                results["alerts"].extend(result["alerts"])
                 results["results"].append({
                     "index": idx,
                     "success": True,
-                    "eventId": result["event"].id,
+                    "eventId": event.id,
                 })
             except Exception as e:
-                # A failed record must not poison the session for later records.
                 await self.session.rollback()
                 results["failed"] += 1
                 message = getattr(e, "message", None) or str(e)
@@ -288,6 +302,17 @@ class IngestionService:
                     "success": False,
                     "error": message,
                 })
+
+        if created_events:
+            alerts = await self.alerting_engine.evaluate_batch(created_events)
+            results["alerts"] = alerts
+
+            try:
+                await enqueue_cache_invalidation("logs:*")
+            except Exception as exc:
+                logger.warning("cache invalidation enqueue failed: %s", exc)
+
+            await self.session.commit()
 
         return results
 

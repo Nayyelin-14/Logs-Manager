@@ -259,6 +259,8 @@ async def list_alerts(
             "description": a.description,
             "severity": a.severity,
             "status": a.status,
+            "count": a.count,
+            "group_key": a.group_key,
             "triggeredAt": a.triggered_at.isoformat() if a.triggered_at else None,
             "eventIds": a.event_ids,
             "tags": a.tags,
