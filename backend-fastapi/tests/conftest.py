@@ -156,41 +156,55 @@ def viewer_b_client(client):
     return client
 
 
-@pytest.fixture(scope="session")
-def api_key_demoa():
+@pytest.fixture()
+def api_key_demoa(test_database):
     """Generate a fresh API key for demoa tenant, store its hash, return raw key."""
-    from app.core.database import async_session_maker
+    from app.core.database import async_session_maker, engine
     from app.models.tenant import Tenant
-    from sqlalchemy import select, update
+    from sqlalchemy import update, select
     import asyncio
+    import hashlib
+    import secrets
 
     async def _setup():
         raw_key = secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        print(f"[FIXTURE api_key_demoa] Generated key: {raw_key}")
+        print(f"[FIXTURE api_key_demoa] Generated hash: {key_hash}")
+        print(f"[FIXTURE api_key_demoa] Engine URL: {engine.url}")
         async with async_session_maker() as session:
             await session.execute(
                 update(Tenant).where(Tenant.name == "demoa").values(api_key_hash=key_hash)
             )
             await session.commit()
+            print(f"[FIXTURE api_key_demoa] Hash stored in database")
+            # Verify immediately
+            result = await session.execute(select(Tenant).where(Tenant.name == "demoa"))
+            tenant = result.scalar_one_or_none()
+            if tenant:
+                print(f"[FIXTURE api_key_demoa] Verified DB hash: {tenant.api_key_hash}")
+                print(f"[FIXTURE api_key_demoa] Match: {tenant.api_key_hash == key_hash}")
         return raw_key
 
     return asyncio.run(_setup())
 
 
-@pytest.fixture(scope="session")
-def api_key_demob():
-    """Generate a fresh API key for demob tenant, store its hash, return raw key."""
+@pytest.fixture()
+def api_key_demoa(test_database):
+    """Generate a fresh API key for demoa tenant, store its hash, return raw key."""
     from app.core.database import async_session_maker
     from app.models.tenant import Tenant
-    from sqlalchemy import update
+    from sqlalchemy import update, select
     import asyncio
+    import hashlib
+    import secrets
 
     async def _setup():
         raw_key = secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         async with async_session_maker() as session:
             await session.execute(
-                update(Tenant).where(Tenant.name == "demob").values(api_key_hash=key_hash)
+                update(Tenant).where(Tenant.name == "demoa").values(api_key_hash=key_hash, is_active=True)
             )
             await session.commit()
         return raw_key
@@ -198,7 +212,30 @@ def api_key_demob():
     return asyncio.run(_setup())
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
+def api_key_demob(test_database):
+    """Generate a fresh API key for demob tenant, store its hash, return raw key."""
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import update, select
+    import asyncio
+    import hashlib
+    import secrets
+
+    async def _setup():
+        raw_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant).where(Tenant.name == "demob").values(api_key_hash=key_hash, is_active=True)
+            )
+            await session.commit()
+        return raw_key
+
+    return asyncio.run(_setup())
+
+
+@pytest.fixture()
 def api_key(api_key_demoa):
     """Alias for api_key_demoa for backward compatibility with existing tests."""
     return api_key_demoa

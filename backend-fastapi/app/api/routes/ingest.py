@@ -33,14 +33,16 @@ def resolve_tenant(api_user: TokenPayload, requested: Optional[str]) -> str:
             status_code=403,
             detail="Ingestion credentials are not scoped to a tenant.",
         )
-    if requested and str(requested).strip() and str(requested).strip() != effective:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Cannot ingest into tenant '{requested}'. "
-                f"Credential is scoped to '{effective}'."
-            ),
-        )
+    if requested:
+        normalized = str(requested).strip().lower()
+        if normalized and normalized != effective:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Cannot ingest into tenant '{requested}'. "
+                    f"Credential is scoped to '{effective}'."
+                ),
+            )
     return effective
 
 
@@ -631,6 +633,23 @@ async def update_user(
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
     
+    # Prevent self-demotion or self-disabling
+    if user.id == current_user.user_id:
+        if role is not None and role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Cannot change your own role from ADMIN")
+        if status is not None and status != "ACTIVE":
+            raise HTTPException(status_code=403, detail="Cannot deactivate yourself")
+    
+    # Prevent demoting/disabling the last admin
+    if role is not None and user.role == "ADMIN" and role != "ADMIN":
+        admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
+        if admin_count.scalar() <= 1:
+            raise HTTPException(status_code=403, detail="Cannot demote the last active admin")
+    if status is not None and user.role == "ADMIN" and user.status == "ACTIVE" and status != "ACTIVE":
+        admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
+        if admin_count.scalar() <= 1:
+            raise HTTPException(status_code=403, detail="Cannot deactivate the last active admin")
+    
     if username is not None:
         user.username = username
     if email is not None:
@@ -667,6 +686,16 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
+    
+    # Prevent self-deletion
+    if user.id == current_user.user_id:
+        raise HTTPException(status_code=403, detail="Cannot delete yourself")
+    
+    # Prevent deleting the last active admin
+    if user.role == "ADMIN" and user.status == "ACTIVE":
+        admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
+        if admin_count.scalar() <= 1:
+            raise HTTPException(status_code=403, detail="Cannot delete the last active admin")
     
     await session.delete(user)
     await session.commit()
