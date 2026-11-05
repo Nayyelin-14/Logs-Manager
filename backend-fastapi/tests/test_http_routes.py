@@ -17,15 +17,15 @@ def _login(client, email: str, password: str):
 
 
 def test_viewer_cannot_see_other_tenant(client):
-    """ViewerA should never see demoB events."""
+    """ViewerA should never see demob events."""
     _login(client, "viewerA@demo.local", "ViewerA123!")
 
     search_res = client.get(
-        "/api/get-logs", params={"tenant": "demoA", "limit": "100"}
+        "/api/get-logs", params={"tenant": "demoa", "limit": "100"}
     )
     assert search_res.status_code == 200, f"get-logs failed: {search_res.text}"
     for event in search_res.json().get("logs", []):
-        assert event.get("tenant") != "demoB", f"ViewerA saw demoB event: {event.get('id')}"
+        assert event.get("tenant") != "demob", f"ViewerA saw demob event: {event.get('id')}"
 
     dash_res = client.get("/api/dashboard")
     assert dash_res.status_code == 200, f"dashboard failed: {dash_res.text}"
@@ -35,46 +35,38 @@ def test_viewer_cannot_see_other_tenant(client):
 
     # Explicitly requesting another tenant must not leak data
     search_res2 = client.get(
-        "/api/get-logs", params={"tenant": "demoB", "limit": "100"}
+        "/api/get-logs", params={"tenant": "demob", "limit": "100"}
     )
-    demoB_events = [
-        e for e in search_res2.json().get("logs", []) if e.get("tenant") == "demoB"
+    demob_events = [
+        e for e in search_res2.json().get("logs", []) if e.get("tenant") == "demob"
     ]
-    assert len(demoB_events) == 0, f"ViewerA saw {len(demoB_events)} demoB events"
+    assert len(demob_events) == 0, f"ViewerA saw {len(demob_events)} demob events"
 
 
-def test_six_ad_4625_failures_create_one_alert(client):
+def test_six_ad_4625_failures_create_one_alert(client, api_key_demoa):
     """6 failed logins from the same IP create exactly one alert."""
     from app.core.database import async_session_maker
     from app.models.tenant import Tenant
     import asyncio
 
-    async def get_api_key():
-        async with async_session_maker() as session:
-            from sqlalchemy import select
-            result = await session.execute(select(Tenant).where(Tenant.name == "demoa"))
-            tenant = result.scalar_one_or_none()
-            if tenant:
-                # Return a test key that hashes to the stored hash
-                # We need to generate a key that matches - for testing, use the demoA key hash
-                return "demoA-key-for-testing"
-        return "demoA-key-for-testing"
+    headers = {"X-API-Key": api_key_demoa, "Content-Type": "application/json"}
 
-    api_key = asyncio.run(get_api_key())
-
-    ip = f"198.51.100.{uuid.uuid4().int % 250 + 1}"
+    # Use TEST-NET-1 (192.0.2.0/24) to avoid collisions with other tests using 198.51.100.x
+    ip = f"192.0.2.{uuid.uuid4().int % 250 + 1}"
     base_time = time.time()
     alert_ids = set()
     for i in range(6):
         event = {
             "source": "ad",
             "event_type": "LogonFailed",
+            "event_id": 4625,
             "user": f"eve_{i}",
             "ip": ip,
             "src_ip": ip,
             "reason": "wrong_password",
             "status": "Failure",
             "action": "LOGIN",
+            "severity": 7,
             "@timestamp": base_time + i * 10,
         }
         resp = client.post("/api/ingest", headers=headers, json=event)

@@ -8,11 +8,14 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import asyncio
-from sqlalchemy import select, func, cast
+import hashlib
+import secrets
+from sqlalchemy import select, func, cast, text
 from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
 from app.core.database import get_session, async_session_maker
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.models.alert import AlertRule, Alert
 from app.models.security_event import SecurityEvent
 from app.core.security import hash_password
@@ -24,13 +27,55 @@ from sqlalchemy.dialects.postgresql import JSONB
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def generate_api_key():
+    key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    return key, key_hash
+
+
 async def seed_demo_data():
     async for session in get_session():
         try:
-            # 1. Create tenants (implicitly via user tenant field)
-            # We'll create users with tenant assignments
+            # 1. Create tenants table records
+            print("Creating tenants...")
+            
+            # Create demoa tenant
+            demoa_key, demoa_hash = generate_api_key()
+            demoa_result = await session.execute(
+                select(Tenant).where(Tenant.name == "demoa")
+            )
+            demoa_tenant = demoa_result.scalar_one_or_none()
+            if not demoa_tenant:
+                demoa_tenant = Tenant(
+                    id=hashlib.sha256(b"demoa").hexdigest()[:25],
+                    name="demoa",
+                    api_key_hash=demoa_hash,
+                    is_active=True,
+                )
+                session.add(demoa_tenant)
+                await session.flush()
+            print(f"  demoa tenant created (API key shown once only!)")
 
-            # 2. Create users: admin (Admin, all tenants), viewerA (Viewer, demoA), viewerB (Viewer, demoB)
+            # Create demob tenant
+            demob_key, demob_hash = generate_api_key()
+            demob_result = await session.execute(
+                select(Tenant).where(Tenant.name == "demob")
+            )
+            demob_tenant = demob_result.scalar_one_or_none()
+            if not demob_tenant:
+                demob_tenant = Tenant(
+                    id=hashlib.sha256(b"demob").hexdigest()[:25],
+                    name="demob",
+                    api_key_hash=demob_hash,
+                    is_active=True,
+                )
+                session.add(demob_tenant)
+                await session.flush()
+            print(f"  demob tenant created (API key shown once only!)")
+
+            await session.commit()
+
+            # 2. Create users: admin (Admin, all tenants), viewerA (Viewer, demoa), viewerB (Viewer, demob)
             admin_password = hash_password("Admin123!")
             viewer_a_password = hash_password("ViewerA123!")
             viewer_b_password = hash_password("ViewerB123!")
@@ -83,6 +128,11 @@ async def seed_demo_data():
             await session.commit()
             print("Database commit complete.")
 
+            # Store API keys in a way to be displayed (not persisted as plain text)
+            print("\n=== API KEYS (save these!) ===")
+            print(f"demoa: {demoa_key}")
+            print(f"demob: {demob_key}")
+
             # 3. Create alert rule: Brute force - 5 failed logins from same src_ip within 5 min
             rule_result = await session.execute(
                 select(AlertRule).where(AlertRule.name == "Brute force: repeated failed logins")
@@ -98,10 +148,7 @@ async def seed_demo_data():
                     severity="high",
                     conditions=[
                         {
-                            "type": "threshold_count",
-                            "field": "outcome",
-                            "value": "failure",
-                            "operator": "eq",
+                            "type": "repeated_failures",
                             "threshold": 5,
                             "windowSeconds": 300,
                             "cooldownSeconds": 86400,
@@ -115,8 +162,6 @@ async def seed_demo_data():
                 print("Brute-force alert rule already exists")
 
             # 4. Idempotent marker check: if seeded events already exist, skip ingestion.
-            from sqlalchemy.dialects.postgresql import JSONB
-            from sqlalchemy import text, cast
             existing_result = await session.execute(
                 text("SELECT id FROM security_logs WHERE raw->'raw'->>'_seed' = 'true' LIMIT 1")
             )
@@ -133,7 +178,7 @@ async def seed_demo_data():
             for i in range(6):
                 result = await ingest.ingest(
                     {
-                        "tenant": "demoA",
+                        "tenant": "demoa",
                         "source": "AD",
                         "event_id": 4625,
                         "event_type": "LogonFailed",
@@ -150,13 +195,13 @@ async def seed_demo_data():
                         "tags": ["demo", "seed"],
                     },
                     source="AD",
-                    context={"tenant": "demoA"},
+                    context={"tenant": "demoa"},
                 )
                 print(f"Seeded failed login {i + 1}/6 src_ip=203.0.113.77")
             # Firewall sample (distinct traffic, no alert by itself)
             await ingest.ingest(
                 {
-                    "tenant": "demoA",
+                    "tenant": "demoa",
                     "source": "firewall",
                     "event_type": "traffic_blocked",
                     "action": "DENY",
@@ -175,12 +220,12 @@ async def seed_demo_data():
                     "tags": ["demo", "seed"],
                 },
                 source="FIREWALL",
-                context={"tenant": "demoA"},
+                context={"tenant": "demoa"},
             )
-            # demoB sample (isolates tenant data)
+            # demob sample (isolates tenant data)
             await ingest.ingest(
                 {
-                    "tenant": "demoB",
+                    "tenant": "demob",
                     "source": "aws",
                     "event_type": "CreateUser",
                     "user": "admin",
@@ -192,7 +237,7 @@ async def seed_demo_data():
                     "tags": ["demo", "seed"],
                 },
                 source="AWS",
-                context={"tenant": "demoB"},
+                context={"tenant": "demob"},
             )
             print("\nSeed complete!")
 

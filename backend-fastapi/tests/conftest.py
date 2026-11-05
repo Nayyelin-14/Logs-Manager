@@ -10,8 +10,10 @@ or on the host with the project venv:
 """
 
 import asyncio
+import hashlib
 import os
 import pathlib
+import secrets
 import subprocess
 import sys
 
@@ -152,3 +154,51 @@ def viewer_a_client(client):
 def viewer_b_client(client):
     login(client, "viewerB@demo.local", "ViewerB123!")
     return client
+
+
+@pytest.fixture(scope="session")
+def api_key_demoa():
+    """Generate a fresh API key for demoa tenant, store its hash, return raw key."""
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import select, update
+    import asyncio
+
+    async def _setup():
+        raw_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant).where(Tenant.name == "demoa").values(api_key_hash=key_hash)
+            )
+            await session.commit()
+        return raw_key
+
+    return asyncio.run(_setup())
+
+
+@pytest.fixture(scope="session")
+def api_key_demob():
+    """Generate a fresh API key for demob tenant, store its hash, return raw key."""
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import update
+    import asyncio
+
+    async def _setup():
+        raw_key = secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant).where(Tenant.name == "demob").values(api_key_hash=key_hash)
+            )
+            await session.commit()
+        return raw_key
+
+    return asyncio.run(_setup())
+
+
+@pytest.fixture(scope="session")
+def api_key(api_key_demoa):
+    """Alias for api_key_demoa for backward compatibility with existing tests."""
+    return api_key_demoa

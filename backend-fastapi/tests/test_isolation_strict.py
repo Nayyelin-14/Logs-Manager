@@ -32,7 +32,7 @@ def _seed_demo_data():
             log_a_id = str(uuid.uuid4())[:25]
             session.add(SecurityEvent(
                 id=log_a_id,
-                tenant="demoA",
+                tenant="demoa",
                 source=Source.AD,
                 event_type="LogonFailed",
                 action=Action.LOGIN,
@@ -48,7 +48,7 @@ def _seed_demo_data():
             log_b_id = str(uuid.uuid4())[:25]
             session.add(SecurityEvent(
                 id=log_b_id,
-                tenant="demoB",
+                tenant="demob",
                 source=Source.AWS,
                 event_type="CreateUser",
                 action=Action.CREATE,
@@ -63,7 +63,7 @@ def _seed_demo_data():
             log_admin_delete_id = str(uuid.uuid4())[:25]
             session.add(SecurityEvent(
                 id=log_admin_delete_id,
-                tenant="demoA",
+                tenant="demoa",
                 source=Source.FIREWALL,
                 event_type="traffic_blocked",
                 action=Action.DENY,
@@ -81,7 +81,7 @@ def _seed_demo_data():
                 id=rule_a_id,
                 name="Test Rule A",
                 description="Test",
-                tenant="demoA",
+                tenant="demoa",
                 enabled=True,
                 severity="high",
                 conditions={},
@@ -90,7 +90,7 @@ def _seed_demo_data():
             session.add(Alert(
                 id=alert_a_id,
                 rule_id=rule_a_id,
-                tenant="demoA",
+                tenant="demoa",
                 description="Test alert A",
                 event_ids=[log_a_id],
                 severity="high",
@@ -105,7 +105,7 @@ def _seed_demo_data():
                 id=rule_b_id,
                 name="Test Rule B",
                 description="Test",
-                tenant="demoB",
+                tenant="demob",
                 enabled=True,
                 severity="high",
                 conditions={},
@@ -114,7 +114,7 @@ def _seed_demo_data():
             session.add(Alert(
                 id=alert_b_id,
                 rule_id=rule_b_id,
-                tenant="demoB",
+                tenant="demob",
                 description="Test alert B",
                 event_ids=[log_b_id],
                 severity="high",
@@ -175,64 +175,64 @@ def test_data():
 # ===== FINDING-TESTS: viewerB cross-tenant access attempts =====
 
 def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-logs?tenant=demoA -> status 200, only demoB rows."""
+    """FINDING-TEST: viewerB GET /api/get-logs?tenant=demoa -> status 200, only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
     })
 
-    response = test_client.get("/api/get-logs?tenant=demoA")
+    response = test_client.get("/api/get-logs?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
     data = response.json()
     logs = data.get("logs", [])
     assert len(logs) >= 1, f"Expected at least 1 row, got {len(logs)}"
 
-    # Zero demoA rows - viewer bypass does NOT work
-    demo_a_logs = [l for l in logs if l.get("tenant") == "demoA"]
-    assert len(demo_a_logs) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_logs)} demoA logs"
+    # Zero demoa rows - viewer bypass does NOT work
+    demo_a_logs = [l for l in logs if l.get("tenant") == "demoa"]
+    assert len(demo_a_logs) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_logs)} demoa logs"
 
-    # All returned rows are demoB (viewer forced to own tenant)
+    # All returned rows are demob (viewer forced to own tenant)
     for log in logs:
-        assert log.get("tenant") == "demoB", f"VULNERABILITY: viewerB sees tenant={log.get('tenant')}"
+        assert log.get("tenant") == "demob", f"VULNERABILITY: viewerB sees tenant={log.get('tenant')}"
 
 
 def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-alerts?tenant=demoA -> status 200, only demoB rows."""
+    """FINDING-TEST: viewerB GET /api/get-alerts?tenant=demoa -> status 200, only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
     })
 
-    response = test_client.get("/api/get-alerts?tenant=demoA")
+    response = test_client.get("/api/get-alerts?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
     data = response.json()
     alerts = data.get("alerts", [])
     assert len(alerts) >= 1, f"Expected at least 1 row, got {len(alerts)}"
 
-    # Zero demoA alerts - viewer bypass does NOT work
-    demo_a_alerts = [a for a in alerts if a.get("tenant") == "demoA"]
-    assert len(demo_a_alerts) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_alerts)} demoA alerts"
+    # Zero demoa alerts - viewer bypass does NOT work
+    demo_a_alerts = [a for a in alerts if a.get("tenant") == "demoa"]
+    assert len(demo_a_alerts) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_alerts)} demoa alerts"
 
-    # All returned rows are demoB
+    # All returned rows are demob
     for alert in alerts:
-        assert alert.get("tenant") == "demoB", f"VULNERABILITY: viewerB sees tenant={alert.get('tenant')}"
+        assert alert.get("tenant") == "demob", f"VULNERABILITY: viewerB sees tenant={alert.get('tenant')}"
 
 
 def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/dashboard?tenant=demoA -> demoB counts only."""
+    """FINDING-TEST: viewerB GET /api/dashboard?tenant=demoa -> demob counts only."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
     })
 
-    response = test_client.get("/api/dashboard?tenant=demoA")
+    response = test_client.get("/api/dashboard?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
     data = response.json()
-    assert data.get("allLogs", 0) == 0, f"Expected allLogs=0 (demoB only), got {data.get('allLogs')}"
-    assert data.get("allAlerts", 0) == 0, f"Expected allAlerts=0 (demoB only), got {data.get('allAlerts')}"
+    assert data.get("allLogs", 0) == 0, f"Expected allLogs=0 (demob only), got {data.get('allLogs')}"
+    assert data.get("allAlerts", 0) == 0, f"Expected allAlerts=0 (demob only), got {data.get('allAlerts')}"
 
 
 def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
@@ -299,7 +299,7 @@ def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
     resp = test_client.post("/api/create-user", json={
         "username": "newuser",
         "email": "new@example.com",
-        "tenant": "demoB",
+        "tenant": "demob",
         "role": "VIEWER",
         "password": "Password123!"
     })
@@ -308,7 +308,7 @@ def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
     resp = test_client.post("/api/create-alertRule", json={
         "name": "Evil Rule",
         "description": "Test",
-        "tenant": "demoB",
+        "tenant": "demob",
         "severity": "high",
         "conditions": {},
         "enabled": True,
@@ -365,7 +365,7 @@ def test_12_admin_get_logs_all_tenants(test_client, test_data):
     data = response.json()
     logs = data.get("logs", [])
     tenants = set(log.get("tenant") for log in logs if log.get("tenant"))
-    assert "demoA" in tenants and "demoB" in tenants, f"Expected both tenants, got {tenants}"
+    assert "demoa" in tenants and "demob" in tenants, f"Expected both tenants, got {tenants}"
 
 
 # ===== STEP 4 CREATE-USER TESTS =====
@@ -406,7 +406,7 @@ def test_23_admin_create_admin_tenant_null(test_client, test_data):
 # ===== STEP 1 LEAK TESTS =====
 
 def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/dashboard -> tenants list contains only demoB."""
+    """FINDING-TEST: viewerB GET /api/dashboard -> tenants list contains only demob."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -418,11 +418,11 @@ def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
     data = response.json()
     tenants_list = data.get("tenants", [])
     tenant_names = [t.get("tenant") for t in tenants_list]
-    assert tenant_names == ["demoB"], f"Expected [demoB], got {tenant_names} - VULNERABILITY: viewerB dashboard shows other tenants"
+    assert tenant_names == ["demob"], f"Expected [demob], got {tenant_names} - VULNERABILITY: viewerB dashboard shows other tenants"
 
 
 def test_14_admin_dashboard_tenants_both(test_client, test_data):
-    """POSITIVE-CONTROL: admin GET /api/dashboard -> tenants contains demoA and demoB."""
+    """POSITIVE-CONTROL: admin GET /api/dashboard -> tenants contains demoa and demob."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -434,8 +434,8 @@ def test_14_admin_dashboard_tenants_both(test_client, test_data):
     data = response.json()
     tenants_list = data.get("tenants", [])
     tenant_names = [t.get("tenant") for t in tenants_list]
-    assert "demoA" in tenant_names, f"Expected demoA in tenants, got {tenant_names}"
-    assert "demoB" in tenant_names, f"Expected demoB in tenants, got {tenant_names}"
+    assert "demoa" in tenant_names, f"Expected demoa in tenants, got {tenant_names}"
+    assert "demob" in tenant_names, f"Expected demob in tenants, got {tenant_names}"
 
 
 def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
@@ -461,7 +461,7 @@ def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
 
 
 def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-logs?tenant=all and ?tenant=DemoA -> only demoB rows."""
+    """FINDING-TEST: viewerB GET /api/get-logs?tenant=all and ?tenant=DemoA -> only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -473,7 +473,7 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
     data = response.json()
     logs = data.get("logs", [])
     for log in logs:
-        assert log.get("tenant") == "demoB", f"VULNERABILITY: viewerB with ?tenant=all sees tenant={log.get('tenant')}"
+        assert log.get("tenant") == "demob", f"VULNERABILITY: viewerB with ?tenant=all sees tenant={log.get('tenant')}"
 
     # ?tenant=DemoA (mixed case)
     response = test_client.get("/api/get-logs?tenant=DemoA")
@@ -481,11 +481,11 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
     data = response.json()
     logs = data.get("logs", [])
     for log in logs:
-        assert log.get("tenant") == "demoB", f"VULNERABILITY: viewerB with ?tenant=DemoA sees tenant={log.get('tenant')}"
+        assert log.get("tenant") == "demob", f"VULNERABILITY: viewerB with ?tenant=DemoA sees tenant={log.get('tenant')}"
 
 
 def test_18_viewer_a_only_sees_demoA(test_client, test_data):
-    """FINDING-TEST: viewerA GET /api/get-logs and /api/get-alerts -> only demoA rows."""
+    """FINDING-TEST: viewerA GET /api/get-logs and /api/get-alerts -> only demoa rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_a_email"],
         "password": test_data["viewer_a_password"]
@@ -497,7 +497,7 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
     data = response.json()
     logs = data.get("logs", [])
     for log in logs:
-        assert log.get("tenant") == "demoA", f"VULNERABILITY: viewerA sees tenant={log.get('tenant')}"
+        assert log.get("tenant") == "demoa", f"VULNERABILITY: viewerA sees tenant={log.get('tenant')}"
 
     # get-alerts
     response = test_client.get("/api/get-alerts")
@@ -505,7 +505,7 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
     data = response.json()
     alerts = data.get("alerts", [])
     for alert in alerts:
-        assert alert.get("tenant") == "demoA", f"VULNERABILITY: viewerA sees alert tenant={alert.get('tenant')}"
+        assert alert.get("tenant") == "demoa", f"VULNERABILITY: viewerA sees alert tenant={alert.get('tenant')}"
 
 
 def test_19_no_cookie_routes_return_401():

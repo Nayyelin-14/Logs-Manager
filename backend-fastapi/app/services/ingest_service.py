@@ -135,7 +135,7 @@ class IngestionService:
         tenant = context.get("tenant") or normalized.get("tenant") or settings.INGEST_DEFAULT_TENANT
         if not tenant or not str(tenant).strip():
             raise ValidationError("Tenant could not be determined for this event.")
-        tenant = str(tenant).strip()
+        tenant = str(tenant).strip().lower()  # Normalize to lowercase for tenant isolation
 
         event = self._build_event(raw_event, normalized, resolved_source, tenant)
 

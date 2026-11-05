@@ -11,9 +11,9 @@ class User(Base):
     username = Column(String(50), nullable=True)
     email = Column(String(255), unique=True, nullable=False)
     password = Column(String(255), nullable=True)
-    role = Column(String(50), default="VIEWER", nullable=False)
+    role = Column(SQLEnum(Role, name="Role"), nullable=False)
     tenant = Column(String(100), nullable=True)
-    status = Column(String(50), default="ACTIVE", nullable=False)
+    status = Column(SQLEnum(Status, name="Status"), nullable=False)
     create_at = Column("createAt", DateTime(timezone=True), server_default="now()", nullable=False)
     updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
 
