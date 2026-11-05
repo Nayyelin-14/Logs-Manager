@@ -1,9 +1,15 @@
-from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, JSON, Index, ForeignKey, ARRAY, Text, Boolean, Integer, UniqueConstraint, func
+from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, JSON, Index, ForeignKey, ARRAY, Text, Boolean, Integer, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.models.base import Base
 from app.models.enums import Role, Status, Action, Source
 import enum
+
+
+class AlertStatus(str, enum.Enum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
 
 
 class AlertRule(Base):
@@ -32,15 +38,23 @@ class Alert(Base):
     triggered_at = Column("triggeredAt", DateTime(timezone=True), server_default="now()", nullable=False)
     event_ids = Column(ARRAY(String), nullable=False)
     severity = Column(String(50), nullable=False)
-    status = Column(String(50), default="open", nullable=False)
+    status = Column(SQLEnum(AlertStatus, name="alert_status"), default="open", nullable=False)
     title = Column(String(255), nullable=False)
     dedupe_key = Column("dedupe_key", String(255), nullable=True)
+    group_key = Column(String(255), nullable=True)
+    count = Column(Integer, default=1, nullable=False)
+    first_seen = Column("first_seen", DateTime(timezone=True), nullable=True)
+    last_seen = Column("last_seen", DateTime(timezone=True), nullable=True)
+    acknowledged_by = Column("acknowledged_by", String(100), nullable=True)
+    acknowledged_at = Column("acknowledged_at", DateTime(timezone=True), nullable=True)
 
     rule = relationship("AlertRule", back_populates="alerts")
 
     __table_args__ = (
         Index("ix_alerts_tenant_status", "tenant", "status"),
         Index("ix_alerts_rule_dedupe_triggered", "rule_id", "dedupe_key", "triggeredAt"),
+        Index("ix_alerts_dedupe_key_active", "dedupe_key", unique=True, 
+              postgresql_where=text("status != 'resolved' AND dedupe_key IS NOT NULL")),
     )
 
 

@@ -1,7 +1,7 @@
 import { Link, useNavigation, useSubmit } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, LoaderCircle } from "lucide-react";
 
 import { cn } from "../../lib/utils";

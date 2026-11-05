@@ -9,7 +9,7 @@ from app.models.enums import Source, Action
 from app.parsers.helpers import (
     as_record, pick, safe_string, safe_number, safe_severity, safe_timestamp, safe_tags,
     get_firewall_event_type, map_aws_verb, map_m365_action, map_ad_event_type, map_ad_action,
-    SecurityEventInput,
+    SecurityEventInput, determine_outcome,
 )
 from app.parsers.canonical import resolve_canonical_event_type
 
@@ -24,6 +24,18 @@ def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.AWS)
     error_code = safe_string(pick(event, ["errorCode", "error_code"])) or pick(payload, ["errorCode", "error_code"])
     cloud_service = safe_string(pick(event, ["cloudService", "cloud.service"])) or safe_string(pick(payload, ["eventSource", "event_source"]))
+    
+    status = safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["errorCode"]))
+    
+    outcome = determine_outcome(
+        event_type=original_event_type,
+        canonical_event_type=canonical_event_type,
+        status=status,
+        action=None,
+        severity=None,
+        event_id=None,
+        source=Source.AWS
+    )
 
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
@@ -54,7 +66,8 @@ def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
         "cloud_service": cloud_service,
         "action": safe_string(pick(event, ["action", "Action"])).upper() if safe_string(pick(event, ["action", "Action"])) else map_aws_verb(original_event_type),
         "severity": safe_severity(pick(event, ["severity"])) or (7 if error_code else 3),
-        "status": safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["errorCode"])),
+        "status": status,
+        "outcome": outcome,
         "description": error_code and f"AWS {original_event_type or 'event'} failed: {error_code}" or safe_string(pick(payload, ["eventName", "eventType"])),
         "vendor": "aws",
         "product": cloud_service,

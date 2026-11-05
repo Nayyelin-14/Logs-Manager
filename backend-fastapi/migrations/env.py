@@ -31,22 +31,23 @@ def _build_engine_args(database_url: str) -> dict:
     connect_args = {}
     
     # Handle SSL for asyncpg (Neon requires SSL)
-    sslmode = query_params.get("sslmode", ["require"])[0]
-    if sslmode in ("require", "verify-ca", "verify-full"):
-        ssl_context = ssl.create_default_context()
-        if sslmode == "verify-full":
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        elif sslmode == "verify-ca":
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        else:  # require - verify certificates but don't check hostname for pooled connections
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        connect_args = {"ssl": ssl_context}
+    # For local connections (localhost/127.0.0.1), skip SSL
+    host = parsed.hostname or ''
+    if host not in ('localhost', '127.0.0.1'):
+        sslmode = query_params.get("sslmode", ["require"])[0]
+        if sslmode in ("require", "verify-ca", "verify-full"):
+            ssl_context = ssl.create_default_context()
+            if sslmode == "verify-full":
+                ssl_context.check_hostname = True
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+            elif sslmode == "verify-ca":
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+            else:
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+            connect_args = {"ssl": ssl_context}
     
-    # Remove sslmode and channel_binding from URL since we handle SSL via connect_args
-    # asyncpg doesn't accept these as connection arguments
     clean_query = {k: v for k, v in query_params.items() if k not in ("sslmode", "channel_binding")}
     clean_query_str = urllib.parse.urlencode(clean_query, doseq=True)
     clean_url = urllib.parse.urlunparse((

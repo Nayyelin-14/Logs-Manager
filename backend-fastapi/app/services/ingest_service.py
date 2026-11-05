@@ -188,6 +188,20 @@ class IngestionService:
             severity = 0
         severity = max(0, min(severity, 10))
 
+        outcome = normalized.get("outcome")
+        if outcome is None:
+            from app.parsers.helpers import determine_outcome
+            from app.models.enums import Source as SourceEnum
+            outcome = determine_outcome(
+                event_type=normalized.get("event_type"),
+                canonical_event_type=normalized.get("canonical_event_type"),
+                status=normalized.get("status"),
+                action=normalized.get("action"),
+                severity=severity,
+                event_id=normalized.get("event_id"),
+                source=source
+            )
+
         src_port_raw = normalized.get("src_port")
         dst_port_raw = normalized.get("dst_port")
 
@@ -204,6 +218,7 @@ class IngestionService:
             event_subtype=normalized.get("event_subtype"),
             severity=severity,
             action=action,
+            outcome=outcome,
             src_ip=normalized.get("src_ip"),
             src_port=str(src_port_raw) if src_port_raw is not None else None,
             dst_ip=normalized.get("dst_ip"),

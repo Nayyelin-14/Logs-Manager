@@ -742,7 +742,8 @@ async def get_all_data(
         by_tenant = await session.execute(
             select(SecurityEvent.tenant, func.count()).group_by(SecurityEvent.tenant)
         )
-        result["data"]["logsByTenant"] = {row[0]: row[1] for row in by_tenant}
+        # Frontend expects "tenants" as array of objects with "tenant" property
+        result["data"]["tenants"] = [{"tenant": row[0]} for row in by_tenant if row[0]]
     return result
 
 

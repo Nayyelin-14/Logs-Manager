@@ -9,7 +9,7 @@ from app.models.enums import Source, Action
 from app.parsers.helpers import (
     as_record, pick, safe_string, safe_number, safe_severity, safe_timestamp, safe_tags,
     get_firewall_event_type, map_aws_verb, map_m365_action, map_ad_event_type, map_ad_action,
-    SecurityEventInput,
+    SecurityEventInput, determine_outcome,
 )
 from app.parsers.canonical import resolve_canonical_event_type, infer_source_from_event
 
@@ -22,6 +22,17 @@ def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
         pick(event, ["eventType", "event_type", "event", "event_name"])
     ) or get_firewall_event_type(action)
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.FIREWALL)
+    
+    status = safe_string(pick(event, ["status", "disposition"])) or safe_string(pick(event, ["result"]))
+    outcome = determine_outcome(
+        event_type=original_event_type,
+        canonical_event_type=canonical_event_type,
+        status=status,
+        action=action,
+        severity=None,
+        event_id=None,
+        source=Source.FIREWALL
+    )
 
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
@@ -49,7 +60,8 @@ def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
         "rule_id": safe_string(pick(event, ["ruleId", "rule_id"])),
         "interface": safe_string(pick(event, ["if", "interface", "interfaceName", "interface_name"])),
         "mac": safe_string(pick(event, ["mac", "macAddress", "mac_address"])),
-        "status": safe_string(pick(event, ["status", "disposition"])),
+        "status": status,
+        "outcome": outcome,
         "raw": event,
         "tags": safe_tags(event.get("tags")),
     }
@@ -62,6 +74,18 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
         pick(event, ["eventType", "event_type", "eventName", "event_name", "type"])
     ) or safe_string(pick(payload, ["eventType", "event_type"])) or "api_event"
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.API)
+
+    status = safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["status_code", "statusCode"]))
+    action = safe_string(pick(event, ["action", "Action"])).upper() if safe_string(pick(event, ["action", "Action"])) else None
+    outcome = determine_outcome(
+        event_type=original_event_type,
+        canonical_event_type=canonical_event_type,
+        status=status,
+        action=action,
+        severity=None,
+        event_id=None,
+        source=Source.API
+    )
 
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
@@ -83,9 +107,11 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
         "url": safe_string(pick(event, ["url", "request_url"])),
         "http_method": safe_string(pick(event, ["httpMethod", "http_method", "method"])),
         "status_code": safe_number(pick(event, ["statusCode", "status_code"])),
-        "action": safe_string(pick(event, ["action", "Action"])).upper() if safe_string(pick(event, ["action", "Action"])) else None,
+        "action": action,
         "rule_name": safe_string(pick(event, ["ruleName", "rule_name"])),
         "description": safe_string(pick(event, ["reason", "description", "message", "msg"])) or "",
+        "status": status,
+        "outcome": outcome,
         "raw": event,
         "timestamp": safe_timestamp(pick(event, [
             "@timestamp", "timestamp", "time", "eventTime", "event_time", "created_at", "createdAt"

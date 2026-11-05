@@ -22,8 +22,14 @@ import {
 const DashBoard = () => {
   const [params, setParams] = useSearchParams();
   const tenant = params.get("tenant") || "all";
+  
+  // Fetch all tenants for dropdown (always use "all")
+  const { data: allTenantsData } = useSuspenseQuery(DataCountQuery("all"));
+  const allTenants = allTenantsData?.data?.tenants ?? [];
+  
+  // Fetch counts for current tenant filter
   const { data: dataCount } = useSuspenseQuery(DataCountQuery(tenant));
-  const counts = dataCount.data;
+  const counts = dataCount?.data;
   const scopedTenant = tenant === "all" ? "All tenants" : tenant;
   const suffix = tenant === "all" ? "" : `?tenant=${encodeURIComponent(tenant)}`;
 
@@ -133,7 +139,7 @@ const DashBoard = () => {
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="all">All tenants</SelectItem>
-                {counts.tenants?.map((item: { tenant: string }) => <SelectItem key={item.tenant} value={item.tenant}>{item.tenant}</SelectItem>)}
+                {allTenants.map((item: { tenant: string }) => <SelectItem key={item.tenant} value={item.tenant}>{item.tenant}</SelectItem>)}
               </SelectContent>
             </Select>
             <p className="mt-1.5 text-[10px] text-ink-muted">Counts and destination links use {scopedTenant}.</p>

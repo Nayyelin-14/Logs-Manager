@@ -1,5 +1,6 @@
 import { redirect } from "react-router-dom";
-import useAuthStore, { authStatus } from "../store/authStore";
+import useAuthStore, { authStatus } from "../../store/authStore";
+import { useUserStore } from "../../store/userStore";
 
 export const authCheckLoader = async () => {
   const authStore = useAuthStore.getState();

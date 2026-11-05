@@ -41,6 +41,7 @@ class SecurityEventInput(TypedDict, total=False):
     cloud_service: Optional[str]
     sha256: Optional[str]
     status: Optional[str]
+    outcome: Optional[str]
     login_type: Optional[int]
     interface: Optional[str]
     mac: Optional[str]
@@ -213,3 +214,59 @@ def map_ad_action(event_id: Optional[int]) -> Optional[str]:
         4726: "DELETE",
     }
     return mapping.get(event_id)
+
+
+def determine_outcome(
+    event_type: Optional[str],
+    canonical_event_type: Optional[str],
+    status: Optional[str],
+    action: Optional[str],
+    severity: Optional[int],
+    event_id: Optional[int],
+    source: Optional[str] = None
+) -> str:
+    """
+    Determine the outcome (success/failure/unknown) from event data.
+    
+    Priority order:
+    1. AD: Event ID 4624 -> success, 4625 -> failure
+    2. M365: status field like 'Success', 'Failure'
+    3. API: event_type containing 'failed' or 'failure' -> failure
+    4. AWS: status like 'Failure' -> failure
+    5. Default: unknown
+    """
+    if event_id is not None:
+        if event_id == 4624:
+            return "success"
+        if event_id == 4625:
+            return "failure"
+    
+    if status:
+        status_lower = str(status).lower()
+        if status_lower in ("success", "successful", "succeeded"):
+            return "success"
+        if status_lower in ("failure", "failed", "denied", "error"):
+            return "failure"
+    
+    if canonical_event_type:
+        canonical_lower = canonical_event_type.lower()
+        if canonical_lower in ("ad_logon_success", "login_success", "logon_success", "userloggedin"):
+            return "success"
+        if canonical_lower in ("ad_logon_failed", "login_failed", "logon_failed"):
+            return "failure"
+    
+    if event_type:
+        event_lower = str(event_type).lower()
+        if "failed" in event_lower or "failure" in event_lower:
+            return "failure"
+        if "success" in event_lower:
+            return "success"
+    
+    if action:
+        action_lower = str(action).lower()
+        if action_lower in ("failure", "denied", "error"):
+            return "failure"
+        if action_lower in ("success", "allowed"):
+            return "success"
+    
+    return "unknown"

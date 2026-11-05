@@ -49,6 +49,7 @@ class SecurityEvent(Base):
     interface = Column(String(100), nullable=True)
     mac = Column(String(17), nullable=True)
     ingested_at = Column(DateTime(timezone=True), server_default="now()", nullable=False)
+    outcome = Column(String(20), nullable=True, server_default="unknown")
 
     __table_args__ = (
         Index("ix_security_logs_timestamp", "@timestamp"),

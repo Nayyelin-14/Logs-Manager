@@ -106,10 +106,10 @@ def test_database():
     """Create schema (alembic) and seed demo data once per test session."""
     _ensure_database_exists()
 
-    result = _run([sys.executable, "-m", "alembic", "upgrade", "head"])
+    result = _run([sys.executable, "-m", "alembic", "upgrade", "heads"])
     if result.returncode != 0:
         raise RuntimeError(
-            f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"
+            f"alembic upgrade heads failed:\n{result.stdout}\n{result.stderr}"
         )
 
     result = _run([sys.executable, "scripts/seed_demo_data.py"])

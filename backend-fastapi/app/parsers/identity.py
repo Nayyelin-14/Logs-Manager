@@ -9,7 +9,7 @@ from app.models.enums import Source, Action
 from app.parsers.helpers import (
     as_record, pick, safe_string, safe_number, safe_severity, safe_timestamp, safe_tags,
     get_firewall_event_type, map_aws_verb, map_m365_action, map_ad_event_type, map_ad_action,
-    SecurityEventInput,
+    SecurityEventInput, determine_outcome,
 )
 from app.parsers.canonical import resolve_canonical_event_type
 
@@ -27,6 +27,16 @@ def normalize_m365(event: Dict[str, Any]) -> Dict[str, Any]:
         safe_string(pick(payload, ["ResultStatus", "result_status", "Status", "status", "Result", "result"]))
     ) or "undefined"
     action = map_m365_action(original_event_type)
+    
+    outcome = determine_outcome(
+        event_type=original_event_type,
+        canonical_event_type=canonical_event_type,
+        status=result,
+        action=action,
+        severity=None,
+        event_id=None,
+        source=Source.M365
+    )
 
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
@@ -46,6 +56,7 @@ def normalize_m365(event: Dict[str, Any]) -> Dict[str, Any]:
         "action": action,
         "severity": safe_severity(pick(event, ["severity"])) or (result and result.lower() in ["fail", "error", "denied"] and 5 or 2),
         "status": result,
+        "outcome": outcome,
         "product": safe_string(pick(event, ["workload", "product"])) or safe_string(
             pick(payload, ["Workload", "workload", "Service", "service"])
         ),
@@ -88,6 +99,16 @@ def normalize_ad(event: Dict[str, Any]) -> Dict[str, Any]:
         ]))
     )
     result = safe_string(pick(event, ["status"]) or pick(payload, ["Status", "status", "Result", "result", "Outcome"]))
+    
+    outcome = determine_outcome(
+        event_type=original_event_type,
+        canonical_event_type=canonical_event_type,
+        status=result,
+        action=None,
+        severity=None,
+        event_id=event_id,
+        source=Source.AD
+    )
 
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
@@ -117,6 +138,7 @@ def normalize_ad(event: Dict[str, Any]) -> Dict[str, Any]:
             ])
         ),
         "status": result,
+        "outcome": outcome,
         "description": safe_string(
             pick(event, ["description", "message"]) or pick(payload, ["Message", "Description", "FailureReason"])
         ) or (event_id and f"Active Directory event {event_id}{' for ' + user if user else ''}"),

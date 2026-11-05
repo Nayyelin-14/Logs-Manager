@@ -83,7 +83,6 @@ const router = createBrowserRouter([
           </Suspense>
         ),
         action: loginAction,
-        loader: authCheckLoader,
       },
       {
         path: "/logout",

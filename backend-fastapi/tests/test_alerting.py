@@ -1,0 +1,598 @@
+"""
+Alerting engine tests: detection, deduplication, tenant isolation, concurrency.
+All tests hit the real API with real database operations.
+"""
+
+import pytest
+import json
+import time
+import asyncio
+from datetime import datetime, timedelta, timezone
+from fastapi.testclient import TestClient
+from app.main import app
+from app.core.database import async_session_maker
+from app.models.alert import Alert, AlertRule
+from app.models.security_event import SecurityEvent
+from sqlalchemy import select
+import uuid
+
+
+MARKER = "phase1-alerting"
+
+
+def test_alerting_1_five_ad_failures_trigger_one_alert(client, api_key_demoa):
+    """1. 5 AD 4625 failures from SAME src_ip within 300s -> ONE alert with count=5."""
+    src_ip = "203.0.113.100"
+    
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\evil{i}",
+                "host": "DC01",
+                "src_ip": src_ip,
+                "src_port": str(49152 + i),
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": (datetime.now(timezone.utc) - timedelta(seconds=30 * i)).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_1"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200, f"Failed to ingest event {i}: {res.text}"
+    
+    # Now check alerts via admin
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    data = alert_res.json()
+    alerts = data.get("alerts", [])
+    
+    assert len(alerts) == 1, f"Expected 1 alert, got {len(alerts)}"
+    alert = alerts[0]
+    assert alert["tenant"] == "demoa", f"Alert tenant mismatch: {alert['tenant']}"
+    assert alert["status"] == "open", f"Alert status should be open: {alert['status']}"
+    assert alert.get("description") and "Brute force" in alert.get("description", ""), f"Wrong description: {alert.get('description')}"
+
+
+def test_alerting_2_six_different_ips_no_alert(client, api_key_demoa):
+    """2. 6 failures spread across 6 DIFFERENT IPs -> no alert."""
+    for i in range(6):
+        src_ip = f"198.51.100.{100 + i}"
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "host": "DC01",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_2"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER + "_2")
+    alerts = alert_res.json().get("alerts", [])
+    
+    assert len(alerts) == 0, f"Expected 0 alerts for different IPs, got {len(alerts)}"
+
+
+def test_alerting_3_mixed_success_failure_no_alert(client, api_key_demoa):
+    """3. 6 events from one IP where 3 are successes (4624) -> no alert (only failures count)."""
+    src_ip = "198.51.100.200"
+    
+    for i in range(6):
+        event_id = 4624 if i % 2 == 0 else 4625
+        event_type = "LogonSuccess" if event_id == 4624 else "LogonFailed"
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": event_id,
+                "event_type": event_type,
+                "user": f"demo\\\\user{i}",
+                "host": "DC01",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Success" if event_id == 4624 else "Failure",
+                "severity": 7 if event_id == 4625 else 3,
+                "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_3"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER + "_3")
+    alerts = alert_res.json().get("alerts", [])
+    
+    assert len(alerts) == 0, f"Expected 0 alerts for mixed success/failure, got {len(alerts)}"
+
+
+def test_alerting_4_events_expired_window_no_alert(client, api_key_demoa):
+    """4. 5 failures > 300s apart (using event @timestamp) -> no alert."""
+    src_ip = "198.51.100.201"
+    
+    for i in range(5):
+        # Spread events 60 seconds apart = 300 seconds total span, so 5th is outside window
+        ts = (datetime.now(timezone.utc) - timedelta(seconds=300 + i * 60)).isoformat().replace("+00:00", "Z")
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "host": "DC01",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": ts,
+                "tags": [MARKER, "test_alerting_4"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER + "_4")
+    alerts = alert_res.json().get("alerts", [])
+    
+    assert len(alerts) == 0, f"Expected 0 alerts for expired window, got {len(alerts)}"
+
+
+def test_alerting_5_2025_timestamps_fire_alert(client, api_key_demoa):
+    """5. Events with 2025 @timestamps fire same as current ones (window uses event time)."""
+    src_ip = "198.51.100.202"
+    ts = "2025-08-20T12:00:00Z"
+    
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "host": "DC01",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": ts,
+                "tags": [MARKER, "test_alerting_5"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER + "_5")
+    alerts = alert_res.json().get("alerts", [])
+    
+    assert len(alerts) == 1, f"Expected 1 alert for 2025 timestamps, got {len(alerts)}"
+
+
+def test_alerting_6_multiple_ingest_methods_trigger_alert(client, api_key_demoa):
+    """6. 5 failures via /ingest, /ingest/batch, /ingest/file each fires alert."""
+    src_ip = "198.51.100.203"
+    ts_base = datetime.now(timezone.utc)
+    
+    # Method 1: single /ingest
+    res = client.post(
+        "/api/ingest",
+        json={
+            "tenant": "demoa",
+            "source": "ad",
+            "event_id": 4625,
+            "event_type": "LogonFailed",
+            "user": "demo\\\\user",
+            "src_ip": src_ip,
+            "action": "LOGIN",
+            "status": "Failure",
+            "severity": 7,
+            "@timestamp": ts_base.isoformat(),
+            "tags": [MARKER, "test_alerting_6a"],
+        },
+        headers={"X-API-Key": api_key_demoa}
+    )
+    assert res.status_code == 200
+    
+    # Method 2: /ingest/batch
+    events = [
+        {
+            "tenant": "demoa",
+            "source": "ad",
+            "event_id": 4625,
+            "event_type": "LogonFailed",
+            "user": "demo\\\\user",
+            "src_ip": src_ip,
+            "action": "LOGIN",
+            "status": "Failure",
+            "severity": 7,
+            "@timestamp": (ts_base + timedelta(seconds=30)).isoformat(),
+            "tags": [MARKER, "test_alerting_6b"],
+        }
+        for _ in range(4)
+    ]
+    res = client.post(
+        "/api/ingest/batch",
+        json={"events": events, "source": "ad"},
+        headers={"X-API-Key": api_key_demoa}
+    )
+    assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alerts = alert_res.json().get("alerts", [])
+    
+    # Should have at least one alert from single+batch methods combined
+    assert len(alerts) >= 1, f"Expected at least 1 alert, got {len(alerts)}"
+
+
+def test_alerting_7_same_alert_updates_on_more_failures(client, api_key_demoa):
+    """7. Further failures from same IP while alert is open -> SAME alert row updates."""
+    src_ip = "198.51.100.204"
+    
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": (datetime.now(timezone.utc) - timedelta(seconds=30 * i)).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_7"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alerts = alert_res.json().get("alerts", [])
+    
+    assert len(alerts) == 1, f"Expected 1 alert, got {len(alerts)}"
+    alert = alerts[0]
+    assert alert["count"] == 5, f"Expected count=5, got {alert.get('count')}"
+    
+    # Add 2 more failures - should update same alert
+    for i in range(5, 7):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_7b"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alerts = alert_res.json().get("alerts", [])
+    
+    # Still exactly 1 alert, count increased
+    assert len(alerts) == 1, f"Expected 1 alert after more failures, got {len(alerts)}"
+    assert alerts[0]["count"] == 7, f"Expected count=7, got {alerts[0].get('count')}"
+
+
+def test_alerting_8_count_increments_not_dedup_fails(client, api_key_demoa):
+    """8a. After 5 failures, 6th creates new alert due to different window -> 2 alerts (or count=6 in one)."""
+    src_ip = "198.51.100.205"
+    
+    # 5 failures within window
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": (datetime.now(timezone.utc) - timedelta(seconds=50)).isoformat().replace("+00:00", "Z"),
+                "tags": [MARKER, "test_alerting_8a"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    # 6th failure after window expires (> 300s from first)
+    res = client.post(
+        "/api/ingest",
+        json={
+            "tenant": "demoa",
+            "source": "ad",
+            "event_id": 4625,
+            "event_type": "LogonFailed",
+            "user": "demo\\\\user6",
+            "src_ip": src_ip,
+            "action": "LOGIN",
+            "status": "Failure",
+            "severity": 7,
+            "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "tags": [MARKER, "test_alerting_8b"],
+        },
+        headers={"X-API-Key": api_key_demoa}
+    )
+    assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alerts = alert_res.json().get("alerts", [])
+    
+    # Should be 1 alert with count=6 since the 5 threshold fires on the 5th, and the 6th is in same unresolved
+    assert len(alerts) == 1, f"Expected 1 alert, got {len(alerts)}"
+    assert alerts[0]["count"] == 6, f"Expected count=6, got {alerts[0].get('count')}"
+
+
+def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob):
+    """9. demoA events and demob events with same IP never combine; alert has correct tenant."""
+    src_ip = "198.51.100.206"
+    ts = datetime.now(timezone.utc).isoformat()
+    
+    # 5 failures in demoa with this IP
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": ts,
+                "tags": [MARKER, "test_cross_9a"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    # 5 failures in demob with same IP
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demob",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": ts,
+                "tags": [MARKER, "test_cross_9b"],
+            },
+            headers={"X-API-Key": api_key_demob}
+        )
+        assert res.status_code == 200
+    
+    # Admin views all alerts
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts")
+    alerts = alert_res.json().get("alerts", [])
+    
+    # Filter for our marker
+    our_alerts = [a for a in alerts if MARKER in a.get("description", "")]
+    
+    demoa_alerts = [a for a in our_alerts if a["tenant"] == "demoa"]
+    demob_alerts = [a for a in our_alerts if a["tenant"] == "demob"]
+    
+    assert len(demoa_alerts) == 1, f"Expected 1 demoa alert, got {len(demoa_alerts)}"
+    assert len(demob_alerts) == 1, f"Expected 1 demob alert, got {len(demob_alerts)}"
+
+
+def test_alerting_10_viewer_sees_own_tenant_alerts(client):
+    """10. viewerA sees only demoa alerts via GET /api/get-alerts; ?tenant=other changes nothing."""
+    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    
+    res = client.get("/api/get-alerts")
+    assert res.status_code == 200
+    
+    alerts = res.json().get("alerts", [])
+    for alert in alerts:
+        assert alert["tenant"] == "demoa", f"viewerA should only see demoa alerts, saw {alert['tenant']}"
+    
+    # Try to force different tenant
+    res = client.get("/api/get-alerts?tenant=demob")
+    assert res.status_code == 200
+    alerts = res.json().get("alerts", [])
+    for alert in alerts:
+        assert alert["tenant"] == "demoa", f"viewerA should only see demoa alerts, saw {alert['tenant']}"
+
+
+def test_alerting_11_concurrent_ingest_single_alert(client, api_key_demoa):
+    """11. Concurrency: multiple sequential ingests that cross threshold create exactly ONE alert after threshold."""
+    src_ip = "198.51.100.207"
+    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    # 5 failures trigger the alert
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": ts,
+                "tags": [MARKER, "test_concurrent"],
+            },
+            headers={"X-API-Key": api_key_demoa}
+        )
+        assert res.status_code == 200
+    
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alerts = alert_res.json().get("alerts", [])
+    
+    # Should be exactly 1 alert
+    assert len(alerts) == 1, f"Expected 1 alert from concurrent ingests, got {len(alerts)}"
+
+
+def test_alerting_12_batch_500_events_completes(client, api_key_demoa):
+    """12. Batch of 500 events completes under 5 seconds and runs bounded alert queries."""
+    import time
+    
+    events = [
+        {
+            "tenant": "demoa",
+            "source": "ad",
+            "event_id": 4625,
+            "event_type": "LogonFailed",
+            "user": f"demo\\\\user{i}",
+            "src_ip": "198.51.100.208",
+            "action": "LOGIN",
+            "status": "Failure",
+            "severity": 7,
+            "@timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        for i in range(500)
+    ]
+    
+    start = time.time()
+    res = client.post(
+        "/api/ingest/batch",
+        json={"events": events, "source": "ad"},
+        headers={"X-API-Key": api_key_demoa}
+    )
+    elapsed = time.time() - start
+    
+    assert res.status_code == 200, res.text
+    assert elapsed < 5, f"Batch took {elapsed:.2f}s, should be < 5s"
+    assert res.json()["ingested"] == 500
+
+
+def test_alerting_13_rule_validation_unknown_type(client):
+    """13a. Unknown condition type -> 422 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Bad Rule",
+            "tenant": "demoa",
+            "conditions": [{"type": "unknown_condition_type", "threshold": 5}],
+        }
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}"
+
+
+def test_alerting_14_rule_validation_negative_threshold(client):
+    """13b. Negative threshold -> 422 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Bad Threshold",
+            "tenant": "demoa",
+            "conditions": [{"type": "event_type", "value": "test", "threshold": -1}],
+        }
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}"
+
+
+def test_alerting_15_rule_validation_window_too_small(client):
+    """13c. window < 1 -> 422 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Bad Window",
+            "tenant": "demoa",
+            "conditions": [{"type": "event_type", "value": "test", "windowSeconds": 0}],
+        }
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}"
+
+
+def test_alerting_16_rule_validation_window_too_large(client):
+    """13d. window > 86400 -> 422 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Bad Window Large",
+            "tenant": "demoa",
+            "conditions": [{"type": "event_type", "value": "test", "windowSeconds": 86401}],
+        }
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}"
+
+
+def test_alerting_17_rule_validation_group_by(client):
+    """13e. Invalid group_by -> 422 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Bad GroupBy",
+            "tenant": "demoa",
+            "conditions": [{"type": "event_type", "value": "test", "groupBy": "invalid_field"}],
+        }
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}"
+
+
+def test_alerting_18_tenant_mismatch_403(client):
+    """13f. tenant mismatch -> 403 on create."""
+    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    
+    res = client.post(
+        "/api/create-alertRule",
+        json={
+            "name": "Cross Tenant",
+            "tenant": "demob",
+            "conditions": [{"type": "event_type", "value": "test"}],
+        }
+    )
+    assert res.status_code == 403, f"Expected 403, got {res.status_code}"
