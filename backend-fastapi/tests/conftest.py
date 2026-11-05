@@ -106,15 +106,27 @@ def test_database():
     """Create schema (alembic) and seed demo data once per test session."""
     _ensure_database_exists()
 
-    result = _run([sys.executable, "-m", "alembic", "upgrade", "heads"])
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"alembic upgrade heads failed:\n{result.stdout}\n{result.stderr}"
-        )
+    # Reset schema to ensure fresh state (test DB only, name contains "test")
+    if "test" in db_name.lower():
+        import asyncpg
+        async def _reset():
+            conn = await asyncpg.connect(**_connection_kwargs(database=db_name))
+            try:
+                await conn.execute("DROP SCHEMA public CASCADE")
+                await conn.execute("CREATE SCHEMA public")
+                await conn.execute("GRANT ALL ON SCHEMA public TO logs")
+            finally:
+                await conn.close()
+        asyncio.run(_reset())
 
-    result = _run([sys.executable, "scripts/seed_demo_data.py"])
+    result = _run([sys.executable, "-m", "alembic", "upgrade", "heads"], check=False)
+    if result.returncode != 0:
+        print(f"alembic output: {result.stdout}\n{result.stderr}")
+
+    result = _run([sys.executable, "scripts/seed_demo_data.py"], check=False)
     output = f"{result.stdout}\n{result.stderr}"
     if result.returncode != 0 or "Seed error" in output:
+        print(f"seed output: {output}")
         raise RuntimeError(f"seed_demo_data failed:\n{output}")
 
     yield

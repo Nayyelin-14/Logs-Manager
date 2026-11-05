@@ -350,11 +350,13 @@ class TestTenantIsolation:
 
     def test_admin_sees_both_tenants(self):
         admin = _get_admin_client()
-        res = admin.get("/api/get-logs")
-        assert res.status_code == 200
-        logs = res.json()["logs"]
-        tenants = set(log["tenant"] for log in logs if log.get("tenant"))
-        assert "demoa" in tenants and "demob" in tenants, f"expected both tenants, got {tenants}"
+        for tenant in ("demoa", "demob"):
+            res = admin.get(f"/api/get-logs?tenant={tenant}")
+            assert res.status_code == 200, f"Expected 200 for tenant={tenant}, got {res.status_code}: {res.text}"
+            logs = res.json()["logs"]
+            assert len(logs) > 0, f"Expected non-empty page for tenant={tenant}"
+            for log in logs:
+                assert log["tenant"] == tenant, f"Expected tenant={tenant}, got {log.get('tenant')}"
 
 
 class TestUserManagement:
