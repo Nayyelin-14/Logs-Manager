@@ -1,7 +1,6 @@
 import { AxiosError } from "axios";
 import { redirect, type ActionFunctionArgs } from "react-router-dom";
-import API, { authAPI } from "../../api";
-import useAuthStore, { authStatus } from "../../store/authStore";
+import API from "../../api";
 import { useUserStore } from "../../store/userStore";
 
 export const loginAction = async ({ request }: ActionFunctionArgs) => {
@@ -11,7 +10,7 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
   const userStore = useUserStore.getState();
 
   try {
-    const response = await authAPI.post("auth/login", authData);
+    const response = await API.post("auth/login", authData);
     const userData = response.data.userData;
     if (!response.status || response.status < 200 || response.status >= 300 || !userData) {
       return {
@@ -20,7 +19,6 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
       };
     }
 
-    // Store user data in Zustand
     userStore.setUser({
       id: String(userData.id),
       username: userData.username,
@@ -28,7 +26,13 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
       role: userData.role,
       tenant: userData.tenant,
     });
-    if (userData.role === "USER") {
+
+    // Also save to sessionStorage for loader access
+    sessionStorage.setItem("auth-email", userData.email);
+    sessionStorage.setItem("auth-tenant", userData.tenant);
+    sessionStorage.setItem("auth-role", userData.role);
+
+    if (userData.role === "VIEWER") {
       return redirect("/dashboard");
     } else {
       return redirect("/");
@@ -36,105 +40,8 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Login Failed" };
-    } else {
-      throw error;
     }
-  }
-};
-export const registerAction = async ({ request }: ActionFunctionArgs) => {
-  const authStore = useAuthStore.getState(); //getstate take state or initialState
-  if (authStore?.email) {
-    authStore.clearAuth();
-  }
-  const data = await request.formData();
-  const registerData = Object.fromEntries(data);
-  try {
-    const response = await authAPI.post("auth/register", registerData);
-    if (response.status !== 200) {
-      return { error: response.data || "Registeration failed" };
-    }
-
-    authStore.setAuth(
-      response.data.userData?.email,
-      response.data?.username,
-      response.data?.tenant,
-      response.data.userData?.role,
-      authStatus.otp,
-      response.data?.token,
-      response.data.message
-    );
-    return redirect("/register/otp");
-  } catch (error) {
-    if (error instanceof AxiosError) {
-      return error.response?.data || { error: "Registeration Failed" };
-    } else {
-      throw error;
-    }
-  }
-};
-
-export const OTPAction = async ({ request }: ActionFunctionArgs) => {
-  const authStore = useAuthStore.getState(); //getstate take state or initialState
-  const data = await request.formData();
-  const OTPData = {
-    username: authStore?.username,
-    tenant: authStore?.tenant,
-    email: authStore?.email,
-    token: authStore?.token,
-    otp: data.get("otp"),
-  };
-  try {
-    const response = await authAPI.post("auth/verify-Otp", OTPData);
-    if (response.status !== 200) {
-      return { error: response.data || "Verification OTP failed" };
-    }
-    authStore.setAuth(
-      authStore!.email!,
-      authStore!.username!,
-      authStore!.tenant!,
-      response.data.userData?.role,
-      authStatus.confirm,
-      response.data?.token,
-      response.data.message
-    );
-    return redirect("/register/confirm-password");
-    //
-  } catch (error) {
-    if (error instanceof AxiosError) {
-      return error.response?.data || { error: "Verification OTP Failed" };
-    } else {
-      throw error;
-    }
-  }
-};
-
-export const ConfirmPwdAction = async ({ request }: ActionFunctionArgs) => {
-  const authStore = useAuthStore.getState(); //getstate take state or initialState
-  const data = await request.formData();
-  const ConfirmData = {
-    username: authStore?.username,
-    tenant: authStore?.tenant,
-    email: authStore?.email,
-    token: authStore?.token,
-    password: data.get("password"),
-    confirmPassword: data.get("confirmPassword"),
-  };
-  try {
-    const response = await authAPI.post("auth/confirm-password", ConfirmData);
-
-    if (response.status !== 201) {
-      return { message: response.data.message || "Registeration failed" };
-    }
-    authStore.setTempMessage(response.data.message);
-    authStore.clearAuth();
-    return redirect("/");
-    //
-  } catch (error) {
-    if (error instanceof AxiosError) {
-      return error.response?.data || { message: "Registeration failed" };
-    } else {
-      throw error;
-    }
+    throw error;
   }
 };
 
@@ -142,6 +49,11 @@ export const logoutAction = async () => {
   try {
     const response = await API.post("/auth/logout");
     const userStore = useUserStore.getState();
+
+    // Clear sessionStorage
+    sessionStorage.removeItem("auth-email");
+    sessionStorage.removeItem("auth-tenant");
+    sessionStorage.removeItem("auth-role");
 
     if (response.status !== 200) {
       return { error: response.data || "Logout failed" };
@@ -152,8 +64,7 @@ export const logoutAction = async () => {
   } catch (error) {
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Logout Failed" };
-    } else {
-      throw error;
     }
+    throw error;
   }
 };

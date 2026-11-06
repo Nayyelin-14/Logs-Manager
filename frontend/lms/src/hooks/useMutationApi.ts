@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "../api";
@@ -44,18 +43,20 @@ export function useAppMutation<
     },
     onSuccess: async (data) => {
       if (invalidateFn) await invalidateFn();
-      const msg = (data as any)?.message || successMessage || "Success";
+
+      const successData = (data as any);
+      const msg = successData?.message || successMessage || "Success";
 
       toast.success(msg);
 
-      if (data?.alertTriggered && data.alerts?.length) {
+      if (successData?.alertTriggered && successData.alerts?.length) {
         toast.warning(
-          `⚠️ Alert triggered: ${
-            data.alerts[0]?.title || "Check alerts for details"
+          `Alert triggered: ${
+            successData.alerts[0]?.title || "Check alerts for details"
           }`
         );
-      } else if (data?.alertTriggered) {
-        toast.warning(`⚠️ Alert triggered: Check alerts for details`);
+      } else if (successData?.alertTriggered) {
+        toast.warning(`Alert triggered: Check alerts for details`);
       }
     },
     onError: (err: any) => {

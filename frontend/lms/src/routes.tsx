@@ -1,35 +1,16 @@
-import { createBrowserRouter, redirect } from "react-router-dom";
+import { createBrowserRouter } from "react-router-dom";
 import { Suspense, lazy } from "react";
 import RootLayout from "./pages/RootLayout";
 import NotFound from "./pages/NotFound";
 import { ShieldCheck, LoaderCircle } from "lucide-react";
 
 // Actions
-import {
-  ConfirmPwdAction,
-  loginAction,
-  logoutAction,
-  OTPAction,
-  registerAction,
-} from "./router/actions";
-
-// Loaders
-import {
-  authCheckLoader,
-  ConfirmPwdCheckLoader,
-  dashboardLoader,
-  managementLoader,
-  OtpCheckLoader,
-} from "./router/loaders";
+import { loginAction, logoutAction } from "./router/actions";
 
 // Lazy-loaded pages
 const DashBoard = lazy(() => import("./pages/ManageDashboard.tsx/DashBoard"));
 const Dashboard_stats = lazy(() => import("./pages/Dashboard-stats"));
 const LoginPage = lazy(() => import("./pages/Auth/LoginPage"));
-const RegisterPage = lazy(() => import("./pages/Auth/RegisterPage"));
-const AuthRootLayout = lazy(() => import("./pages/Auth/AuthRootLayout"));
-const OtpPage = lazy(() => import("./pages/Auth/OtpPage"));
-const ConfirmPwdPage = lazy(() => import("./pages/Auth/ConfirmPwdPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const LogsPage = lazy(() => import("./pages/LogsPage"));
 const AlertsPage = lazy(() => import("./pages/AlertsPage"));
@@ -48,6 +29,10 @@ const SuspenseFallback = () => (
     </div>
   </div>
 );
+
+// Simple loaders that just return null (auth check done client-side)
+const dashboardLoader = () => null;
+const managementLoader = () => null;
 
 const router = createBrowserRouter([
   {
@@ -90,54 +75,10 @@ const router = createBrowserRouter([
           </Suspense>
         ),
         action: loginAction,
-        loader: authCheckLoader,
       },
       {
         path: "/logout",
         action: logoutAction,
-        loader: () => {
-          return redirect("/");
-        },
-      },
-      {
-        path: "/register",
-        element: (
-          <Suspense fallback={<SuspenseFallback />}>
-            <AuthRootLayout />
-          </Suspense>
-        ),
-        children: [
-          {
-            index: true,
-            element: (
-              <Suspense fallback={<SuspenseFallback />}>
-                <RegisterPage />
-              </Suspense>
-            ),
-            loader: authCheckLoader,
-            action: registerAction,
-          },
-          {
-            path: "otp",
-            element: (
-              <Suspense fallback={<SuspenseFallback />}>
-                <OtpPage />
-              </Suspense>
-            ),
-            loader: OtpCheckLoader,
-            action: OTPAction,
-          },
-          {
-            path: "confirm-password",
-            element: (
-              <Suspense fallback={<SuspenseFallback />}>
-                <ConfirmPwdPage />
-              </Suspense>
-            ),
-            loader: ConfirmPwdCheckLoader,
-            action: ConfirmPwdAction,
-          },
-        ],
       },
     ],
   },

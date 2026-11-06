@@ -1,0 +1,387 @@
+{
+  "info": {
+    "name": "Log Manager API",
+    "schema": "https://schema.getpostman.com/schema/collection/v2.1.0.json",
+    "description": "Log Manager / Mini SIEM API collection"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "json",
+              "json": {
+                "email": "admin@example.com",
+                "password": "test123"
+              }
+            },
+            "url": {
+              "raw": "{{api_base_url}}/api/auth/login",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "json",
+              "json": {
+                "email": "newuser@example.com",
+                "password": "test123"
+              }
+            },
+            "url": {
+              "raw": "{{api_base_url}}/api/auth/register",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ingestion",
+      "item": [
+        {
+          "name": "Single Event POST /ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "demoA-key"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "json",
+              "json": {
+                "tenant": "demoA",
+                "source": "api",
+                "event_type": "app_login_failed",
+                "user": "alice",
+                "ip": "203.0.113.7",
+                "reason": "wrong_password",
+                "@timestamp": "2025-08-20T07:20:00Z"
+              }
+            },
+            "url": {
+              "raw": "{{api_base_url}}/ingest",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Batch POST /ingest/batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "demoA-key"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "json",
+              "json": {
+                "events": [
+                  {
+                    "tenant": "demoA",
+                    "source": "api",
+                    "event_type": "app_login_failed",
+                    "user": "alice",
+                    "ip": "203.0.113.7",
+                    "reason": "wrong_password",
+                    "@timestamp": "2025-08-20T07:20:00Z"
+                  }
+                ],
+                "source": "api"
+              }
+            },
+            "url": {
+              "raw": "{{api_base_url}}/ingest/batch",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            }
+          }
+        },
+        {
+          "name": "File Upload POST /ingest/file",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "demoA-key"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "value": "{% raw %}{{file_path}}{% endraw %}",
+                  "type": "file"
+                },
+                {
+                  "key": "source",
+                  "value": "aws",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{api_base_url}}/ingest/file",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "ingest",
+                "file"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "query": [
+              {
+                "key": "q",
+                "value": ""
+              },
+              {
+                "key": "tenant",
+                "value": "demoA"
+              },
+              {
+                "key": "source",
+                "value": "firewall"
+              },
+              {
+                "key": "limit",
+                "value": "10"
+              }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/search",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "search"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "query": [
+              {
+                "key": "range",
+                "value": "7d"
+              }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/dashboard",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "dashboard"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Alerts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "open"
+              }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/get-alerts",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "get-alerts"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alert Rules",
+      "item": [
+        {
+          "name": "List Rules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "query": [
+              {
+                "key": "tenant",
+                "value": "demoA"
+              }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/get-rules",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "get-rules"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "json",
+              "json": {
+                "name": "Brute force: repeated failed logins",
+                "tenant": "demoA",
+                "description": "Triggers on 5+ failed logins from same src_ip within 5 min",
+                "enabled": true,
+                "severity": "high",
+                "conditions": [
+                  {
+                    "type": "threshold_count",
+                    "field": "outcome",
+                    "value": "failure",
+                    "threshold": 5,
+                    "windowSeconds": 300
+                  }
+                ]
+              }
+            },
+            "url": {
+              "raw": "{{api_base_url}}/create-alertRule",
+              "host": [
+                "{{api_base_url}}"
+              ],
+              "path": [
+                "create-alertRule"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "api_base_url",
+      "value": "http://localhost:4500",
+      "type": "global"
+    },
+    {
+      "key": "jwt_token",
+      "value": "Bearer your_jwt_token_here",
+      "type": "global"
+    },
+    {
+      "key": "demoA_key",
+      "value": "demoA-key",
+      "type": "global"
+    }
+  ]
+}

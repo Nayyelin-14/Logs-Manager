@@ -1,6 +1,5 @@
 import React from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoaderCircle } from "lucide-react";
 
@@ -26,16 +25,17 @@ interface CreateFormProps {
   tenant: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CreateForm: React.FC<CreateFormProps> = ({
   formName,
   setOpen,
   tenant,
 }) => {
-  const form = useForm<z.infer<typeof CreateSchema>>({
+  const form = useForm<any>({
     resolver: zodResolver(CreateSchema),
     defaultValues: {
       username: "",
-      role: "USER",
+      role: "VIEWER",
       email: "",
       tenant: "",
       password: "",
@@ -54,13 +54,9 @@ const CreateForm: React.FC<CreateFormProps> = ({
     errorMessage: "Failed to create user.",
   });
 
-  function onSubmit(values: z.infer<typeof CreateSchema>) {
-    createUser(values, {
-      onSuccess: () => {
-        setOpen(false);
-      },
-    });
-  }
+  const onSubmit = form.handleSubmit((values: any) => createUser(values, {
+    onSuccess: () => setOpen(false),
+  }));
 
   if (formName !== "Create User") {
     return null;
@@ -68,7 +64,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+      <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -135,7 +131,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
                     {...field}
                     className="h-10 w-full rounded-xl border border-border/60 bg-surface-container-low px-3.5 text-[13px] text-ink outline-none transition-[border-color,box-shadow] hover:border-ink/20 focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-brand/15"
                   >
-                    <option value="USER">User</option>
+                    <option value="VIEWER">Viewer</option>
                     <option value="ADMIN">Admin</option>
                   </select>
                 </FormControl>

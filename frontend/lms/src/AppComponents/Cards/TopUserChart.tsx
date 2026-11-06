@@ -54,8 +54,11 @@ const UsersChart = ({ users }: UsersProps) => {
               </div>
               <div className="ml-7 h-1 overflow-hidden rounded-full bg-surface-muted">
                 <div
-                  className="h-full rounded-full bg-brand"
-                  style={{ width: `${Math.max((user.count / maxCount) * 100, 4)}%` }}
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.max((user.count / maxCount) * 100, 4)}%`,
+                    background: "linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 30%, transparent))",
+                  }}
                 />
               </div>
             </div>

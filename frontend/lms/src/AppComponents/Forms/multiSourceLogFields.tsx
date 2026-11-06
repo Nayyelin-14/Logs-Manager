@@ -31,12 +31,12 @@ const SOURCE_FIELDS: Record<Source, SourceFieldConfig[]> = {
   ],
   [Source.CROWDSTRIKE]: [
     { name: "host", label: "Host", placeholder: "WIN10-01" },
-    { name: "host", label: "Host", placeholder: "r1" },
-    { name: "eventType", label: "Event Type", placeholder: "app_login_failed" },
+    { name: "srcIp", label: "Source IP", placeholder: "10.0.0.42" },
+    { name: "eventType", label: "Event Type", placeholder: "malware_detected" },
     { name: "process", label: "Process", placeholder: "malware.exe" },
     { name: "severity", label: "Severity (0-10)", type: "number", min: 0, max: 10 },
     { name: "sha256", label: "SHA256", placeholder: "abc..." },
-    { name: "action", label: "Action", placeholder: "quarantine" },
+    { name: "action", label: "Action", placeholder: "QUARANTINE" },
   ],
   [Source.AWS]: [
     { name: "cloudAccountId", label: "AWS Account ID", placeholder: "123456789012" },

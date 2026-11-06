@@ -57,9 +57,10 @@ const SourceChart: React.FC<SourceChartProps> = ({ sources }) => {
               </div>
               <div className="h-1 overflow-hidden rounded-full bg-surface-muted">
                 <div
-                  className="h-full rounded-full bg-brand"
+                  className="h-full rounded-full"
                   style={{
                     width: `${Math.max((source._count / maxCount) * 100, 4)}%`,
+                    background: "linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 30%, transparent))",
                   }}
                 />
               </div>

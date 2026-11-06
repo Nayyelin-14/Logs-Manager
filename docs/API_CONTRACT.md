@@ -1,0 +1,557 @@
+# API Contract — FastAPI Backend
+
+**Version:** 1.0  
+**Date:** 2026-11-03  
+**Status:** Active (implemented and covered by the pytest suite)
+
+---
+
+## 1. Overview
+
+This document describes the HTTP contract of the FastAPI backend. Paths, methods, JSON shapes, status codes, error format, and cookie-based authentication are the contract the React frontend consumes (and remain compatible with the original API the frontend was built against).
+
+All endpoints preserve:
+- URL paths
+- HTTP methods
+- Request/response JSON structure
+- Query parameters
+- Status codes
+- Error response format
+- Cookie-based authentication
+
+---
+
+## 2. Authentication Endpoints (`/api/auth`)
+
+### 2.1 POST `/api/auth/login`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/auth/login` |
+| **Auth** | None |
+| **Request Body** | `{ email: string, password: string }` |
+| **Response (201)** | `{ message: string, userData: UserPublic }` |
+| **Cookies Set** | `accessToken` (15m), `refreshToken` (30d) HttpOnly |
+| **Errors** | 400 (missing), 401 (invalid), 403 (inactive), 500 |
+
+**UserPublic** (no password):
+```json
+{
+  "id": 1,
+  "username": "admin",
+  "email": "admin@demo.local",
+  "role": "ADMIN",
+  "tenant": "demoA",
+  "status": "ACTIVE",
+  "createAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+### 2.2 POST `/api/auth/register`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/auth/register` |
+| **Request Body** | `{ username, email, tenant }` |
+| **Response (200)** | `{ message, userData: OtpRecord, tenant, username, token }` |
+| **Flow** | Creates OTP, queues email, returns rememberToken |
+
+### 2.3 POST `/api/auth/verify-Otp`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/auth/verify-Otp` |
+| **Request Body** | `{ username, email, tenant, otp, token }` |
+| **Response (200)** | `{ isSuccess: true, message, token: verifyToken }` |
+| **Errors** | 400 (validation), 403 (expired/wrong/rate-limited) |
+
+### 2.4 POST `/api/auth/confirm-password`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/auth/confirm-password` |
+| **Request Body** | `{ email, username, tenant, password, confirmPassword, token }` |
+| **Response (201)** | `{ message, userId, userData: UserPublic }` |
+| **Cookies Set** | `accessToken`, `refreshToken` |
+| **Errors** | 400 (validation), 403 (expired/wrong token), 500 |
+
+### 2.5 POST `/api/auth/logout`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/auth/logout` |
+| **Auth** | Required |
+| **Response (200)** | `{ message: "Loggedout successfully" }` |
+| **Cookies** | Clear `accessToken`, `refreshToken` |
+
+### 2.6 GET `/api/auth/auth-check`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/auth/auth-check` |
+| **Auth** | Required |
+| **Response (200)** | `{ message, user: { id, username, email, role, tenant, status } }` |
+| **Errors** | 401 (unauthenticated) |
+
+---
+
+## 3. Ingestion Endpoints (`/api`)
+
+### 3.1 POST `/api/ingest` (Single Event)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/ingest` |
+| **Auth** | API Key (`X-API-Key`) OR JWT cookies |
+| **Request Body** | Single event object |
+| **Response (201/400)** | `{ success: boolean, eventId?: string, message?: string, alerts?: Alert[], ingested?: number, rejected?: number }` |
+| **Rate Limit** | Global (middleware) |
+
+**Event Object Example:**
+```json
+{
+  "source": "api",
+  "tenant": "demoA",
+  "event_type": "login_failed",
+  "user": "alice",
+  "src_ip": "203.0.113.77",
+  "severity": 7,
+  "action": "LOGIN",
+  "description": "Failed password for alice"
+}
+```
+
+### 3.2 POST `/api/ingest/batch` (Batch + File Upload)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/ingest/batch` |
+| **Auth** | API Key OR JWT |
+| **Content-Type** | `multipart/form-data` (file) OR `application/json` |
+| **File Field** | `file` (multer) |
+| **JSON Body** | Array OR `{ events: [], source?, tenant? }` |
+| **Response (201/400)** | `{ success, total, ingested, failed, results: [{ index, success, eventId?, error? }] }` |
+| **Max File Size** | `INGEST_MAX_FILE_BYTES` (10MB) |
+| **Max Events** | `INGEST_BATCH_MAX_EVENTS` (1000) |
+
+**Supported Formats:** JSON array, JSONL/NDJSON, CSV
+
+---
+
+## 4. Log Search Endpoint (`/api`)
+
+### 4.1 GET `/api/get-logs`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/get-logs` |
+| **Auth** | JWT required |
+| **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`, `date`, `search`, `limit`, `cursor` |
+| **Pagination** | Cursor-based (`cursor` = last event ID) |
+| **Response (200)** | `{ logs: LogWithSeverityLevel[], hasNextPage: boolean, newCursor: string\|null }` |
+
+**LogWithSeverityLevel:**
+```json
+{
+  "id": "cuid...",
+  "action": "DENY",
+  "user": "alice",
+  "srcIp": "203.0.113.77",
+  "source": "FIREWALL",
+  "tenant": "demoA",
+  "eventType": "firewall_deny",
+  "severity": 5,
+  "timestamp": "2026-10-30T22:14:15.000Z",
+  "severityLevel": "medium"
+}
+```
+
+**Severity Mapping (Frontend expects):**
+- `0-3` → `"low"`
+- `4-7` → `"medium"`
+- `8-10` → `"high"`
+- `>=9` → `"critical"` (if used)
+
+**Tenant Scoping:**
+- `VIEWER` (role=VIEWER): Ignores `tenant` query param, forces `tenant = user.tenant`
+- `ADMIN`: Can override `tenant` via query param, or see all tenants when empty
+- Cross-tenant access: PROHIBITED for VIEWER, ALLOWED for ADMIN
+
+### 4.2 DELETE `/api/delete-log/:logId`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | DELETE |
+| **Path** | `/api/delete-log/{logId}` |
+| **Auth** | ADMIN required |
+| **Response** | 200 `{ message }` |
+
+---
+
+## 5. Dashboard Endpoints (`/api`)
+
+### 5.1 GET `/api/dashboard` (Admin)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/dashboard` |
+| **Auth** | JWT required |
+| **Query Params** | `tenant` param REMOVED — ADMIN scoped to own tenant |
+| **Response (200)** | Same (scoped to admin's tenant) |
+
+**DashboardStats (Key Fields):**
+```json
+{
+  "totalEvents": 1234,
+  "topIPs": [{ "ip": "203.0.113.77", "count": 45 }],
+  "topUsers": [{ "user": "alice", "count": 30 }],
+  "topEventTypes": [{ "type": "firewall_deny", "count": 100 }],
+  "eventsBySource": [{ "tenant": "demoA", "timestamp": "...", "_count": { "id": 50 }, "source": "FIREWALL" }],
+  "alertsByDay": [{ "tenant": "demoA", "triggeredAt": "...", "_count": { "id": 3 } }],
+  "alertsRuleByDay": [{ "tenant": "demoA", "createdAt": "...", "_count": { "id": 1 } }],
+  "recentAlert": [AlertRecord...],
+  "severityCounts": [{ "severity": 5, "count": 100 }],
+  "sources": [{ "source": "FIREWALL", "_count": 500, "latestEventAt": "..." }],
+  "eventsByTenant": [{ "tenant": "demoA", "count": 1000 }],
+  "alertCountsByStatus": [{ "status": "open", "count": 5 }],
+  "alertCountsBySeverity": [{ "severity": "high", "count": 3 }],
+  "ruleCountsByEnabled": [{ "enabled": true, "count": 2 }],
+  "tenants": [{ "tenant": "demoA" }]
+}
+```
+
+### 5.2 GET `/api/user-dashboard/:userId` (Viewer)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/user-dashboard/{userId}` |
+| **Auth** | JWT required, role=VIEWER |
+| **Query Params** | `range` (`1d`,`3d`,`7d`) |
+| **Response** | Same structure as admin but scoped to user's tenant |
+
+---
+
+## 6. Alert Endpoints (`/api`)
+
+### 6.1 GET `/api/get-alerts`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/get-alerts` |
+| **Auth** | JWT required |
+| **Query Params** | `tenant` param REMOVED — scoped to user's tenant |
+| **Pagination** | Cursor-based |
+| **Response (200)** | `{ alerts: AlertWithRule[], hasNextPage, newCursor }` |
+
+**AlertWithRule:**
+```json
+{
+  "id": "cuid...",
+  "tenant": "demoA",
+  "title": "Alert: Brute force - repeated failures",
+  "description": "Repeated failed logins from 203.0.113.7 exceeded 5 attempts in 5 minutes.",
+  "severity": "high",
+  "status": "open",
+  "triggeredAt": "2026-10-30T22:20:00.000Z",
+  "eventIds": ["event-cuid-1", "event-cuid-2"],
+  "rule": { "name": "Brute force - repeated failures", "description": "..." },
+  "dedupeKey": "rule-id:repeated_failures:srcIp:203.0.113.7:ad_logon_failed"
+}
+```
+
+### 6.2 PATCH `/api/alerts/:id`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | PATCH |
+| **Path** | `/api/alerts/{id}` |
+| **Auth** | ADMIN required |
+| **Request Body** | `{ status: "open" \| "resolved" }` |
+| **Response (200)** | `{ message, alert }` |
+| **Validation** | status must be `open` or `resolved` |
+
+---
+
+## 7. Alert Rule Endpoints (`/api`)
+
+### 7.1 GET `/api/get-rules`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/get-rules` |
+| **Auth** | ADMIN required |
+| **Query Params** | `tenant` param REMOVED — scoped to admin's tenant |
+| **Response (200)** | `{ rules: AlertRule[], hasNextPage, newCursor }` |
+
+**AlertRule:**
+```json
+{
+  "id": "cuid...",
+  "name": "Brute force - repeated failures",
+  "description": "Triggers when one source IP fails to log in 5 times within 5 minutes.",
+  "tenant": "demoA",
+  "enabled": true,
+  "severity": "medium",
+  "conditions": [{ "type": "repeated_failures", "threshold": 5, "windowSeconds": 300 }],
+  "createdAt": "2026-10-30T22:00:00.000Z",
+  "updatedAt": "2026-10-30T22:00:00.000Z"
+}
+```
+
+### 7.2 POST `/api/create-alertRule`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/create-alertRule` |
+| **Auth** | ADMIN required |
+| **Request Body** | `{ name, tenant, description?, conditions, enabled?, severity? }` |
+| **Conditions Validation** | Exactly 1 condition, type-specific required fields |
+| **Response (201)** | `{ message, createdRule }` |
+
+### 7.3 PUT `/api/update-rule/:id`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | PUT |
+| **Path** | `/api/update-rule/{id}` |
+| **Auth** | ADMIN required |
+| **Request Body** | Same as create |
+| **Response (200)** | `{ message, rule }` |
+
+### 7.4 PATCH `/api/rules/:id/enabled`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | PATCH |
+| **Path** | `/api/rules/{id}/enabled` |
+| **Auth** | ADMIN required |
+| **Request Body** | `{ enabled: boolean }` |
+| **Response (200)** | `{ message, rule }` |
+
+### 7.5 DELETE `/api/delete-rule/:id`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | DELETE |
+| **Path** | `/api/delete-rule/{id}` |
+| **Auth** | ADMIN required |
+| **Validation** | Cannot delete if alerts exist for rule |
+| **Response (200)** | `{ message }` |
+
+---
+
+## 8. User Management Endpoints (`/api`)
+
+### 8.1 GET `/api/get-users`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/get-users` |
+| **Auth** | ADMIN required |
+| **Query Params** | Same (scoped to admin's tenant) |
+| **Response** | `{ usersList: User[], newCursor, prevCursor? }` |
+
+### 8.2 GET `/api/users/:q` (Frontend infinite query)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/users/{q}` |
+| **Auth** | ADMIN required |
+| **Response** | Paginated users |
+
+### 8.3 POST `/api/create-user`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/create-user` |
+| **Auth** | ADMIN required |
+| **Request Body** | `{ username, email, tenant, role, status, password }` |
+| **Response** | Created user |
+
+### 8.4 PUT `/api/update-user`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | PUT |
+| **Path** | `/api/update-user` |
+| **Auth** | ADMIN required |
+| **Request Body** | `{ id, username?, email?, tenant?, role?, status? }` |
+| **Response** | Updated user |
+
+### 8.5 DELETE `/api/delete-user/:userId`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | DELETE |
+| **Path** | `/api/delete-user/{userId}` |
+| **Auth** | ADMIN required |
+| **Response** | Success message |
+
+### 8.6 GET `/api/get-all-data`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/api/get-all-data` |
+| **Auth** | ADMIN required |
+| **Query Params** | **REMOVED** — scoped to admin's tenant |
+| **Response** | Counts for dashboard cards |
+
+---
+
+## 9. Health Endpoints
+
+### 9.1 GET `/healthz`
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/healthz` |
+| **Auth** | None |
+| **Response (200)** | `{ status: "ok", uptime, timestamp }` |
+| **Response (503)** | `{ status: "degraded", database: "unreachable", timestamp }` |
+
+### 9.2 GET `/ready` (New)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | GET |
+| **Path** | `/ready` |
+| **Auth** | None |
+| **Response (200)** | `{ status: "ready", database: "connected", redis: "connected" }` |
+| **Purpose** | Kubernetes readiness probe |
+
+---
+
+## 10. Missing Endpoint — Event Detail
+
+### 10.1 Current State
+
+**Frontend:** LogsTable row click → no detail view (partial support in UI but no backend endpoint)
+
+**Backend:** No `GET /api/events/:id` or similar
+
+### 10.2 Proposed Endpoint
+
+| Aspect | Design |
+|--------|--------|
+| **Method** | GET |
+| **Path** | `/api/events/{event_id}` |
+| **Auth** | JWT required (VIEWER scoped to tenant) |
+| **Response (200)** | Full `SecurityEvent` with all fields including `raw` |
+| **Response (404)** | `{ message: "Event not found" }` |
+| **Tenant Scoping** | VIEWER only sees events in their tenant |
+
+**Frontend Integration:** Add detail modal/page in LogsPage (future enhancement, not required for migration).
+
+---
+
+## 11. Error Response Format
+
+All error responses follow this format:
+
+```json
+// 4xx/5xx
+{
+  "message": "Human-readable error message",
+  "error": "ERROR_CODE",  // e.g., "Invalid_Error", "unthenticated", "unauthorized"
+  "code": "prisma_error_code",  // optional, e.g., "P2002"
+  "meta": {}  // optional, Prisma meta
+}
+```
+
+**Common Error Codes:**
+- `Invalid_Error` — Validation failed
+- `unthenticated` — Not authenticated / token invalid
+- `unauthorized` — Insufficient permissions
+- `userExist` — Email already registered
+- `existedRule` — Alert rule name exists in tenant
+- `overLimit` — Rate limit exceeded
+- `otpExpired` — OTP expired
+
+---
+
+## 12. Cookie Specification
+
+| Cookie | Name | Max-Age | HttpOnly | Secure | SameSite | Path |
+|--------|------|---------|----------|--------|----------|------|
+| Access Token | `accessToken` | 900s (15m) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` (lax/none) | `/` |
+| Refresh Token | `refreshToken` | 2592000s (30d) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
+
+**Production:** `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` (cross-origin)
+**Development:** `COOKIE_SECURE=false`, `COOKIE_SAME_SITE=lax`
+
+---
+
+## 13. CORS Configuration
+
+```python
+# FastAPI CORS middleware
+allow_origins = settings.CORS_ORIGINS  # ["http://localhost:5173", "https://app.example.com"]
+allow_credentials = True
+allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+allow_headers = ["Content-Type", "Authorization", "X-API-Key", "Cookie"]
+expose_headers = ["Set-Cookie"]
+```
+
+---
+
+## 14. OpenAPI / TypeScript Generation
+
+### 14.1 FastAPI OpenAPI Spec
+
+Available at: `GET /openapi.json`
+
+Includes all endpoints, schemas, security schemes (cookie + API key).
+
+### 14.2 Frontend Type Generation (CI Step)
+
+```bash
+# In frontend/lms
+npx openapi-typescript http://localhost:4500/openapi.json -o src/types/api.generated.ts
+# OR using orval
+npx orval --input http://localhost:4500/openapi.json --output src/api/generated
+```
+
+Generated types replace manual `types.ts` for API contracts.
+
+---
+
+## 15. Compatibility Checklist
+
+For each endpoint, verify:
+
+- [ ] Same URL path
+- [ ] Same HTTP method
+- [ ] Same query parameter names and types
+- [ ] Same request body structure
+- [ ] Same response JSON structure (field names, types, nesting)
+- [ ] Same status codes for success/error
+- [ ] Same error response format
+- [ ] Same authentication behavior (cookies, API key, roles)
+- [ ] Same tenant scoping logic
+- [ ] Same pagination (cursor-based)
+- [ ] Same cookie names, options, expiration
+- [ ] Same CORS behavior
+
+---
+
+**End of API Contract**

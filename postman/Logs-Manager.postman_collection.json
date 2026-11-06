@@ -1,0 +1,270 @@
+{
+  "info": {
+    "name": "Logs Manager API",
+    "description": "Ingestion, query, alerting, and admin API for the Logs Manager (Mini SIEM)."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4500" },
+    { "key": "apiKey", "value": "{{INGEST_API_KEY}}" },
+    { "key": "tenant", "value": "demoa" },
+    { "key": "adminEmail", "value": "admin@demo.local" },
+    { "key": "adminPassword", "value": "{{SEED_ADMIN_PASSWORD}}" },
+    { "key": "viewerEmail", "value": "viewerA@demo.local" },
+    { "key": "viewerPassword", "value": "{{SEED_VIEWER_A_PASSWORD}}" },
+    { "key": "ruleId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check (liveness)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/healthz"
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/ready"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          },
+          "description": "Login with email/password. Sets auth cookies."
+        },
+        {
+          "name": "Auth check",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/auth-check"
+          },
+          "description": "Verify current session is valid."
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout"
+          },
+          "description": "Clear session cookies."
+        }
+      ]
+    },
+    {
+      "name": "Ingestion",
+      "item": [
+        {
+          "name": "Single event - POST /ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{apiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"api\",\n  \"tenant\": \"{{tenant}}\",\n  \"event_type\": \"app_login_failed\",\n  \"user\": \"alice\",\n  \"src_ip\": \"203.0.113.7\",\n  \"reason\": \"wrong_password\",\n  \"severity\": 5\n}"
+            },
+            "url": "{{baseUrl}}/api/ingest"
+          },
+          "description": "Ingest a single security event with API key authentication."
+        },
+        {
+          "name": "Batch events - POST /ingest/batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-Key", "value": "{{apiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant\": \"{{tenant}}\",\n  \"events\": [\n    {\n      \"source\": \"api\",\n      \"event_type\": \"batch_event_1\",\n      \"user\": \"alice\"\n    },\n    {\n      \"source\": \"aws\",\n      \"eventName\": \"CreateUser\",\n      \"eventSource\": \"iam.amazonaws.com\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/ingest/batch"
+          },
+          "description": "Ingest multiple events as a batch."
+        },
+        {
+          "name": "File upload - POST /ingest/file",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "samples/batch_sample.jsonl" },
+                { "key": "source", "type": "text", "value": "{{tenant}}" }
+              ]
+            },
+            "url": "{{baseUrl}}/api/ingest/file"
+          },
+          "description": "Upload a file for batch ingestion (JSON, JSONL, CSV)."
+        }
+      ]
+    },
+    {
+      "name": "Events - GET /api/events",
+      "item": [
+        {
+          "name": "List events",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}"
+          },
+          "description": "List events with optional filters."
+        },
+        {
+          "name": "Search events by event type",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&event_type=app_login_failed"
+          }
+        },
+        {
+          "name": "Search events by source IP",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&src_ip=203.0.113.7"
+          }
+        },
+        {
+          "name": "Filter by severity (high)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&severity=high"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stats - Dashboard",
+      "item": [
+        {
+          "name": "Get summary /api/stats/summary",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stats/summary?tenant={{tenant}}"
+          },
+          "description": "Dashboard KPIs: total events, failed logins, alerts, sources."
+        },
+        {
+          "name": "Get top N /api/stats/top",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stats/top?field=src_ip&limit=10&tenant={{tenant}}"
+          },
+          "description": "Top N values for a field."
+        },
+        {
+          "name": "Get timeline /api/stats/timeline",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stats/timeline?from=24h&tenant={{tenant}}"
+          },
+          "description": "Event counts over time, split by source."
+        }
+      ]
+    },
+    {
+      "name": "Alerts - /api/alerts",
+      "item": [
+        {
+          "name": "List alerts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/alerts?limit=25&tenant={{tenant}}"
+          }
+        },
+        {
+          "name": "Update alert status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"resolved\"\n}"
+            },
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alert Rules - /api/rules",
+      "item": [
+        {
+          "name": "List rules",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/rules?limit=25&tenant={{tenant}}"
+          }
+        },
+        {
+          "name": "Create rule",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Brute force detection\",\n  \"description\": \"Triggers when 5+ failed logins from same IP within 5 minutes\",\n  \"tenant\": \"{{tenant}}\",\n  \"enabled\": true,\n  \"severity\": \"high\",\n  \"threshold\": 5,\n  \"window_minutes\": 5,\n  \"cooldown_minutes\": 15,\n  \"group_by\": \"src_ip\",\n  \"conditions\": [\n    { \"type\": \"repeated_failures\", \"groupBy\": \"src_ip\", \"threshold\": 5, \"windowSeconds\": 300 }\n  ],\n  \"webhook_url\": \"http://webhook-receiver:8000/webhook\"\n}"
+            },
+            "url": "{{baseUrl}}/api/rules"
+          }
+        },
+        {
+          "name": "Test rule - POST /api/rules/{id}/test",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/rules/{{ruleId}}/test"
+          },
+          "description": "Dry-run: returns what WOULD trigger for this rule right now."
+        },
+        {
+          "name": "Toggle rule enabled",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/rules/{{ruleId}}/enabled"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sources Health - /api/sources/health",
+      "item": [
+        {
+          "name": "Get sources health (Admin only)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/sources/health"
+          },
+          "description": "Per-source health status (syslog listener, last event time, etc.)."
+        }
+      ]
+    }
+  ]
+}
