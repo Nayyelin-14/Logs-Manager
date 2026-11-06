@@ -49,14 +49,13 @@ cd backend-fastapi
 BASE_URL=https://<service>.onrender.com \
 INGEST_API_KEY=<key> \
 ADMIN_EMAIL=admin@demo.local \
-ADMIN_PASSWORD='Admin123!' \
+ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD' \
 ./tests/smoke.sh
 ```
 
 **Demo credentials (after `make seed`):**
-- `admin@demo.local` / `Admin123!` (ADMIN, tenant `demoA`)
-- `viewerA@demo.local` / `ViewerA123!` (VIEWER, tenant `demoA`)
-- `viewerB@demo.local` / `ViewerB123!` (VIEWER, tenant `demoB`)
+- Printed to stdout during seeding
+- Set via `SEED_ADMIN_PASSWORD`, `SEED_VIEWER_A_PASSWORD`, `SEED_VIEWER_B_PASSWORD` env vars
 
 Run `make seed` first so the demo accounts and an alert rule exist.
 

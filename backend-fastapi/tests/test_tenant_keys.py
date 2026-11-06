@@ -18,19 +18,20 @@ from app.main import app  # noqa: E402
 from app.core.database import async_session_maker
 from app.models.tenant import Tenant
 
-# Demo users (seeded by conftest)
-ADMIN_EMAIL = "admin@demo.local"
-ADMIN_PASSWORD = "Admin123!"
-VIEWER_A_EMAIL = "viewerA@demo.local"
-VIEWER_A_PASSWORD = "ViewerA123!"
-VIEWER_B_EMAIL = "viewerB@demo.local"
-VIEWER_B_PASSWORD = "ViewerB123!"
 
 # Known test keys
 DEMOA_API_KEY = "demoA-test-key-0123456789abcdef"
 DEMOB_API_KEY = "demoB-test-key-0123456789abcdef"
 
 
+from conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    VIEWER_A_EMAIL,
+    VIEWER_A_PASSWORD,
+    VIEWER_B_EMAIL,
+    VIEWER_B_PASSWORD,
+)
 def login(client: TestClient, email: str, password: str) -> TestClient:
     client.post("/api/auth/login", json={"email": email, "password": password})
     return client

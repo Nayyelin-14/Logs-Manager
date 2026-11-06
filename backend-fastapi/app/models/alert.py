@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, JSON, Index, ForeignKey, ARRAY, Text, Boolean, Integer, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -22,6 +23,13 @@ class AlertRule(Base):
     conditions = Column(JSONB, nullable=False)
     enabled = Column(Boolean, default=True, nullable=False)
     severity = Column(String(50), default="medium", nullable=False)
+    rule_type = Column(String(32), nullable=True, server_default='threshold')
+    filter = Column(JSONB, nullable=True, server_default=sa.text("'{}'::jsonb"))
+    group_by = Column(String(32), nullable=True, server_default="'src_ip'")
+    threshold = Column(Integer, nullable=True, server_default='5')
+    window_minutes = Column(Integer, nullable=True, server_default='5')
+    cooldown_minutes = Column(Integer, nullable=True, server_default='15')
+    notify = Column(JSONB, nullable=True, server_default=sa.text("'{}'::jsonb"))
     created_at = Column("createdAt", DateTime(timezone=True), server_default="now()", nullable=False)
     updated_at = Column("updatedAt", DateTime(timezone=True), server_default="now()", onupdate=func.now(), nullable=False)
 
@@ -51,6 +59,9 @@ class Alert(Base):
     tags = Column("tags", ARRAY(String), default=[], nullable=False)
     dedupe_key = Column("dedupe_key", String(255), nullable=True)
     group_key = Column(String(255), nullable=True)
+    group_value = Column(String(255), nullable=True)
+    evidence_event_ids = Column(ARRAY(String), nullable=True, server_default=sa.text("'{}'"))
+    notifications = Column(JSONB, nullable=True, server_default=sa.text("'[]'::jsonb"))
     count = Column(Integer, default=1, nullable=False)
     first_seen = Column("first_seen", DateTime(timezone=True), nullable=True)
     last_seen = Column("last_seen", DateTime(timezone=True), nullable=True)

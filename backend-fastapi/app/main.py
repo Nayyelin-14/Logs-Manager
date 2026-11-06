@@ -5,6 +5,7 @@ Main application factory with all routes, middleware, and lifecycle management.
 """
 
 import asyncio
+import logging
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
@@ -15,9 +16,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
-from app.core.database import init_db, close_db
-from app.api.routes import health, auth, ingest, search, dashboard, alerts, rules, users
-import structlog
+from app.core.database import init_db, close_db, EFFECTIVE_DB_TARGET
+from app.api.routes import health, auth, ingest, search, dashboard, alerts, rules, users, aliases, stats
+from app.services.retention import start_retention_scheduler, stop_retention_scheduler
+from app.worker import run as worker_run
 
 settings = get_settings()
 
@@ -41,6 +43,7 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+startup_logger = logging.getLogger("uvicorn.error")
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -48,7 +51,15 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    logger.info("starting_up", env=settings.APP_ENV)
+    from datetime import datetime, timezone
+    app.state.startup_time = datetime.now(timezone.utc)
+    
+    startup_logger.info(
+        "starting_up env=%s db_target=%s worker_embedded=%s",
+        settings.APP_ENV,
+        EFFECTIVE_DB_TARGET,
+        settings.WORKER_EMBEDDED,
+    )
 
     await init_db()
 
@@ -72,9 +83,22 @@ async def lifespan(app: FastAPI):
 
     retention_scheduler = start_retention_scheduler()
 
+    # Background worker task: only when explicitly embedded. The default
+    # deployment runs a dedicated worker service, so the backend must not
+    # duplicate the alert sweep (which would double-evaluate every rule).
+    worker_task = None
+    if settings.WORKER_EMBEDDED:
+        worker_task = asyncio.create_task(worker_run())
+
     yield
 
     logger.info("shutting_down")
+    if worker_task is not None:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
     from app.services.retention import stop_retention_scheduler
 
     await stop_retention_scheduler(retention_scheduler)
@@ -134,11 +158,14 @@ async def rate_limit_middleware(request: Request, call_next):
 app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingest"])
+app.include_router(ingest.public_router, tags=["Ingest"])
 app.include_router(search.router, prefix="/api", tags=["Search"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
 app.include_router(alerts.router, prefix="/api", tags=["Alerts"])
 app.include_router(rules.router, prefix="/api", tags=["Rules"])
 app.include_router(users.router, prefix="/api", tags=["Users"])
+app.include_router(aliases.alias_router, tags=["Ingest Aliases"])
+app.include_router(stats.router, prefix="/api", tags=["Stats"])
 
 
 @app.get("/")

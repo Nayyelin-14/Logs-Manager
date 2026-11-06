@@ -39,35 +39,26 @@ export interface PaginatedUsersResponse {
 }
 
 export interface DashboardStats {
-  recentAlert: AlertTableProps[];
+  total_events: number;
+  failed_logins: number;
+  open_alerts: number;
+  active_sources: number;
   tenants: { tenant: string }[];
+  // Additional fields expected by frontend components (populated from stats endpoints)
   totalEvents: number;
   topIPs: { ip: string; count: number }[];
   topUsers: { user: string; count: number }[];
   topEventTypes: { type: string; count: number }[];
-  eventsBySource?: {
-    tenant: string | undefined;
-    timestamp: string;
-    _count: { id: number };
-    source: string;
-  }[];
-  alertsByDay?: {
-    tenant: string | undefined;
-    triggeredAt: string;
-    _count: { id: number };
-  }[];
-  alertsRuleByDay?: {
-    tenant: string | undefined;
-    createdAt: string;
-    _count: { id: number };
-  }[];
+  eventsBySource: { tenant: string | undefined; timestamp: string; _count: { id: number }; source: string }[];
+  alertsByDay: { tenant: string | undefined; triggeredAt: string; _count: { id: number } }[];
+  alertsRuleByDay: { tenant: string | undefined; createdAt: string; _count: { id: number } }[];
   severityCounts: { severity: number; count: number }[];
   eventsByTenant: { tenant: string; count: number }[];
   alertCountsByStatus: { status: string; count: number }[];
   alertCountsBySeverity: { severity: string; count: number }[];
   ruleCountsByEnabled: { enabled: boolean; count: number }[];
   sources: SourceData[];
-  tenant: string;
+  recentAlert: AlertTableProps[];
 }
 export interface PaginatedAlertsResponse {
   alerts: (AlertTableProps & { description: string; eventIds: string[]; rule: { name: string; description: string | null } })[];
@@ -123,6 +114,8 @@ export interface SecurityEventFilters {
   eventType: string | null;
   source: string | null;
   tenant: string | null;
+  user: string | null;
+  srcIp: string | null;
 }
 export interface RulesFilters {
   date: string;

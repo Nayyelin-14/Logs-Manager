@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     RETENTION_DAYS: int = 7
     RETENTION_SCHEDULE: str = "0 5 * * *"
 
+    # Worker
+    ALERT_SWEEP_INTERVAL: int = 30
+    WORKER_EMBEDDED: bool = False
+    SAAS_MODE: bool = False
+
     # CORS
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     

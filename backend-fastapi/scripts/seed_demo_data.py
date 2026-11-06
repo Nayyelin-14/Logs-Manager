@@ -9,6 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import asyncio
 import hashlib
+import os
 import secrets
 from sqlalchemy import select, func, cast, text
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,7 @@ from app.core.database import get_session, async_session_maker
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.alert import AlertRule, Alert
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 from app.core.security import hash_password
 from app.services.ingest_service import IngestionService
 from datetime import datetime, timedelta, timezone
@@ -33,14 +34,60 @@ def generate_api_key():
     return key, key_hash
 
 
+SEED_PASSWORD_ENV_VARS = {
+    "admin": "SEED_ADMIN_PASSWORD",
+    "viewerA": "SEED_VIEWER_A_PASSWORD",
+    "viewerB": "SEED_VIEWER_B_PASSWORD",
+}
+
+
+def resolve_seed_passwords() -> dict[str, str]:
+    """Resolve seed user passwords once.
+
+    SaaS mode: every SEED_*_PASSWORD must be set explicitly, otherwise refuse
+    to seed. Appliance mode: unset values are replaced with strong random
+    passwords, printed exactly once by main().
+    """
+    import os
+
+    saas_mode = os.environ.get("SAAS_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
+    passwords: dict[str, str] = {}
+    generated: dict[str, str] = {}
+    for user, env_var in SEED_PASSWORD_ENV_VARS.items():
+        value = os.environ.get(env_var)
+        if value:
+            passwords[user] = value
+            continue
+        if saas_mode:
+            raise RuntimeError(
+                f"{env_var} must be set when SAAS_MODE=true; refusing to seed with a default password."
+            )
+        passwords[user] = secrets.token_urlsafe(18)
+        generated[user] = passwords[user]
+
+    if generated:
+        print("=== GENERATED SEED PASSWORDS (shown once; save them now) ===")
+        for user, password in generated.items():
+            print(f"{user}: {password}")
+        print("=== END GENERATED SEED PASSWORDS ===", flush=True)
+    return passwords
+
+
 async def seed_demo_data():
     async for session in get_session():
         try:
             # 1. Create tenants table records
             print("Creating tenants...")
             
-            # Create demoa tenant
-            demoa_key, demoa_hash = generate_api_key()
+            # Create demoa tenant. When INGEST_API_KEY is configured, use it
+            # for demoa so compose/the acceptance script can authenticate
+            # deterministically instead of scraping a random key.
+            configured_key = os.environ.get("INGEST_API_KEY")
+            if configured_key:
+                demoa_key = configured_key
+                demoa_hash = hashlib.sha256(configured_key.encode()).hexdigest()
+            else:
+                demoa_key, demoa_hash = generate_api_key()
             demoa_result = await session.execute(
                 select(Tenant).where(Tenant.name == "demoa")
             )
@@ -54,7 +101,10 @@ async def seed_demo_data():
                 )
                 session.add(demoa_tenant)
                 await session.flush()
-            print(f"  demoa tenant created (API key shown once only!)")
+            elif configured_key:
+                demoa_tenant.api_key_hash = demoa_hash
+                demoa_tenant.is_active = True
+            print(f"  demoa tenant ready (API key shown once only!)")
 
             # Create demob tenant
             demob_key, demob_hash = generate_api_key()
@@ -76,18 +126,15 @@ async def seed_demo_data():
             await session.commit()
 
             # 2. Create users: admin (Admin, all tenants), viewerA (Viewer, demoa), viewerB (Viewer, demob)
-            admin_password = hash_password("Admin123!")
-            viewer_a_password = hash_password("ViewerA123!")
-            viewer_b_password = hash_password("ViewerB123!")
+            passwords = resolve_seed_passwords()
 
-            # Check if admin already exists
             admin_result = await session.execute(select(User).where(User.username == "admin"))
             admin = admin_result.scalar_one_or_none()
             if not admin:
                 admin = User(
                     username="admin",
                     email="admin@demo.local",
-                    password=admin_password,
+                    password=hash_password(passwords["admin"]),
                     role="ADMIN",
                     tenant=None,  # Admin has access to all tenants
                     status="ACTIVE",
@@ -95,14 +142,13 @@ async def seed_demo_data():
                 session.add(admin)
                 print("Created admin user")
 
-            # Check if viewerA already exists
             viewer_a_result = await session.execute(select(User).where(User.username == "viewerA"))
             viewer_a = viewer_a_result.scalar_one_or_none()
             if not viewer_a:
                 viewer_a = User(
                     username="viewerA",
                     email="viewerA@demo.local",
-                    password=viewer_a_password,
+                    password=hash_password(passwords["viewerA"]),
                     role="VIEWER",
                     tenant="demoa",
                     status="ACTIVE",
@@ -110,14 +156,13 @@ async def seed_demo_data():
                 session.add(viewer_a)
                 print("Created viewerA user")
 
-            # Check if viewerB already exists
             viewer_b_result = await session.execute(select(User).where(User.username == "viewerB"))
             viewer_b = viewer_b_result.scalar_one_or_none()
             if not viewer_b:
                 viewer_b = User(
                     username="viewerB",
                     email="viewerB@demo.local",
-                    password=viewer_b_password,
+                    password=hash_password(passwords["viewerB"]),
                     role="VIEWER",
                     tenant="demob",
                     status="ACTIVE",
@@ -133,7 +178,8 @@ async def seed_demo_data():
             print(f"demoa: {demoa_key}")
             print(f"demob: {demob_key}")
 
-            # 3. Create alert rule: Brute force - 5 failed logins from same src_ip within 5 min
+            # 3. Create alert rules (idempotent): 3 seed rules per assignment §7.4
+            # Rule 1: Failed logins ≥5 in 5 min per src_ip (all tenants, tenant='*')
             rule_result = await session.execute(
                 select(AlertRule).where(AlertRule.name == "Brute force: repeated failed logins")
             )
@@ -142,54 +188,110 @@ async def seed_demo_data():
                 rule = AlertRule(
                     id=uuid4().hex[:25],
                     name="Brute force: repeated failed logins",
-                    description="Triggers when 5+ failed logins from the same src_ip within 5 minutes",
-                    tenant="demoa",
+                    description="Triggers when 5+ failed logins from the same src_ip within 5 minutes (all tenants)",
+                    tenant="*",  # all tenants
                     enabled=True,
                     severity="high",
+                    filter={"outcome": "failure", "action": "login"},
+                    group_by="src_ip",
+                    threshold=5,
+                    window_minutes=5,
+                    cooldown_minutes=15,
+                    notify={
+                        "webhook_url": os.environ.get(
+                            "ALERT_WEBHOOK_URL", "http://webhook-receiver:8000/webhook"
+                        ),
+                        "cooldown_minutes": 15,
+                    },
                     conditions=[
                         {
                             "type": "repeated_failures",
                             "groupBy": "src_ip",
                             "threshold": 5,
                             "windowSeconds": 300,
+                            "cooldownSeconds": 900,
                         }
                     ],
                 )
                 session.add(rule)
-                print("Created brute-force alert rule for demoa")
-                await session.commit()
+                print("Created brute-force alert rule (all tenants)")
             else:
                 print("Brute-force alert rule already exists")
-            
-            # Create rule for demob tenant too
-            rule_b_result = await session.execute(
-                select(AlertRule).where(AlertRule.name == "Brute force: repeated failed logins (demob)")
+
+            # Rule 2: CrowdStrike malware_detected severity≥8 (threshold 1, all tenants)
+            rule_malware_result = await session.execute(
+                select(AlertRule).where(AlertRule.name == "CrowdStrike malware detected")
             )
-            rule_b = rule_b_result.scalar_one_or_none()
-            if not rule_b:
-                rule_b = AlertRule(
+            rule_malware = rule_malware_result.scalar_one_or_none()
+            if not rule_malware:
+                rule_malware = AlertRule(
                     id=uuid4().hex[:25],
-                    name="Brute force: repeated failed logins (demob)",
-                    description="Triggers when 5+ failed logins from the same src_ip within 5 minutes",
-                    tenant="demob",
+                    name="CrowdStrike malware detected",
+                    description="Triggers on CrowdStrike malware_detected with severity >= 8 (all tenants)",
+                    tenant="*",
                     enabled=True,
-                    severity="high",
+                    severity="critical",
+                    filter={"event_type": "malware_detected", "severity_gte": 8},
+                    group_by="src_ip",
+                    threshold=1,
+                    window_minutes=5,
+                    cooldown_minutes=15,
                     conditions=[
                         {
-                            "type": "repeated_failures",
+                            "type": "event_type",
+                            "value": "malware_detected",
                             "groupBy": "src_ip",
-                            "threshold": 5,
+                            "threshold": 1,
                             "windowSeconds": 300,
+                            "filters": {"severity_gte": 8},
                         }
                     ],
                 )
-                session.add(rule_b)
-                print("Created brute-force alert rule for demob")
-                await session.commit()
+                session.add(rule_malware)
+                print("Created CrowdStrike malware alert rule (all tenants)")
+            else:
+                print("CrowdStrike malware alert rule already exists")
+
+            # Rule 3: AWS CreateUser / AttachUserPolicy sensitive IAM change (all tenants)
+            rule_iam_result = await session.execute(
+                select(AlertRule).where(AlertRule.name == "AWS sensitive IAM change")
+            )
+            rule_iam = rule_iam_result.scalar_one_or_none()
+            if not rule_iam:
+                rule_iam = AlertRule(
+                    id=uuid4().hex[:25],
+                    name="AWS sensitive IAM change",
+                    description="Triggers on AWS CreateUser or AttachUserPolicy events (all tenants)",
+                    tenant="*",
+                    enabled=True,
+                    severity="high",
+                    filter={"event_type": "CreateUser", "source": "aws"},
+                    group_by="src_ip",
+                    threshold=1,
+                    window_minutes=5,
+                    cooldown_minutes=15,
+                    conditions=[
+                        {
+                            "type": "event_type",
+                            "value": "CreateUser",
+                            "groupBy": "src_ip",
+                            "threshold": 1,
+                            "windowSeconds": 300,
+                            "filters": {"source": "aws"},
+                        }
+                    ],
+                )
+                session.add(rule_iam)
+                print("Created AWS IAM change alert rule (all tenants)")
+            else:
+                print("AWS IAM change alert rule already exists")
+
+            await session.commit()
 
             # 4. Idempotent marker check: if seeded events already exist, skip ingestion.
+            # Check the events table for the _seed marker in raw column
             existing_result = await session.execute(
-                text("SELECT id FROM security_logs WHERE raw->>'_seed' = 'true' LIMIT 1")
+                text("SELECT id FROM events WHERE raw->>'_seed' = 'true' LIMIT 1")
             )
             already_seeded = existing_result.scalars().first() is not None
             if already_seeded:

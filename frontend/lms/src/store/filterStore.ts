@@ -43,6 +43,8 @@ export const useSecurityEventFilterStore =
     eventType: null,
     source: null,
     tenant: null,
+    user: null,
+    srcIp: null,
   });
 export const useRuleFilterStore = createFilterStore<RulesFilters>({
   date: "",

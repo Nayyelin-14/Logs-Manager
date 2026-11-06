@@ -1,0 +1,230 @@
+services:
+  ###############################################################################
+  # Caddy — reverse proxy, TLS termination, serves frontend
+  ###############################################################################
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/metrics"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - lms
+
+  ###############################################################################
+  # Backend — FastAPI API
+  ###############################################################################
+  backend:
+    build:
+      context: ./backend-fastapi
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - APP_ENV=${APP_ENV:-development}
+      - APP_HOST=0.0.0.0
+      - APP_PORT=4500
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_POOL=queue
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - ACCESS_TOKEN_SECRET=${ACCESS_TOKEN_SECRET}
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=15
+      - REFRESH_TOKEN_EXPIRE_DAYS=30
+      - JWT_ALGORITHM=HS256
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - COOKIE_SAME_SITE=${COOKIE_SAME_SITE:-lax}
+      - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      - OTP_EMAIL_ENABLED=${OTP_EMAIL_ENABLED:-true}
+      - ALERT_EMAIL_ENABLED=${ALERT_EMAIL_ENABLED:-true}
+      - INGEST_API_KEY=${INGEST_API_KEY}
+      - INGEST_API_USERNAME=log-forwarder
+      - INGEST_DEFAULT_TENANT=${INGEST_DEFAULT_TENANT:-demoA}
+      - INGEST_BATCH_MAX_EVENTS=1000
+      - INGEST_MAX_FILE_BYTES=10485760
+      - SYSLOG_ENABLED=false
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
+      - RETENTION_SCHEDULE=0 5 * * *
+      - ALERT_SWEEP_INTERVAL=30
+      - WORKER_EMBEDDED=${WORKER_EMBEDDED:-false}
+      - SEED_ADMIN_PASSWORD=${SEED_ADMIN_PASSWORD:-}
+      - SEED_VIEWER_A_PASSWORD=${SEED_VIEWER_A_PASSWORD:-}
+      - SEED_VIEWER_B_PASSWORD=${SEED_VIEWER_B_PASSWORD:-}
+      - SAAS_MODE=${SAAS_MODE:-false}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-http://webhook-receiver:8000/webhook}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:5173"]}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-["localhost", "127.0.0.1"]}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4500/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    command: uvicorn app.main:app --host 0.0.0.0 --port 4500
+    networks:
+      - lms
+
+  ###############################################################################
+  # Ingest — syslog UDP/TCP listener (port 514 → 5514)
+  ###############################################################################
+  ingest:
+    build:
+      context: .
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - ACCESS_TOKEN_SECRET=${ACCESS_TOKEN_SECRET}
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET}
+      - SYSLOG_ENABLED=true
+      - SYSLOG_TENANT=${SYSLOG_TENANT:-demoA}
+      - SYSLOG_SOURCE=${SYSLOG_SOURCE:-firewall}
+      - SYSLOG_UDP_PORT=5514
+      - SYSLOG_TCP_PORT=5514
+      - SYSLOG_TIMEZONE=UTC
+      - INGEST_DEFAULT_TENANT=${INGEST_DEFAULT_TENANT:-demoA}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 5514)); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - lms
+
+  ###############################################################################
+  # Worker — alert sweep (30s) + retention maintenance (hourly)
+  ###############################################################################
+  worker:
+    build:
+      context: ./backend-fastapi
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - ACCESS_TOKEN_SECRET=${ACCESS_TOKEN_SECRET}
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET}
+      - ALERT_SWEEP_INTERVAL=30
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
+    command: python3 -m app.worker
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-m", "scripts.healthcheck_db"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lms
+
+  ###############################################################################
+  # Database — PostgreSQL 16
+  ###############################################################################
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logs}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-logs_manager}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logs} -d ${POSTGRES_DB:-logs_manager}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - lms
+
+  ###############################################################################
+  # Redis — cache + email queue (arq)
+  ###############################################################################
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks:
+      - lms
+
+  ###############################################################################
+  # Webhook receiver — logs incoming alert webhooks (demo target)
+  ###############################################################################
+  webhook-receiver:
+    build:
+      context: .
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - DATABASE_URL=${DATABASE_URL}
+    command: ["python3", "ingest/webhook_receiver.py"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - lms
+
+  ###############################################################################
+  # Frontend — React UI (built with nginx)
+  ###############################################################################
+  frontend:
+    image: logs-manager-frontend:local
+    build:
+      context: ./frontend/lms
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - lms
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  lms:
+    driver: bridge

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
 Read-only schema verification script.
-Connects to Neon PostgreSQL and compares SQLAlchemy models with actual database schema.
+Connects to PostgreSQL and compares SQLAlchemy models with actual database schema.
 Does NOT modify the database - only inspects and reports.
 """
 import asyncio
 import os
 import sys
-import ssl
-import urllib.parse
 from typing import Dict, Set, List, Tuple
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -19,44 +17,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.base import Base
 from app.models.user import User
 from app.models.alert import AlertRule, Alert, EmailNotification
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 from app.models.otp import Otp
+from app.core.db_engine import create_engine
 
 
 def _build_engine(database_url: str):
-    """Build engine with proper SSL configuration for Neon/asyncpg (matching app/core/database.py)."""
-    parsed = urllib.parse.urlparse(database_url)
-    query_params = urllib.parse.parse_qs(parsed.query)
-    
-    connect_args = {}
-    sslmode = query_params.get("sslmode", ["require"])[0]
-    if sslmode in ("require", "verify-ca", "verify-full"):
-        ssl_context = ssl.create_default_context()
-        if sslmode == "verify-full":
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        elif sslmode == "verify-ca":
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        else:  # require - verify certificates but don't check hostname for pooled connections
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-        connect_args["ssl"] = ssl_context
-    
-    # Remove sslmode and channel_binding from URL since we handle SSL via connect_args
-    # asyncpg doesn't accept these as connection arguments
-    clean_query = {k: v for k, v in query_params.items() if k not in ("sslmode", "channel_binding")}
-    clean_query_str = urllib.parse.urlencode(clean_query, doseq=True)
-    clean_url = urllib.parse.urlunparse((
-        parsed.scheme, parsed.netloc, parsed.path, parsed.params, clean_query_str, parsed.fragment
-    ))
-    
-    return create_async_engine(
-        clean_url,
-        echo=False,
-        pool_pre_ping=True,
-        connect_args=connect_args,
-    )
+    """Build engine with proper SSL configuration (matching app/core/db_engine.py)."""
+    return create_engine(database_url)
 
 
 async def get_db_schema(engine) -> Dict:

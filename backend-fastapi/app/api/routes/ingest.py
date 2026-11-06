@@ -9,7 +9,7 @@ from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant, verify_api_key, require_admin
 from app.core.exceptions import ValidationError
 from app.core.security import TokenPayload
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 from app.models.alert import Alert, AlertRule, EmailNotification, EmailType, EmailStatus
 from app.models.user import User
 from app.models.tenant import Tenant
@@ -23,6 +23,8 @@ import hashlib
 import uuid
 
 router = APIRouter()
+# Unprefixed aliases for the assignment's exact paths: POST /ingest, /ingest/batch, /ingest/file.
+public_router = APIRouter(include_in_schema=False)
 settings = get_settings()
 
 
@@ -85,6 +87,7 @@ class IngestResponse(BaseModel):
     errors: List[dict] = []
 
 @router.post("/ingest", response_model=IngestResponse)
+@public_router.post("/ingest", response_model=IngestResponse)
 async def ingest_single_event(
     request: IngestEventRequest,
     session: AsyncSession = Depends(get_session),
@@ -114,6 +117,7 @@ async def ingest_single_event(
     )
 
 @router.post("/ingest/batch", response_model=IngestResponse)
+@public_router.post("/ingest/batch", response_model=IngestResponse)
 async def ingest_batch_events(
     request: IngestBatchRequest,
     session: AsyncSession = Depends(get_session),
@@ -149,6 +153,7 @@ async def ingest_batch_events(
     )
 
 @router.post("/ingest/file", response_model=IngestResponse)
+@public_router.post("/ingest/file", response_model=IngestResponse)
 async def ingest_file(
     file: UploadFile = File(...),
     source: Optional[str] = Form(None),
@@ -568,6 +573,43 @@ async def delete_alert_rule(
     return {"message": "Alert rule deleted"}
 
 
+@router.post("/rules/{rule_id}/test", response_model=dict)
+async def test_alert_rule(
+    rule_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Dry-run: returns what WOULD trigger for this rule right now.
+    Creates nothing, sends nothing. Admin only.
+    """
+    result = await session.execute(
+        select(AlertRule).where(AlertRule.id == rule_id)
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    if not owns_tenant(current_user, rule.tenant):
+        raise HTTPException(status_code=403, detail="Cannot test rule for different tenant")
+
+    from app.services.alerting.evaluator import evaluate_rule
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    try:
+        triggered = await evaluate_rule(session, rule, now)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Rule evaluation failed: {exc}")
+
+    return {
+        "rule_id": rule.id,
+        "rule_name": rule.name,
+        "tenant": rule.tenant,
+        "evaluated_at": now.isoformat(),
+        "would_trigger": len(triggered) > 0,
+        "matches": triggered,
+    }
+
+
 # =============================================================================
 # User Management Endpoints (Admin only)
 # =============================================================================
@@ -780,7 +822,7 @@ async def get_all_data(
         return [model.tenant == effective_tenant] if effective_tenant else []
 
     total_events = await session.execute(
-        select(func.count()).select_from(SecurityEvent).where(*tenant_filter(SecurityEvent))
+        select(func.count()).select_from(Event).where(*tenant_filter(Event))
     )
     total_alerts = await session.execute(
         select(func.count()).select_from(Alert).where(*tenant_filter(Alert))
@@ -802,7 +844,7 @@ async def get_all_data(
     }
     if effective_tenant is None:
         by_tenant = await session.execute(
-            select(SecurityEvent.tenant, func.count()).group_by(SecurityEvent.tenant)
+            select(Event.tenant, func.count()).group_by(Event.tenant)
         )
         # Frontend expects "tenants" as array of objects with "tenant" property
         result["data"]["tenants"] = [{"tenant": row[0]} for row in by_tenant if row[0]]

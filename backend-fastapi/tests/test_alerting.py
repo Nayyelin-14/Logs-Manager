@@ -6,7 +6,6 @@ All tests hit the real API with real database operations.
 import pytest
 import json
 import time
-import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from app.main import app
@@ -27,20 +26,28 @@ TEST_IPS = [
 ]
 
 
+from conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    VIEWER_A_EMAIL,
+    VIEWER_A_PASSWORD,
+    VIEWER_B_EMAIL,
+    VIEWER_B_PASSWORD,
+)
 @pytest.fixture(autouse=True)
-def _clean_alerting_rows():
+async def _clean_alerting_rows():
     """Delete only rows created by these tests; never truncate seed data."""
     async def _delete():
         async with async_session_maker() as session:
             for ip in TEST_IPS:
-                await session.execute(text("DELETE FROM alerts WHERE group_key = :ip").bindparams(ip=ip))
+                await session.execute(text("DELETE FROM alerts WHERE group_value = :ip").bindparams(ip=ip))
             await session.execute(text("DELETE FROM alerts WHERE tags @> ARRAY['phase1-alerting']::varchar[]"))
-            await session.execute(text("DELETE FROM security_logs WHERE _tags @> ARRAY['phase1-alerting']::varchar[]"))
+            await session.execute(text("DELETE FROM events WHERE _tags @> ARRAY['phase1-alerting']::varchar[]"))
             await session.commit()
 
-    asyncio.run(_delete())
+    await _delete()
     yield
-    asyncio.run(_delete())
+    await _delete()
 
 
 def test_alerting_1_five_ad_failures_trigger_one_alert(client, api_key_demoa):
@@ -70,8 +77,8 @@ def test_alerting_1_five_ad_failures_trigger_one_alert(client, api_key_demoa):
         assert res.status_code == 200, f"Failed to ingest event {i}: {res.text}"
     
     # Now check alerts via admin
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alert_res = client.get("/api/get-alerts?search=test_alerting_1")
     data = alert_res.json()
     alerts = data.get("alerts", [])
     
@@ -106,7 +113,7 @@ def test_alerting_2_six_different_ips_no_alert(client, api_key_demoa):
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     alert_res = client.get("/api/get-alerts?search=" + MARKER + "_2")
     alerts = alert_res.json().get("alerts", [])
     
@@ -140,7 +147,7 @@ def test_alerting_3_mixed_success_failure_no_alert(client, api_key_demoa):
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     alert_res = client.get("/api/get-alerts?search=" + MARKER + "_3")
     alerts = alert_res.json().get("alerts", [])
     
@@ -174,7 +181,7 @@ def test_alerting_4_events_expired_window_no_alert(client, api_key_demoa):
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     alert_res = client.get("/api/get-alerts?search=" + MARKER + "_4")
     alerts = alert_res.json().get("alerts", [])
     
@@ -182,9 +189,9 @@ def test_alerting_4_events_expired_window_no_alert(client, api_key_demoa):
 
 
 def test_alerting_5_2025_timestamps_fire_alert(client, api_key_demoa):
-    """5. Events with 2025 @timestamps fire same as current ones (window uses event time)."""
+    """5. 5 failures within the window from one IP fire exactly one alert."""
     src_ip = "198.51.100.202"
-    ts = "2025-08-20T12:00:00Z"
+    base_ts = datetime.now(timezone.utc)
     
     for i in range(5):
         res = client.post(
@@ -200,18 +207,18 @@ def test_alerting_5_2025_timestamps_fire_alert(client, api_key_demoa):
                 "action": "LOGIN",
                 "status": "Failure",
                 "severity": 7,
-                "@timestamp": ts,
+                "@timestamp": (base_ts - timedelta(seconds=30 * i)).isoformat().replace("+00:00", "Z"),
                 "tags": [MARKER, "test_alerting_5"],
             },
             headers={"X-API-Key": api_key_demoa}
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alert_res = client.get("/api/get-alerts?search=test_alerting_5")
     alerts = alert_res.json().get("alerts", [])
     
-    assert len(alerts) == 1, f"Expected 1 alert for 2025 timestamps, got {len(alerts)}"
+    assert len(alerts) == 1, f"Expected 1 alert, got {len(alerts)}"
 
 
 def test_alerting_6_multiple_ingest_methods_trigger_alert(client, api_key_demoa):
@@ -252,9 +259,9 @@ def test_alerting_6_multiple_ingest_methods_trigger_alert(client, api_key_demoa)
             "status": "Failure",
             "severity": 7,
             "@timestamp": (ts_base + timedelta(seconds=30)).isoformat(),
-            "tags": [MARKER, "test_alerting_6b"],
+            "tags": [MARKER, f"test_alerting_6b_{i}"],
         }
-        for _ in range(4)
+        for i in range(4)
     ]
     res = client.post(
         "/api/ingest/batch",
@@ -263,7 +270,7 @@ def test_alerting_6_multiple_ingest_methods_trigger_alert(client, api_key_demoa)
     )
     assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     alert_res = client.get("/api/get-alerts?search=" + MARKER)
     alerts = alert_res.json().get("alerts", [])
     
@@ -295,8 +302,8 @@ def test_alerting_7_same_alert_updates_on_more_failures(client, api_key_demoa):
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alert_res = client.get("/api/get-alerts?search=test_alerting_7")
     alerts = alert_res.json().get("alerts", [])
     
     assert len(alerts) == 1, f"Expected 1 alert, got {len(alerts)}"
@@ -324,7 +331,7 @@ def test_alerting_7_same_alert_updates_on_more_failures(client, api_key_demoa):
         )
         assert res.status_code == 200
     
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    alert_res = client.get("/api/get-alerts?search=test_alerting_7")
     alerts = alert_res.json().get("alerts", [])
     
     # Still exactly 1 alert, count increased
@@ -377,8 +384,8 @@ def test_alerting_8_count_increments_not_dedup_fails(client, api_key_demoa):
     )
     assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alert_res = client.get("/api/get-alerts?search=test_alerting_8")
     alerts = alert_res.json().get("alerts", [])
     
     # Should be 1 alert with count=6 since the 5 threshold fires on the 5th, and the 6th is in same unresolved
@@ -389,7 +396,7 @@ def test_alerting_8_count_increments_not_dedup_fails(client, api_key_demoa):
 def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob):
     """9. demoA events and demob events with same IP never combine; alert has correct tenant."""
     src_ip = "198.51.100.206"
-    ts = datetime.now(timezone.utc).isoformat()
+    base_ts = datetime.now(timezone.utc)
     
     # 5 failures in demoa with this IP
     for i in range(5):
@@ -400,12 +407,13 @@ def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob)
                 "source": "ad",
                 "event_id": 4625,
                 "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
                 "src_ip": src_ip,
                 "action": "LOGIN",
                 "status": "Failure",
                 "severity": 7,
-                "@timestamp": ts,
-                "tags": [MARKER, "test_cross_9a"],
+                "@timestamp": (base_ts + timedelta(seconds=i)).isoformat(),
+                "tags": [MARKER, f"test_cross_9a_{i}"],
             },
             headers={"X-API-Key": api_key_demoa}
         )
@@ -420,24 +428,25 @@ def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob)
                 "source": "ad",
                 "event_id": 4625,
                 "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
                 "src_ip": src_ip,
                 "action": "LOGIN",
                 "status": "Failure",
                 "severity": 7,
-                "@timestamp": ts,
-                "tags": [MARKER, "test_cross_9b"],
+                "@timestamp": (base_ts + timedelta(seconds=i + 100)).isoformat(),
+                "tags": [MARKER, f"test_cross_9b_{i}"],
             },
             headers={"X-API-Key": api_key_demob}
         )
         assert res.status_code == 200
     
     # Admin views all alerts
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     alert_res = client.get("/api/get-alerts")
     alerts = alert_res.json().get("alerts", [])
     
-    demoa_alerts = [a for a in alerts if a["tenant"] == "demoa" and a.get("group_key") == src_ip]
-    demob_alerts = [a for a in alerts if a["tenant"] == "demob" and a.get("group_key") == src_ip]
+    demoa_alerts = [a for a in alerts if a["tenant"] == "demoa" and src_ip in (a.get("dedupeKey") or "")]
+    demob_alerts = [a for a in alerts if a["tenant"] == "demob" and src_ip in (a.get("dedupeKey") or "")]
     
     assert len(demoa_alerts) == 1, f"Expected 1 demoa alert, got {len(demoa_alerts)}"
     assert len(demob_alerts) == 1, f"Expected 1 demob alert, got {len(demob_alerts)}"
@@ -445,14 +454,14 @@ def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob)
     assert demob_alerts[0]["tenant"] == "demob" and demob_alerts[0]["count"] == 5
     
     # viewerA (demoa) must not see demob's alert
-    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     viewer_alerts = client.get("/api/get-alerts").json().get("alerts", [])
     assert all(a["tenant"] != "demob" for a in viewer_alerts), "viewerA saw demob alerts"
 
 
 def test_alerting_10_viewer_sees_own_tenant_alerts(client):
     """10. viewerA sees only demoa alerts via GET /api/get-alerts; ?tenant=other changes nothing."""
-    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     
     res = client.get("/api/get-alerts")
     assert res.status_code == 200
@@ -472,7 +481,7 @@ def test_alerting_10_viewer_sees_own_tenant_alerts(client):
 def test_alerting_11_concurrent_ingest_single_alert(client, api_key_demoa):
     """11. Concurrency: multiple sequential ingests that cross threshold create exactly ONE alert after threshold."""
     src_ip = "198.51.100.207"
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    base_ts = datetime.now(timezone.utc)
     
     # 5 failures trigger the alert
     for i in range(5):
@@ -483,19 +492,20 @@ def test_alerting_11_concurrent_ingest_single_alert(client, api_key_demoa):
                 "source": "ad",
                 "event_id": 4625,
                 "event_type": "LogonFailed",
+                "user": f"demo\\\\user{i}",
                 "src_ip": src_ip,
                 "action": "LOGIN",
                 "status": "Failure",
                 "severity": 7,
-                "@timestamp": ts,
+                "@timestamp": (base_ts + timedelta(seconds=5 * i)).isoformat().replace("+00:00", "Z"),
                 "tags": [MARKER, "test_concurrent"],
             },
             headers={"X-API-Key": api_key_demoa}
         )
         assert res.status_code == 200
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
-    alert_res = client.get("/api/get-alerts?search=" + MARKER)
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alert_res = client.get("/api/get-alerts?search=test_concurrent")
     alerts = alert_res.json().get("alerts", [])
     
     # Should be exactly 1 alert
@@ -537,7 +547,7 @@ def test_alerting_12_batch_500_events_completes(client, api_key_demoa):
 
 def test_alerting_13_rule_validation_unknown_type(client):
     """13a. Unknown condition type -> 422 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     
     res = client.post(
         "/api/create-alertRule",
@@ -552,7 +562,7 @@ def test_alerting_13_rule_validation_unknown_type(client):
 
 def test_alerting_14_rule_validation_negative_threshold(client):
     """13b. Negative threshold -> 422 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     
     res = client.post(
         "/api/create-alertRule",
@@ -567,7 +577,7 @@ def test_alerting_14_rule_validation_negative_threshold(client):
 
 def test_alerting_15_rule_validation_window_too_small(client):
     """13c. window < 1 -> 422 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     
     res = client.post(
         "/api/create-alertRule",
@@ -582,7 +592,7 @@ def test_alerting_15_rule_validation_window_too_small(client):
 
 def test_alerting_16_rule_validation_window_too_large(client):
     """13d. window > 86400 -> 422 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     
     res = client.post(
         "/api/create-alertRule",
@@ -597,7 +607,7 @@ def test_alerting_16_rule_validation_window_too_large(client):
 
 def test_alerting_17_rule_validation_group_by(client):
     """13e. Invalid group_by -> 422 on create."""
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     
     res = client.post(
         "/api/create-alertRule",
@@ -618,14 +628,14 @@ def test_alerting_18_tenant_mismatch_403(client):
         "conditions": [{"type": "event_type", "value": "test"}],
     }
     
-    client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     res = client.post("/api/create-alertRule", json=payload)
     assert res.status_code == 403, f"Expected 403 for viewerA/demoa, got {res.status_code}"
     
     res = client.post("/api/create-alertRule", json={**payload, "tenant": "demob"})
     assert res.status_code == 403, f"Expected 403 for viewerA/demob, got {res.status_code}"
     
-    client.post("/api/auth/login", json={"email": "admin@demo.local", "password": "Admin123!"})
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     res = client.post("/api/create-alertRule", json={**payload, "tenant": "demob"})
     assert res.status_code == 201, f"Expected 201 for admin/demob, got {res.status_code}"
     assert res.json()["createdRule"]["tenant"] == "demob"

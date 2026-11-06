@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
 from app.core.security import TokenPayload
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 from app.models.alert import Alert, AlertRule
 
 router = APIRouter()
@@ -75,42 +75,42 @@ async def get_dashboard_stats(
     
     # Parallel queries for performance
     total_events = await session.execute(
-        select(func.count()).select_from(SecurityEvent).where(
-            SecurityEvent.tenant == tenant,
-            SecurityEvent.timestamp.between(start_date, end_date)
-        ) if tenant else select(func.count()).select_from(SecurityEvent).where(
-            SecurityEvent.timestamp.between(start_date, end_date)
+        select(func.count()).select_from(Event).where(
+            Event.tenant == tenant,
+            Event.ts.between(start_date, end_date)
+        ) if tenant else select(func.count()).select_from(Event).where(
+            Event.ts.between(start_date, end_date)
         )
     )
     
     # Top IPs
     top_ips = await session.execute(
-        select(SecurityEvent.src_ip, func.count().label("count"))
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .where(SecurityEvent.src_ip.isnot(None))
-        .group_by(SecurityEvent.src_ip)
+        select(Event.src_ip, func.count().label("count"))
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .where(Event.src_ip.isnot(None))
+        .group_by(Event.src_ip)
         .order_by(desc("count"))
         .limit(10)
     )
     
     # Top Users
     top_users = await session.execute(
-        select(SecurityEvent.user, func.count().label("count"))
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .where(SecurityEvent.user.isnot(None))
-        .group_by(SecurityEvent.user)
+        select(Event.user_name, func.count().label("count"))
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .where(Event.user_name.isnot(None))
+        .group_by(Event.user_name)
         .order_by(desc("count"))
         .limit(10)
     )
     
     # Top Event Types
     top_event_types = await session.execute(
-        select(SecurityEvent.event_type, func.count().label("count"))
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .group_by(SecurityEvent.event_type)
+        select(Event.event_type, func.count().label("count"))
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .group_by(Event.event_type)
         .order_by(desc("count"))
         .limit(10)
     )
@@ -118,14 +118,14 @@ async def get_dashboard_stats(
     # Events by source per day (used for the daily volume series)
     events_by_source = await session.execute(
         select(
-            SecurityEvent.tenant,
-            func.date_trunc("day", SecurityEvent.timestamp).label("day"),
-            SecurityEvent.source,
+            Event.tenant,
+            func.date_trunc("day", Event.ts).label("day"),
+            Event.source,
             func.count().label("count"),
         )
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .group_by(SecurityEvent.tenant, "day", SecurityEvent.source)
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .group_by(Event.tenant, "day", Event.source)
         .order_by("day")
     )
     
@@ -139,27 +139,27 @@ async def get_dashboard_stats(
     
     # Sources
     sources = await session.execute(
-        select(SecurityEvent.source, func.count().label("count"), func.max(SecurityEvent.timestamp).label("latest"))
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .group_by(SecurityEvent.source)
+        select(Event.source, func.count().label("count"), func.max(Event.ts).label("latest"))
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .group_by(Event.source)
         .order_by(desc("count"))
     )
     
     # Severity counts
     severity_counts = await session.execute(
-        select(SecurityEvent.severity, func.count().label("count"))
-        .where(SecurityEvent.tenant == tenant if tenant else True)
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .group_by(SecurityEvent.severity)
-        .order_by(SecurityEvent.severity)
+        select(Event.severity, func.count().label("count"))
+        .where(Event.tenant == tenant if tenant else True)
+        .where(Event.ts.between(start_date, end_date))
+        .group_by(Event.severity)
+        .order_by(Event.severity)
     )
     
     # Events by tenant
     events_by_tenant = await session.execute(
-        select(SecurityEvent.tenant, func.count().label("count"))
-        .where(SecurityEvent.timestamp.between(start_date, end_date))
-        .group_by(SecurityEvent.tenant)
+        select(Event.tenant, func.count().label("count"))
+        .where(Event.ts.between(start_date, end_date))
+        .group_by(Event.tenant)
         .order_by(desc("count"))
         .limit(8)
     )
@@ -216,7 +216,7 @@ async def get_dashboard_stats(
 
     # Tenants
     tenants = await session.execute(
-        select(SecurityEvent.tenant).distinct().where(SecurityEvent.tenant == tenant if tenant else True)
+        select(Event.tenant).distinct().where(Event.tenant == tenant if tenant else True)
     )
     
     return {
@@ -228,7 +228,7 @@ async def get_dashboard_stats(
             {
                 "tenant": row[0],
                 "timestamp": _iso_utc(row[1]),
-                "source": row[2].value if row[2] else None,
+                "source": row[2].value if hasattr(row[2], "value") else row[2],
                 "_count": {"id": row[3]},
             }
             for row in events_by_source
@@ -262,7 +262,7 @@ async def get_dashboard_stats(
         ],
         "severityCounts": [{"severity": row[0], "count": row[1]} for row in severity_counts],
         "sources": [
-            {"source": row[0].value if row[0] else None, "_count": row[1], "latestEventAt": _iso_utc(row[2])}
+            {"source": row[0].value if hasattr(row[0], "value") else row[0], "_count": row[1], "latestEventAt": _iso_utc(row[2])}
             for row in sources
         ],
         "eventsByTenant": [{"tenant": row[0], "count": row[1]} for row in events_by_tenant],

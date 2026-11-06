@@ -1,136 +1,250 @@
-# Log Manager - Appliance Deployment
-
-## Prerequisites
-
-- Ubuntu 22.04+ or any Linux/macOS with Docker and Docker Compose installed
-- 4 vCPU, 8 GB RAM, 40 GB disk minimum
-- Open ports: 80/443 (HTTP/HTTPS), 514 (Syslog UDP+TCP)
-
-## Quick Start
-
-```bash
-# 1. Clone the repository
-git clone <repository-url>
-cd logs-manager
-
-# 2. Copy environment file
-cp .env.example .env
-# Edit .env with your settings (or use defaults)
-
-# 3. Start the stack
-make up
-
-# 4. Wait for services to start (~30 seconds)
-make ps
-
-# 5. Seed the database with demo data
-make seed
-```
-
-## What `make seed` does
-
-Creates:
-- **Tenants**: demoA, demoB (implicit via user assignments)
-- **Users**:
-  - `admin` (password: `Admin123!`, role: ADMIN, all tenants)
-  - `viewerA` (password: `ViewerA123!`, role: VIEWER, tenant: demoA)
-  - `viewerB` (password: `ViewerB123!`, role: VIEWER, tenant: demoB)
-- **Alert rule**: "Brute force: repeated failed logins" (enabled, threshold=5, window=300s)
-- **Sample events**: Sends sample logs through the ingestion pipeline
-
-## Sending Test Syslog Messages
-
-### UDP
-```bash
-echo '<134>Oct 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=DNS blocked policy=Block-DNS' | nc -u -w1 localhost 514
-```
-
-### TCP
-```bash
-echo '<134>Oct 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=DNS blocked policy=Block-DNS' | nc localhost 514
-```
-
-### Using logger command
-```bash
-logger -n localhost -P 514 -d "134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=DNS blocked policy=Block-DNS"
-```
-
-## Verification
-
-- **Check events in UI**: Visit `http://localhost:4500/search` and search for `source:firewall`
-- **Check alerts**: Visit `http://localhost:4500/alerts` - should show any triggered alerts
-- **Test RBAC**: Login as `viewerA` (`demoA-key` API key) and verify only demoA events are visible
-- **Test ingestion**: `curl -X POST http://localhost:4500/ingest -H "X-API-Key: demoA-key" -H "Content-Type: application/json" -d @samples/api_login_failed.json`
-
-## Service Ports
-
-| Service | Host Port | Container Port |
-|---------|-----------|----------------|
-| Backend API | 4500 | 4500 |
-| Syslog UDP | 514 | 514 |
-| Syslog TCP | 514 | 514/TCP |
-| Frontend | 8080 | 80 |
-| PostgreSQL | (internal) | 5432 |
-| Redis | (internal) | 6379 |
-| Caddy HTTPS | (self-signed) | 443 |
-
-## TLS (Self-Signed for Appliance)
-
-The appliance runs HTTP only by default. To enable HTTPS:
-
-1. Generate a self-signed certificate:
-```bash
-openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
-```
-
-2. Place cert.pem and key.pem in the appropriate directory (refer to Caddyfile or Nginx config)
-
-3. Update the frontend VITE_API_URL to use `https://localhost:4500/api`
-
-Note: Modern browsers will show a "Your connection is not private" warning for self-signed certs. Accept the risk to proceed.
-
-## Default Logins
-
-| Username | Password | Role | Tenant |
-|----------|----------|------|--------|
-| admin | Admin123! | ADMIN | All |
-| viewerA | ViewerA123! | VIEWER | demoA |
-| viewerB | ViewerB123! | VIEWER | demoB |
-
-## Making and Sending Sample Logs
-
-### Syslog messages (from samples/)
-```bash
-# Firewall syslog
-bash samples/send_syslog.sh udp samples/syslog_firewall.log
-
-# Router syslog  
-bash samples/send_syslog.sh network samples/syslog_network.log
-
-# Or use logger command
-bash samples/send_syslog.sh logger samples/syslog_firewall.log
-```
-
-### HTTP API (from samples/)
-```bash
-curl -X POST http://localhost:4500/ingest -H "X-API-Key: demoA-key" \
-  -H "Content-Type: application/json" \
-  -d @samples/api_login_failed.json
-```
-
-### File upload (from samples/)
-```bash
-curl -F "file=@samples/aws_cloudtrail.json" -F "source=aws" http://localhost:4500/ingest/file
-```
-
-### Trigger alert (6 failed logins from same IP)
-```bash
-bash samples/trigger_alert.sh
-```
-
-## Cleanup
-
-```bash
-make down   # Stop containers (keeps data volumes)
-make clean  # Stop containers AND delete data volumes
-```
+# Appliance Setup Guide
+ 
+ This guide covers deploying Log Manager as an appliance on a single machine or VM.
+ 
+ ## System Requirements
+ 
+ | Component | Minimum | Recommended |
+ |-----------|---------|-------------|
+ | CPU | 2 vCPU | 4 vCPU |
+ | Memory | 4 GB | 8 GB |
+ | Disk | 20 GB | 40 GB |
+ | OS | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
+ | Ports | 80, 443, 514, 4500 | 80, 443, 514, 4500 |
+ 
+ ## Prerequisites
+ 
+ - Docker Engine 24.x or later
+ - Docker Compose plugin
+ - 2-4 GB disk space for images
+ 
+ ## Quick Start
+ 
+ ```bash
+ # Clone the repository
+ git clone https://github.com/your-org/logs-manager.git
+ cd logs-manager
+ 
+ # Copy environment template
+ cp .env.example .env
+ # Edit .env with your settings (passwords, secrets, DOMAIN)
+ 
+ # Start the stack
+ make up
+ 
+ # Wait ~30s for services to become healthy
+ make seed
+ 
+ # Access the system
+ #   UI:        http://localhost:8081   (or https://localhost with Caddy)
+ #   API:       http://localhost:4500
+ #   Syslog:    UDP/TCP 514
+ #   API docs:  http://localhost:4500/docs
+ ```
+ 
+ ## Manual Deployment
+ 
+ ### 1. Create Environment File
+ 
+ ```bash
+ # Copy example
+ cp .env.example .env
+ 
+ # Edit for your environment
+ nano .env
+ ```
+ 
+ ### 2. Start Services
+  
+ ```bash
+ # Build and start (using appliance compose file)
+ make up
+ # Or directly:
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml up -d --build
+ ```
+ 
+ ### 3. Verify Health
+  
+ ```bash
+ # Check container status
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml ps
+ 
+ # Check API health
+ curl -sk https://localhost:443/healthz
+ 
+ # Or HTTP redirect to check Caddy
+ curl -sI http://localhost:80/
+ ```
+ 
+ ## Seed Demo Data
+  
+ ```bash
+ make seed
+ # Or:
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T backend python scripts/seed_demo_data.py
+ ```
+ 
+ This creates:
+ - **Tenant `demoA`**: firewall, network, aws sample events
+ - **Tenant `demoB`**: additional AWS events
+ 
+ Demo users (after seeding):
+ 
+ | Email | Password | Role | Tenant |
+ |-------|----------|------|--------|
+ | admin@demo.local | (seed prints on startup) | ADMIN | (all) |
+ | viewerA@demo.local | (see seed output) | VIEWER | demoA |
+ | viewerB@demo.local | (see seed output) | VIEWER | demoB |
+ 
+ ## Access URLs
+ 
+ After startup:
+ 
+ | Service | URL |
+ |---------|-----|
+ | UI Dashboard | http://localhost:8081 |
+ | API | http://localhost:4500 |
+ | Swagger Docs | http://localhost:4500/docs |
+ | Syslog UDP | 127.0.0.1:514 |
+ | Syslog TCP | 127.0.0.1:514 |
+ 
+ ## Environment Variables
+ 
+ Required variables (in `.env`):
+ 
+ ```dotenv
+ # Database connection
+ DATABASE_URL=postgresql+asyncpg://logs:postgres_pass@db:5432/logs_manager?sslmode=disable
+ 
+ # Authentication
+ ACCESS_TOKEN_SECRET=<64-char random string>
+ REFRESH_TOKEN_SECRET=<64-char random string>
+ 
+ # Ingestion
+ INGEST_API_KEY=<32-char API key>
+ INGEST_API_TENANT=demoA
+ 
+ # Syslog (optional, for receiving logs)
+ SYSLOG_ENABLED=true
+ SYSLOG_UDP_PORT=5514
+ SYSLOG_TCP_PORT=5514
+ 
+ # Retention
+ RETENTION_DAYS=7
+ ```
+ 
+ ## Ingestion Methods
+ 
+ ### HTTP API (Single Event)
+ 
+ ```bash
+ curl -X POST http://localhost:4500/ingest \
+   -H "Content-Type: application/json" \
+   -H "X-API-Key: $INGEST_API_KEY" \
+   -d '{
+     "tenant": "demoA",
+     "source": "api",
+     "event_type": "app_login_failed",
+     "user": "alice",
+     "src_ip": "203.0.113.7",
+     "severity": 5
+   }'
+ ```
+ 
+ ### Syslog (Firewall Sample)
+ 
+ ```bash
+ # Send sample syslog
+ ./samples/send_syslog.sh udp samples/syslog_firewall.log
+ 
+ # Or use logger
+ logger -n 127.0.0.1 -P 514 \
+   '<134>Oct 30 22:14:15 fw01 vendor=Demo product=Firewall action=DENY src=10.0.0.5 dst=8.8.8.8 spt=54321 dpt=53 proto=UDP msg="Blocked DNS query"'
+ ```
+ 
+ ### File Batch Upload
+ 
+ ```bash
+ # JSON array or CSV
+ curl -X POST http://localhost:4500/ingest/file \
+   -H "X-API-Key: $INGEST_API_KEY" \
+   -F "file=@samples/crowdstrike.json"
+ ```
+ 
+ ## Stopping Services
+  
+ ```bash
+ # Stop but keep data
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml stop
+ 
+ # Stop and remove containers (keeps volumes)
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml down
+ 
+ # Remove all data (including PostgreSQL volumes)
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml down -v
+ ```
+  
+ ## Viewing Logs
+  
+ ```bash
+ # Follow all logs
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs -f
+ 
+ # Follow specific service
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs -f backend
+ 
+ # Recent logs only
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs --tail=100
+ ```
+  
+ ## Data Persistence
+  
+ PostgreSQL data is persisted in Docker volumes:
+  
+ ```bash
+ # List volumes
+ docker volume ls
+ 
+ # Backup database
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec db pg_dump -U logs logs_manager > backup.sql
+ 
+ # Restore database
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T db psql -U logs -d logs_manager < backup.sql
+ ```
+  
+ ## Troubleshooting
+  
+ ### API not responding
+ ```bash
+ # Check if containers are running
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml ps
+ 
+ # Check logs
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs backend
+ 
+ # Restart
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml restart
+ ```
+  
+ ### Syslog not working
+ ```bash
+ # Check syslog listener
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs backend | grep syslog
+ 
+ # Verify port is listening
+ ss -tuln | grep 514
+ ```
+  
+ ### Database connection issues
+ ```bash
+ # Check PostgreSQL
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml logs db
+ 
+ # Connect manually
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec db psql -U logs -c "SELECT 1"
+ ```
+  
+ ### Need to reseed
+ ```bash
+ docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T backend python scripts/seed_demo_data.py
+ ```

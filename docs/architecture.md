@@ -1,102 +1,206 @@
-# Log Manager / Mini SIEM - Architecture
+# Log Manager / Mini SIEM — Architecture
 
-## Data Flow
+## Overview
 
+A log management system that ingests, normalizes, searches, visualizes, and alerts
+on events from multiple sources. Deployable as a single-node appliance (Docker
+Compose) or as SaaS/Cloud with HTTPS.
+
+## Mermaid architecture diagram
+
+```mermaid
+graph TB
+    %% Sources
+    FW[Firewall Syslog<br/>UDP/TCP 514]
+    RT[Router Syslog<br/>UDP/TCP 514]
+    API[HTTP API<br/>POST /ingest]
+    CS[CrowdStrike<br/>JSON sample]
+    AW[AWS CloudTrail<br/>JSON sample]
+    M3[Microsoft 365<br/>Audit sample]
+    AD[Active Directory<br/>Event 4624/4625]
+
+    %% Ingest
+    ING[/ingest<br/>Syslog Listener<br/>UDP/TCP 5514]
+    HTTP[FastAPI<br/>POST /ingest<br/>X-API-Key / JWT]
+
+    %% Normalize
+    NORM[Normalization Layer<br/>Pydantic NormalizedEvent<br/>7 source mappers]
+
+    %% Store
+    DB[(PostgreSQL 16<br/>events table<br/>JSONB + GIN indexes<br/>Retention ≥7 days)]
+
+    %% Alert worker
+    WORKER[Worker<br/>Alert sweep every 30s<br/>Retention hourly]
+
+    %% Search/API
+    SEARCH[FastAPI Search/Stats<br/>GET /api/events<br/>GET /api/stats/*]
+
+    %% UI
+    UI[React Dashboard<br/>Top IP/User/Event Type<br/>Timeline, filters]
+
+    %% Alerts/notifications
+    ALERT[Alerts Page<br/>ACK/Close]
+    WEB[Webhook Receiver<br/>Logs alerts]
+    MAIL[(SMTP<br/>optional)]
+
+    %% Data flow
+    FW --> ING
+    RT --> ING
+    API --> HTTP
+    CS --> HTTP
+    AW --> HTTP
+    M3 --> HTTP
+    AD --> HTTP
+
+    ING --> NORM
+    HTTP --> NORM
+
+    NORM --> DB
+
+    DB --> SEARCH
+    DB --> WORKER
+
+    WORKER --> DB
+    WORKER --> ALERT
+    WORKER --> WEB
+    WORKER --> MAIL
+
+    SEARCH --> UI
+    ALERT --> UI
+    WEB --> UI
+
+    %% Caddy / TLS
+    CADDY[Caddy Reverse Proxy<br/>80/443, TLS<br/>Let's Encrypt or self-signed]
+    CADDY --> UI
+    CADDY --> SEARCH
+    CADDY --> HTTP
 ```
-Sources → Ingest → Normalize → Postgres → Search/Dashboard → Alert
-```
 
-### Ingestion Paths
+## Data flow
 
-1. **Syslog (UDP/TCP port 514)**
-   - Listens on port 514 (host: 5514 in Docker)
-   - Parses RFC3164/RFC5424 messages
-   - Maps facility/severity from PRI field
-   - Routes by content: firewall → `firewall` parser, network → `network` parser
-   - Tenant mapping: default from `.env` SYSLOG_TENANT or by source IP
+1. **Sources → Ingest**: Firewall/router syslog arrives via UDP/TCP 514 (mapped to container 5514).
+   HTTP API events arrive via POST /ingest or POST /ingest/file. The simulator generates
+   live traffic for demos.
+2. **Ingest → Normalize**: Every source is parsed by a source-specific normalizer and
+   validated through the Pydantic `NormalizedEvent` model. The original payload is always
+   preserved in the `raw` JSONB column.
+3. **Normalize → Store**: Normalized events are inserted into PostgreSQL with deterministic
+   SHA256 IDs for deduplication. JSONB `raw` + GIN indexes enable full-text search.
+4. **Store → Search/Stats**: The FastAPI API serves GET /api/events and GET /api/stats/*
+   with tenant-scoped, parameterized SQL queries.
+5. **Store → Alert Worker**: Every 30 seconds, the worker evaluates all enabled alert rules
+   via a single GROUP BY ... HAVING query per rule. Alerts are idempotent (dedupe key).
+6. **Alert → Notify**: Webhook POST with 3 retries + exponential backoff; optional SMTP.
+   Results stored in `alerts.notifications`.
+7. **UI**: React dashboard displays Top IP/User/Event Type, timeline, filters, alerts, rules.
 
-2. **HTTP API (POST /ingest)**
-   - Accepts single JSON object or batch array
-   - Header `X-API-Key` identifies tenant (prevents spoofing)
-   - Routes by `source` field to correct mapper
-   - Supports `--rewrite-now` flag to replace `@timestamp` with current time
+## Tenant model
 
-3. **File Batch Upload**
-   - POST /ingest/file endpoint
-   - Supports JSON/NDJSON files (AWS CloudTrail, M365 Unified Audit Log, AD Event Export)
-   - Same mappers as HTTP API, applied iteratively
+**Tenant resolution:**
+- **HTTP API / file upload**: Tenant derived from the X-API-Key (hashed, mapped to a tenant)
+  or JWT claim. Body `tenant` must match the credential's tenant (403 if mismatch, unless
+  admin). API keys are created per tenant by admins and shown once.
+- **Syslog**: No tenant field in syslog. Tenant resolved via `TENANT_PORT_MAP` (port → tenant)
+  or `DEFAULT_TENANT` fallback.
+- **Simulator**: Uses `--tenants` flag and API key per tenant.
 
-### Normalization
+**Query-time enforcement:**
+- `get_tenant_scope()` dependency runs on every `/api/*` endpoint.
+- **VIEWER**: Forced to `current_user.tenant`; any `tenant=` param is ignored.
+- **ADMIN**: May pass `tenant=` or `all` for cross-tenant queries.
+- All SQL uses parameterized queries only; no dynamic SQL from user input.
 
-Each source has a dedicated mapper producing a common schema:
+**Roles:**
+| Role | Capabilities |
+|---|---|
+| ADMIN | All tenants, manage rules/users/API keys, upload files, view all alerts |
+| VIEWER | Own tenant only, read-only, no rule editing |
 
-| Field | Description |
-|-------|-------------|
-| `@timestamp` | RFC3339 timestamp (current year + UTC if not specified) |
-| `tenant` | Tenant identifier (demoA, demoB, etc.) |
-| `source` | firewall \| crowdstrike \| aws \| m365 \| ad \| api \| network |
-| `vendor` | Vendor name (demo, microsoft, crowdstrike, aws) |
-| `product` | Product name (ngfw, falcon, Exchange, etc.) |
-| `event_type` | Normalized canonical event type |
-| `event_subtype` | Additional event classification |
-| `severity` (0-10) | Numeric severity score |
-| `action` | allow \| deny \| create \| delete \| login \| logout \| alert |
-| `src_ip` | Source IP address |
-| `src_port` | Source port |
-| `dst_ip` | Destination IP address |
-| `dst_port` | Destination port |
-| `protocol` | Network protocol (tcp, udp, icmp, etc.) |
-| `user` | User identifier |
-| `host` | Hostname or device ID |
-| `process` | Process name |
-| `url` | Requested URL |
-| `http_method` | HTTP method (GET, POST, etc.) |
-| `status_code` | HTTP status code |
-| `rule_name` | Alert rule name (if applicable) |
-| `rule_id` | Alert rule identifier |
-| `cloud.account_id` | AWS account ID / AD domain ID |
-| `cloud.region` | AWS region / AD site |
-| `cloud.service` | AWS service / M365 workload |
-| `raw` | Original raw message/JSON (preserved exactly) |
-| `_tags` | Array of tags (e.g., `["malware"]`, `["parse_error"]`) |
+## Technology choices
 
-### Storage
+| Component | Choice | Rationale |
+|---|---|---|
+| Backend API | FastAPI (Python) | Type safety, auto OpenAPI docs, async, easy testing |
+| Database | PostgreSQL 16 | JSONB + GIN indexes, mature, single DB to operate |
+| Syslog collector | Custom Python asyncio | Full control over parsing, easy to explain in interview |
+| Frontend | React 19 + Vite + TypeScript + Recharts | Modern, well-documented, chart library included |
+| Reverse proxy / TLS | Caddy | Automatic HTTPS (Let's Encrypt), self-signed fallback, security headers |
+| Packaging | Docker Compose | Same file for appliance and SaaS, one-command start |
 
-- **PostgreSQL 16** with JSONB `raw` column
-- Table `security_logs` partitioned by `@timestamp` (daily partitions)
-- Key indexes: `(tenant, "@timestamp" DESC)`, `src_ip`, `event_type`, `GIN` on `attributes`
-- `ingested_at` column records ingestion time (used for 7-day retention)
+**Considered alternatives:**
+- **OpenSearch/Elasticsearch**: More powerful search but higher operational complexity
+  (Java heap, cluster management). Rejected for a demo appliance — PostgreSQL is
+  sufficient and easier to run on 4 vCPU / 8 GB.
+- **ClickHouse**: Excellent for time-series analytics but less flexible for
+  relational tenant/isolation queries. Rejected for simplicity.
 
-### Alert Engine
+## Schema overview
 
-- Background worker evaluates rules every 30-60 seconds
-- Brute-force rule: ≥5 failed logins from same `src_ip` within 5 min + 10-min cooldown
-- Malware rule: severity ≥ 8 (or event_type = malware_detected)
-- Deduplication via `dedupe_key` + cooldown window
-- Notification channels: Alerts page (UI), webhook POST, SMTP email (optional)
+The common schema covers all assignment fields plus additions:
+`@timestamp` (ts), `tenant`, `source`, `vendor`, `product`, `event_type`,
+`event_subtype`, `severity` (0–10), `action`, `action_detail`, `outcome`,
+`src_ip`, `src_port`, `dst_ip`, `dst_port`, `protocol`, `user`, `host`,
+`process`, `url`, `http_method`, `status_code`, `rule_name`, `rule_id`,
+`cloud.account_id`, `cloud.region`, `cloud.service`, `raw` (JSONB), `_tags`
+(array), `ingested_at`, deterministic `id` (SHA256).
 
-### Security
+See `docs/schema.md` for the full field table and per-source mappings.
 
-- **AuthN**: JWT access/refresh tokens via FastAPI
-- **AuthZ**: Admin (all tenants) / Viewer (own tenant only)
-- **Tenant isolation**: Middleware enforces `WHERE tenant = jwt.tenant` for Viewers
-- **HTTPS**: Caddy reverse proxy with Let's Encrypt (SaaS) or self-signed (appliance)
-- **Input validation**: Pydantic models for all request/response schemas
-- **Rate limiting**: slowapi with IP-based key function
+## Retention strategy
 
-### Tenant Model
+- Default `RETENTION_DAYS=7` (minimum 7 enforced).
+- **Deletion-based retention** on `ingested_at` column: the retention job runs hourly and
+  executes `DELETE FROM events WHERE ingested_at < cutoff`. This satisfies the assignment's
+  "deletion" option for retention.
+- **Why not partitioning or rollover?**
+  - Partitioning requires PostgreSQL 11+ and adds complexity (partition management,
+    constraint exclusion tuning). For a demo appliance with expected volumes <1M events/day,
+    simple DELETE with proper indexes (ix_events_ingested_at) is sufficient.
+  - Partitioning would still require periodic DROP/DETACH of old partitions, which is
+    essentially a more complex form of deletion. We chose simplicity.
+  - The events table has an `ix_events_ingested_at` index to make the WHERE clause fast.
+  - For production at scale (>10K events/sec), consider: hourly partitioning by ingested_at,
+    or ClickHouse for append-only analytics.
+- Retention runs hourly via the worker and is also invocable via `make maintenance` or
+  `python -m app.services.retention --dry-run`.
+- **Idempotency note**: Deleted rows are not recoverable. For production, implement
+  archival backup before deletion.
 
-- **Admin**: role=ADMIN, tenant=NULL (access to all tenants)
-- **Viewer**: role=VIEWER, tenant=demoA/demoB (isolated to own tenant)
-- **JWT claims**: `{sub, role, tenant}`
-- **Ingest API key**: Maps to tenant (e.g., demoA-key → demoA, demoB-key → demoB)
-- **Syslog tenant**: Mapped by listener configuration or default from .env
+## Alert engine design
 
-### Technology Choices
+- Rules are stored data (not code): `alert_rules` with `filter` (jsonb),
+  `group_by` (whitelist: src_ip, user_name, host), `threshold`,
+  `window_minutes`, `cooldown_minutes`, `notify` (jsonb: webhook_url, email).
+- The worker runs `evaluate_all_rules()` every 30 seconds. Each rule executes
+  ONE parameterized `GROUP BY ... HAVING count(*) >= threshold` query scoped to
+  the rule's tenant and time window.
+- Idempotent via `dedupe_key = rule_id:tenant:group_value`. Open alerts within
+  cooldown are updated (count/last_seen) without re-notification.
+- Tenant `*` rules are evaluated per tenant so demoB events never count toward
+  demoA.
 
-- **FastAPI (Python)**: Fast development, automatic OpenAPI docs, enum validation, async IO for syslog
-- **PostgreSQL (JSONB)**: Single-node sufficient (4GB RAM), partitioning for 7-day retention, GIN indexes for attributes
-- **Docker Compose**: Same compose file for appliance (local VM) and SaaS (cloud VM)
-- **Caddy reverse proxy**: Automatic Let's Encrypt for SaaS, self-signed fallback for appliance
-- **Redis + arq**: Email queue with retry/retry-backoff, cache invalidation
-- **Pytest**: 44 tests verified against Neon database
+## Security
+
+- JWT access tokens (15 min) + refresh tokens (30 days) in HttpOnly, Secure,
+  SameSite cookies (Secure/SameSite=None in SaaS mode).
+- Passwords hashed with bcrypt.
+- API keys stored as SHA-256 hashes; plaintext shown once at creation.
+- Login rate limiting (slowapi), CORS restricted to configured origins.
+- No secrets logged; all config via environment variables.
+- SaaS mode backend refuses to start with default/empty JWT secrets.
+
+## Scaling limits and future work
+
+- Single-node PostgreSQL limits write throughput (~10k events/second on
+  4 vCPU / 8 GB). For higher volume, consider read replicas or ClickHouse.
+- True multi-tenancy (separate schemas/tables per tenant) is a bonus feature.
+- Enrichment (GeoIP, reverse DNS) can be added behind a feature flag.
+- CI/CD (GitHub Actions) and IaC (Terraform/Helm) are bonus items.
+
+## Folder mapping
+
+| Assignment | Repo |
+|---|---|
+| `/backend/` | `backend-fastapi/` |
+| `/frontend/` | `frontend/lms/` |
+| `/ingest/` | `ingest/` |

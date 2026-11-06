@@ -7,6 +7,14 @@ from app.core.config import get_settings
 MARKER = "phase2-ingest-api"
 
 
+from conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    VIEWER_A_EMAIL,
+    VIEWER_A_PASSWORD,
+    VIEWER_B_EMAIL,
+    VIEWER_B_PASSWORD,
+)
 def _headers(api_key: str, tenant: str | None = None) -> dict:
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
     return headers
@@ -35,13 +43,13 @@ def test_single_event_ingest_lands_in_api_key_tenant(client, api_key):
 
     login = client.post(
         "/api/auth/login",
-        json={"email": "admin@demo.local", "password": "Admin123!"},
+        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
     )
     assert login.status_code == 200
     logs = client.get("/api/get-logs", params={"src_ip": src_ip}).json()["logs"]
     assert len(logs) >= 1
     assert logs[0]["tenant"] == "demoa"
-    assert logs[0]["source"] == "FIREWALL"
+    assert logs[0]["source"] == "firewall"
 
 
 def test_batch_ingest_counts_per_record(client, api_key):
@@ -101,7 +109,7 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
     # Verify stored as lowercase
     login = client.post(
         "/api/auth/login",
-        json={"email": "admin@demo.local", "password": "Admin123!"},
+        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
     )
     assert login.status_code == 200
     logs = client.get("/api/get-logs", params={"limit": 100}).json()["logs"]
@@ -110,13 +118,13 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
     assert found[0]["tenant"] == "demob"
 
     # Verify viewerB can see it
-    viewer_b = client.post("/api/auth/login", json={"email": "viewerB@demo.local", "password": "ViewerB123!"})
+    viewer_b = client.post("/api/auth/login", json={"email": VIEWER_B_EMAIL, "password": VIEWER_B_PASSWORD})
     assert viewer_b.status_code == 200
     # Need new client for viewerB session
     from fastapi.testclient import TestClient
     from app.main import app
     viewer_b_client = TestClient(app)
-    viewer_b_client.post("/api/auth/login", json={"email": "viewerB@demo.local", "password": "ViewerB123!"})
+    viewer_b_client.post("/api/auth/login", json={"email": VIEWER_B_EMAIL, "password": VIEWER_B_PASSWORD})
     res = viewer_b_client.get("/api/get-logs", params={"limit": 100})
     logs = res.json()["logs"]
     found = [l for l in logs if l.get("id") == event_id]
@@ -124,7 +132,7 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
 
     # Verify viewerA cannot see it
     viewer_a_client = TestClient(app)
-    viewer_a_client.post("/api/auth/login", json={"email": "viewerA@demo.local", "password": "ViewerA123!"})
+    viewer_a_client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     res = viewer_a_client.get("/api/get-logs", params={"limit": 100})
     logs = res.json()["logs"]
     found = [l for l in logs if l.get("id") == event_id]

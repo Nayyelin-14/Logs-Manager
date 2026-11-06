@@ -15,3 +15,4 @@ COPY . .
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 EXPOSE 4500 5514/udp 5514/tcp
+CMD ["sh", "wait-for-db.sh"]

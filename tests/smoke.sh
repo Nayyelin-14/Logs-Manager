@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:4500}"
 API_KEY="${INGEST_API_KEY:-ingest-key-dev}"
 EMAIL="${ADMIN_EMAIL:-admin@demo.local}"
-PASSWORD="${ADMIN_PASSWORD:-Admin123!}"
+PASSWORD="${ADMIN_PASSWORD:-$SEED_ADMIN_PASSWORD}"
 TENANT="${TENANT:-demoA}"
 
 JAR="$(mktemp)"

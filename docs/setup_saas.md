@@ -1,195 +1,423 @@
-# Log Manager - SaaS/Cloud Deployment
+# SaaS/Cloud Deployment Guide
+
+This guide covers deploying Log Manager to a cloud VM with HTTPS/TLS.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Internet (HTTPS)                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│              Caddy Reverse Proxy (port 443/80)            │
+│  - Automatic Let's Encrypt certificates                   │
+│  - HTTP→HTTPS redirect                                     │
+│  - /api/* → backend:4500                                   │
+│  - /static/* → frontend (nginx)                            │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+    ┌──────────────────┴──────────────────┐
+    │                                     │
+    ▼                                     ▼
+┌──────────────┐                  ┌─────────────┐
+│  Backend     │                  │  Frontend   │
+│  FastAPI     │                  │  (nginx)    │
+│  port 4500   │                  │  port 80    │
+└──────────────┘                  └─────────────┘
+       │                                 │
+       │                                 ▼
+       │                         ┌─────────────┐
+       │                         │   Assets    │
+       │                         │  (built-in) │
+       │                         └─────────────┘
+       │
+       ▼
+┌─────────────────────────────────────┐
+│  PostgreSQL (port 5432)             │
+│  - Persistent volume                │
+│  - Daily backups recommended      │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│  Redis (port 6379)                  │
+│  - Cache + email queue              │
+└─────────────────────────────────────┘
+```
 
 ## Prerequisites
 
-- Cloud VM (AWS EC2, Oracle Free Tier, DigitalOcean, etc.)
-- Domain name (recommended for Let's Encrypt) or use IP address
-- Open ports: 22 (SSH), 80 (HTTP), 443 (HTTPS), 514 (Syslog UDP+TCP if needed)
-- 4 GB RAM minimum, 2 vCPU minimum, 40 GB disk
+### Cloud VM Requirements
+
+| Requirement | Details |
+|-------------|---------|
+| OS | Ubuntu 22.04 LTS (recommended) |
+| CPU | 2 vCPU minimum |
+| Memory | 4 GB minimum (8 GB recommended) |
+| Disk | 30 GB (50 GB recommended with backups) |
+| Network | Public IP, ports 80/443 open |
+
+### DNS Configuration
+
+Point your domain (e.g., `logs.example.com`) to your VM's public IP:
+
+```
+A record: logs.example.com → <VM_PUBLIC_IP>
+```
 
 ## Deployment Steps
 
-### 1. Provision the VM
+### 1. Provision VM
 
 ```bash
-# Example: AWS EC2
-# - Select Ubuntu 22.04 AMI
-# - t2.micro or larger (free tier eligible)
-# - Open ports: 22, 80, 443 (and 514 for syslog)
-# - Create a new volume (minimum 40 GB)
+# Ubuntu 22.04
+# SSH into your VM
+ssh ubuntu@<VM_PUBLIC_IP>
 ```
 
-### 2. Install Docker and Docker Compose
+### 2. Install Docker
 
 ```bash
-# On Ubuntu
-sudo apt-get update
-sudo apt-get install -y docker.io docker-compose-plugin
+# Install Docker and Compose
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
 sudo usermod -aG docker $USER
-newgrp docker
 
-# Verify
-docker version
-docker compose version
+# Install Compose plugin
+sudo apt-get update
+sudo apt-get install -y docker-compose-plugin
+
+# Logout and login again to apply group change
 ```
 
-### 3. Clone and Configure
+### 3. Clone Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/your-org/logs-manager.git
 cd logs-manager
-cp .env.example .env
 ```
 
-Edit `.env` for SaaS production settings:
+### 4. Configure Environment
 
+```bash
+# Copy example
+cp backend-fastapi/.env.example backend-fastapi/.env
+
+# Edit critical values
+nano backend-fastapi/.env
 ```
-# Database
-POSTGRES_USER=logs
-POSTGRES_PASSWORD=change_this_strong_password
-POSTGRES_DB=logs_manager
 
-# Redis
-REDIS_URL=redis://:change_this_strong_password@localhost:6379
+**Key settings for SaaS:**
 
-# Auth secrets (generate strong secrets!)
-ACCESS_TOKEN_SECRET=change_this_very_long_random_string
-REFRESH_TOKEN_SECRET=change_this_very_long_random_string
-
-# Cookie behavior for HTTPS SaaS
+```dotenv
+# Production environment
+APP_ENV=production
 COOKIE_SECURE=true
 COOKIE_SAME_SITE=none
 
-# Ingestion (per-tenant API keys managed via /api/tenants)
-INGEST_API_USERNAME=log-forwarder
+# External URL (for redirect after login)
+CORS_ORIGINS=["https://logs.example.com"]
+ALLOWED_HOSTS=["logs.example.com", "*.example.com"]
 
-# Syslog (optional)
-SYSLOG_ENABLED=false  # Set to true if accepting external syslog
-SYSLOG_TENANT=demoA
-SYSLOG_SOURCE=firewall
-SYSLOG_UDP_PORT=514
-SYSLOG_TCP_PORT=514
+# Strong secrets
+ACCESS_TOKEN_SECRET=<generate with: openssl rand -hex 32>
+REFRESH_TOKEN_SECRET=<generate with: openssl rand -hex 32>
 
-# CORS for production domain
-CORS_ORIGINS=https://your-domain.com
+# Database
+DATABASE_URL=postgresql+asyncpg://logs:your_password@db:5432/logs_manager
 
-# SMTP for email notifications (optional)
-SMTP_ENABLED=false  # Or true + configure SMTP_HOST, SMTP_PORT, etc.
-GMAIL_USER=your@gmail.com
-GMAIL_PASS=your_app_password
+# Redis (internal Docker network)
+REDIS_URL=redis://redis:6379
 
-# Domain and HTTPS
-DOMAIN=your-domain.com  # For Let's Encrypt
-EMAIL_HOST=smtp.gmail.com
+# Email (optional, for alerts/2FA)
+SMTP_ENABLED=true
+SMTP_HOST=smtp.example.com
 SMTP_PORT=587
+SMTP_USERNAME=alert@example.com
+SMTP_PASSWORD=<smtp_password>
+ALERT_EMAIL_RECIPIENTS=security@example.com
 ```
 
-### 3. Start the Stack
+### 5. HTTPS via Caddy (Recommended)
+
+Create a Caddy configuration:
 
 ```bash
-make up
+cat > Caddyfile << 'EOF'
+logs.example.com {
+    reverse_proxy /api/* backend:4500
+    reverse_proxy /* frontend:80
+    encode gzip
+    
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+EOF
 ```
 
-Wait ~30-60 seconds for services to initialize.
-
-### 4. Configure DNS and HTTPS
-
-If you have a domain name:
+Deploy with Caddy:
 
 ```bash
-# Ensure your domain's DNS A record points to the VM's IP address
-# Then Caddy will automatically get Let's Encrypt certificates
+# Create caddy-docker-network
+docker network create caddy
 
-# Or manually run:
-docker exec -it caddy caddy adapt --config /etc/caddy/Caddyfile
+# Run Caddy with automatic HTTPS
+docker run -d \
+  --name caddy \
+  --restart unless-stopped \
+  --network caddy \
+  --volume $PWD/Caddyfile:/etc/caddy/Caddyfile \
+  --volume caddy_data:/data \
+  --volume caddy_config:/config \
+  caddy:2-alpine
 ```
 
-If no domain name (IP only):
-
-1. Caddy will start with a self-signed certificate
-2. The frontend will show a "Your connection is not private" warning
-3. Users must accept the risk to proceed
-4. For production use, a real domain name is strongly recommended
-
-### 5. Seed the Database
+### 6. Deploy Application Stack
 
 ```bash
-make seed
+# Set environment
+export INGEST_API_KEY=$(openssl rand -hex 16)
+
+# Deploy with docker compose using saas override file
+docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d --build
 ```
 
-### 6. Access the System
+Alternatively, use the provided docker-compose.yml with modifications:
 
-- **Frontend**: `https://your-domain.com` (or `https://localhost` if using IP+self-signed)
-- **Backend API**: `https://your-domain.com/api/` or `https://localhost:4500/`
-- **API Docs**: `https://your-domain.com/docs`
+```yaml
+# Add to docker-compose.yml under services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
 
-## Sending Test Syslog Messages (SaaS)
-
-### UDP
-```bash
-echo '<134>Oct 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=DNS blocked policy=Block-DNS' | nc -u -w1 YOUR_VM_IP 514
+volumes:
+  caddy_data:
+  caddy_config:
 ```
 
-### HTTP API
+### 7. Wait for Certificates
+
 ```bash
-curl -X POST https://your-domain.com/ingest -H "X-API-Key: demoA-key" \
+# Wait 1-2 minutes for Let's Encrypt verification
+# Caddy logs will show certificate status
+
+docker logs caddy | grep -i certificate
+```
+
+### 8. Seed Initial Data
+
+```bash
+# Create admin account and sample events
+cd /path/to/logs-manager
+docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T backend python scripts/seed_demo_data.py
+
+# Save the API keys displayed
+# They are required for ingestion
+```
+
+## Production Hardening
+
+### 1. Firewall Rules
+
+```bash
+# Allow only necessary ports
+sudo ufw enable
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP (for ACME challenge)
+sudo ufw allow 443/tcp   # HTTPS
+# IMPORTANT: Port 514 (syslog) must be restricted by IP in the cloud firewall
+#   - Only allow trusted syslog sources to send to this port
+#   - Example AWS Security Group rule: source = syslog server IPs only
+# Block internal ports (5432, 6379, 4500, 8081 should NOT be exposed)
+```
+
+### 2. Database Backups
+
+```bash
+# Create backup script
+cat > backup.sh << 'EOF'
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/opt/backups"
+mkdir -p $BACKUP_DIR
+
+docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T db pg_dump -U logs logs_manager > $BACKUP_DIR/logs_$DATE.sql
+gzip $BACKUP_DIR/logs_$DATE.sql
+
+# Keep last 7 days
+find $BACKUP_DIR -name "logs_*.sql.gz" -mtime +7 -delete
+EOF
+
+chmod +x backup.sh
+
+# Add to crontab (daily at 2 AM)
+echo "0 2 * * * /opt/logs-manager/backup.sh" | crontab -
+```
+
+### 3. Monitoring
+
+```bash
+# Enable monitoring label for Prometheus/Grafana
+# Or use simple health check:
+curl -sf http://localhost:4500/healthz || echo "ALERT: API down"
+```
+
+### 4. Log Rotation
+
+```bash
+# Docker logs are retained by Docker
+# For application logs, configure:
+sudo journalctl --vacuum-time=7d
+
+# Or bind mount logs to host:
+# In docker-compose.yml:
+# volumes:
+#   - /var/log/logs-manager:/app/logs
+```
+
+### 5. TLS Certificate Renewal
+
+Caddy handles automatic renewal. Verify:
+
+```bash
+# Check certificate expiration
+docker exec caddy caddy cert-info --domains logs.example.com
+
+# Force renewal (if needed)
+docker exec caddy caddy reload
+```
+
+## API Access
+
+### Base URL
+```
+https://logs.example.com/api/
+```
+
+### Ingestion Endpoint
+```bash
+POST https://logs.example.com/api/ingest
+
+Headers:
+  Content-Type: application/json
+  X-API-Key: <your-tenant-api-key>
+```
+
+### Example Request
+
+```bash
+curl -X POST https://logs.example.com/api/ingest \
   -H "Content-Type: application/json" \
-  -d @samples/api_login_failed.json
+  -H "X-API-Key: demoa-key-here" \
+  -d '{
+    "tenant": "demoa",
+    "source": "api",
+    "event_type": "user_login",
+    "user": "admin",
+    "src_ip": "203.0.113.42",
+    "severity": 3
+  }'
 ```
 
-### File Upload
+## Security Considerations
+
+### 1. Admin Access
+- Admin users have `tenant: NULL` for cross-tenant access
+- CHANGE_default passwords immediately after seeding
+- Use strong, unique passwords (min 12 chars, mixed case, numbers, symbols)
+
+### 2. API Keys
+- Generated during seeding
+- Each tenant gets unique key
+- Store securely - displayed only once
+- Rotate periodically using `/api/tenants/{name}/rotate-key`
+
+### 3. JWT Security
+- Access tokens: 15 minute expiry
+- Refresh tokens: 30 day expiry
+- Cookies have HttpOnly and Secure flags
+
+### 4. Network Security
+- Internal services (PostgreSQL, Redis) not exposed
+- All external access via Caddy reverse proxy
+- Rate limiting enabled
+
+### 5. Data Encryption
+- TLS 1.3 for all external traffic
+- PostgreSQL data at rest (configure PG settings)
+- Consider encrypting backups
+
+## Troubleshooting SaaS Deployment
+
+### Certificate Issues
 ```bash
-curl -F "file=@samples/aws_cloudtrail.json" -F "source=aws" https://your-domain.com/ingest/file
+# Check Caddy logs
+docker logs caddy
+
+# Test HTTP challenge manually
+curl -I http://logs.example.com/.well-known/acme-challenge/
+
+# Force certificate renewal
+docker restart caddy
 ```
 
-## SaaS vs Appliance Differences
-
-| Feature | Appliance (Docker Compose) | SaaS (Cloud VM) |
-|---------|---------------------------|-----------------|
-| TLS | Self-signed cert (accept risk) | Let's Encrypt (via Caddy + domain) |
-| CORS | `http://localhost:5173, http://localhost:8080` | `https://your-domain.com` |
-| SMTP | Disabled (Mailpit for testing) | Configure via .env (SMTP_HOST, SMTP_PORT, etc.) |
-| Syslog port | 514 (host mapped to 5514) | 514 (if firewall rules allow) |
-| Domain | Not required | Recommended for Let's Encrypt |
-| Data persistence | Host `pgdata` and `redisdata` volumes | Host volumes + backup strategy |
-| Support | User-managed | User-managed + possible support options |
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Caddy can't get Let's Encrypt**
-   - Ensure domain A record points to VM IP
-   - Ensure ports 80/443 are open in firewall
-   - Try using a self-signed cert instead
-
-2. **Syslog not receiving messages**
-   - Verify VM firewall allows UDP/TCP 514
-   - Check `SYSLOG_ENABLED` is `true` in .env
-   - Check container logs: `make logs`
-
-3. **Authentication fails**
-   - Verify `.env` secrets match between backend and frontend
-   - Ensure API key is configured via `/api/tenants` and used in `X-API-Key` header
-   - Check JWT token expiration
-
-4. **No events appearing**
-   - Check `make seed` ran successfully
-   - Verify syslog messages are reaching the container
-   - Search in UI: `source:firewall` or `tenant:demoA`
-
-5. **Rate limiting blocks ingestion**
-   - The rate limiter is currently a pass-through in development
-   - For production, configure slowapi rate limits in `app/main.py`
-
-## Making and Sending Sample Logs
-
-Same commands as appliance mode, but replace `localhost:514` with your VM's IP address and `localhost:4500` with your domain or VM IP.
-
-## Cleanup
-
+### CORS Errors
 ```bash
-make down   # Stop containers (keeps data volumes)
-# Or manually:
-docker compose down -v
+# Check browser console for CORS errors
+# Verify CORS_ORIGINS includes your domain exactly
+# Ensure you restarted containers after changes
 ```
+
+### Database Connection
+ ```bash
+ # Test connection
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T backend python -c "from app.core.database import engine; print(engine.url)"
+ ```
+
+### Email Not Working
+```bash
+# Check if SMTP credentials are correct
+# Verify ALERT_EMAIL_RECIPIENTS is set
+# Check spam folder
+```
+
+## Scaling Considerations
+
+For higher load:
+- Use external PostgreSQL (RDS, Cloud SQL)
+- Use managed Redis (ElastiCache, MemoryDB)
+- Run backend with multiple replicas behind load balancer
+- Consider ClickHouse for higher volume logs
+
+## Maintenance Tasks
+
+ ```bash
+ # Restart services
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml restart
+ 
+ # Pull latest images
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml pull
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml down
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d
+ 
+ # Check resource usage
+ docker stats
+ 
+ # Database maintenance (backup first)
+ docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T db pg_dump -U logs logs_manager > backup.sql
+ ```

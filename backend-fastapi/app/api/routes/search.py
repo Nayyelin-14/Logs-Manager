@@ -4,7 +4,7 @@ Search API Routes
 Event search and filtering endpoints.
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
 from app.core.security import TokenPayload
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 
 router = APIRouter()
 
@@ -55,7 +55,7 @@ class LogFilters(BaseModel):
     search: Optional[str] = None
     limit: int = 50
     cursor: Optional[str] = None
-    sort_by: str = "@timestamp"
+    sort_by: str = "ts"
     sort_order: str = "desc"
 
 
@@ -66,6 +66,7 @@ class PaginatedLogsResponse(BaseModel):
 
 
 @router.get("/get-logs", response_model=dict)
+@router.get("/events", response_model=dict)
 async def search_logs(
     filters: LogFilters = Depends(),
     session: AsyncSession = Depends(get_session),
@@ -76,58 +77,59 @@ async def search_logs(
     if current_user.role == "ADMIN":
         tenant = None if requested_tenant in ("", "all") else requested_tenant
     else:
+        # Viewers are always scoped to their own tenant; a cross-tenant
+        # ?tenant= parameter is ignored (not rejected) per the tenancy policy.
         tenant = current_user.tenant
 
-    query = select(SecurityEvent)
+    query = select(Event)
     if tenant:
-        query = query.where(SecurityEvent.tenant == tenant)
+        query = query.where(Event.tenant == tenant)
     
     # Apply filters
     if filters.source:
-        query = query.where(SecurityEvent.source == filters.source)
+        query = query.where(Event.source == filters.source)
     event_type = filters.event_type or filters.eventType
     if event_type:
-        query = query.where(SecurityEvent.event_type == event_type)
+        query = query.where(Event.event_type == event_type)
     if filters.severity:
         sev = str(filters.severity).strip().lower()
         ranges = {"low": (0, 3), "medium": (4, 6), "high": (7, 8), "critical": (9, 10)}
         if sev in ranges:
             low, high = ranges[sev]
-            query = query.where(SecurityEvent.severity.between(low, high))
+            query = query.where(Event.severity.between(low, high))
         elif sev.isdigit():
-            query = query.where(SecurityEvent.severity >= int(sev))
+            query = query.where(Event.severity >= int(sev))
     if filters.date:
         try:
             day = datetime.fromisoformat(filters.date).replace(tzinfo=timezone.utc)
-            query = query.where(SecurityEvent.timestamp >= day)
-            query = query.where(SecurityEvent.timestamp < day + timedelta(days=1))
+            query = query.where(Event.ts >= day)
+            query = query.where(Event.ts < day + timedelta(days=1))
         except ValueError:
             pass
     if filters.action:
-        query = query.where(SecurityEvent.action == filters.action)
+        query = query.where(Event.action == filters.action)
     if filters.user:
-        query = query.where(SecurityEvent.user.ilike(f"%{filters.user}%"))
+        query = query.where(Event.user_name.ilike(f"%{filters.user}%"))
     if filters.src_ip:
-        query = query.where(SecurityEvent.src_ip == filters.src_ip)
+        query = query.where(Event.src_ip == filters.src_ip)
     if filters.dst_ip:
-        query = query.where(SecurityEvent.dst_ip == filters.dst_ip)
+        query = query.where(Event.dst_ip == filters.dst_ip)
     if filters.start_time:
-        query = query.where(SecurityEvent.timestamp >= filters.start_time)
+        query = query.where(Event.ts >= filters.start_time)
     if filters.end_time:
-        query = query.where(SecurityEvent.timestamp <= filters.end_time)
+        query = query.where(Event.ts <= filters.end_time)
     if filters.search:
         search_term = f"%{filters.search}%"
         query = query.where(
             or_(
-                SecurityEvent.description.ilike(f"%{filters.search}%"),
-                SecurityEvent.user.ilike(f"%{filters.search}%"),
-                SecurityEvent.src_ip.ilike(f"%{filters.search}%"),
-                SecurityEvent.event_type.ilike(f"%{filters.search}%"),
+                Event.user_name.ilike(search_term),
+                Event.src_ip.ilike(search_term),
+                Event.event_type.ilike(search_term),
             )
         )
     
     # Sorting
-    sort_column = getattr(SecurityEvent, filters.sort_by, SecurityEvent.timestamp)
+    sort_column = getattr(Event, filters.sort_by, Event.ts)
     if filters.sort_order == "asc":
         query = query.order_by(asc(sort_column))
     else:
@@ -135,7 +137,7 @@ async def search_logs(
     
     # Cursor-based pagination
     if filters.cursor:
-        query = query.where(SecurityEvent.id > filters.cursor)
+        query = query.where(Event.id > filters.cursor)
     
     query = query.limit(filters.limit + 1)
     result = await session.execute(query)
@@ -152,25 +154,25 @@ async def search_logs(
     for log in logs:
         log_dicts.append({
             "id": log.id,
-            "timestamp": _iso_utc(log.timestamp),
+            "timestamp": _iso_utc(log.ts),
             "eventType": log.event_type,
-            "user": log.user,
+            "user": log.user_name,
             "srcIp": log.src_ip,
             "dstIp": log.dst_ip,
-            "description": log.description,
+            "description": log.raw.get("description") if isinstance(log.raw, dict) else None,
             "severity": log.severity,
             "severityLevel": _severity_level(log.severity),
             "tenant": log.tenant,
-            "action": log.action.value if log.action else None,
-            "source": log.source.value if log.source else None,
+            "action": log.action if isinstance(log.action, str) else (log.action.value if log.action else None),
+            "source": log.source if isinstance(log.source, str) else (log.source.value if log.source else None),
             "host": log.host,
             "process": log.process,
             "protocol": log.protocol,
             "statusCode": log.status_code,
-            "priority": log.priority,
-            "sha256": log.sha256,
+            "priority": log.raw.get("priority") if isinstance(log.raw, dict) else None,
+            "sha256": log.raw.get("sha256") if isinstance(log.raw, dict) else None,
             "raw": log.raw,
-            "createdAt": _iso_utc(log.created_at),
+            "createdAt": _iso_utc(log.ingested_at),
         })
     
     return {
@@ -191,11 +193,11 @@ async def delete_log(
     from app.core.dependencies import require_admin
     await require_admin(current_user)
     
-    from app.models.security_event import SecurityEvent
+    from app.models.events import Event as EventModel
     from sqlalchemy import select
     
     result = await session.execute(
-        select(SecurityEvent).where(SecurityEvent.id == log_id)
+        select(EventModel).where(EventModel.id == log_id)
     )
     log = result.scalar_one_or_none()
     if not log:
@@ -208,7 +210,6 @@ async def delete_log(
         "tenant": log.tenant,
         "event_type": log.event_type,
         "severity": log.severity,
-        "created_at": str(log.created_at) if log.created_at else None,
         "raw": log.raw
     }
     

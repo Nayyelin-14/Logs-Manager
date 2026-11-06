@@ -132,7 +132,7 @@ def normalize_ad(event: Dict[str, Any]) -> Dict[str, Any]:
         ) or map_ad_action(event_id),
         "severity": safe_severity(pick(event, ["severity"])) or (event_id == 4625 and 7 or 3),
         "event_id": event_id,
-        "login_type": safe_number(
+        "logon_type": safe_number(
             pick(event, ["loginType", "login_type"]) or pick(payload, [
                 "LogonType", "logon_type", "loginType", "login_type"
             ])

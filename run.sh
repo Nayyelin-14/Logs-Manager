@@ -42,6 +42,4 @@ echo "  Syslog:  udp/5514 and tcp/5514"
 echo
 echo "Seed demo data with: make seed"
 echo "Demo logins after seeding:"
-echo "  admin@demo.local / Admin123!   (ADMIN, tenant demoA)"
-echo "  viewerA@demo.local / ViewerA123!   (VIEWER, tenant demoA)"
-echo "  viewerB@demo.local / ViewerB123!   (VIEWER, tenant demoB)"
+echo "  Passwords are printed to stdout during 'make seed'"

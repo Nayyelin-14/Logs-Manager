@@ -82,9 +82,35 @@ export const fetchDashboardStats = async (
   if (tenant) params.append("tenant", tenant);
   if (range) params.append("range", range);
   if (userId) params.append("userId", userId);
-  const url = `/dashboard?${params.toString()}`;
+  const url = `/api/stats/summary?${params.toString()}`;
   const response = await API.get(url);
-  return response.data;
+  const data = response.data;
+  // Also fetch stats/top for charts
+  const [topRes] = await Promise.all([
+    API.get(`/api/stats/top?field=src_ip&n=10${tenant ? `&tenant=${tenant}` : ""}`),
+  ]);
+  return {
+    total_events: data.total_events,
+    failed_logins: data.failed_logins,
+    open_alerts: data.open_alerts,
+    active_sources: data.active_sources,
+    tenants: (data.tenants || []).map((t: string) => ({ tenant: t })),
+    // CamelCase aliases for frontend components
+    totalEvents: data.total_events,
+    topIPs: topRes.data.items || [],
+    topUsers: [],
+    topEventTypes: [],
+    severityCounts: [],
+    eventsByTenant: (data.tenants || []).map((t: string) => ({ tenant: t, count: 0 })),
+    alertCountsByStatus: [],
+    alertCountsBySeverity: [],
+    ruleCountsByEnabled: [],
+    sources: [],
+    recentAlert: [],
+    eventsBySource: [],
+    alertsByDay: [],
+    alertsRuleByDay: [],
+  };
 };
 
 export const useDashboardStats = (
@@ -119,25 +145,30 @@ const fetchInfiniteLogsWithFilters = async ({
   pageParam?: string | null;
   filters?: SecurityEventFilters | null;
 }) => {
-  // base query string
-  let query = pageParam ? `?limit=25&cursor=${pageParam}` : "?limit=25";
+  // base query string using new /api/events endpoint
+  let query = pageParam ? `?cursor=${pageParam}&limit=25` : "?limit=25";
 
   // add filters dynamically
-
   if (filters) {
     const searchParams = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value !== null && value !== "") {
-        searchParams.append(key, String(value));
-      }
-    });
+    if (filters.tenant) searchParams.append("tenant", filters.tenant);
+    if (filters.source) searchParams.append("source", filters.source);
+    if (filters.eventType) searchParams.append("event_type", filters.eventType);
+    if (filters.user) searchParams.append("user", filters.user);
+    if (filters.srcIp) searchParams.append("src_ip", filters.srcIp);
+    if (filters.date) {
+      const [from, to] = filters.date.split(" to ");
+      if (from) searchParams.append("from", from);
+      if (to) searchParams.append("to", to);
+    }
+    if (filters.search) searchParams.append("q", filters.search);
     if (searchParams.toString()) {
       query += `&${searchParams.toString()}`;
     }
   }
 
-  // call API
-  const response = await API.get(`/get-logs${query}`);
+  // call API using new /api/events endpoint
+  const response = await API.get(`/api/events${query}`);
   return response.data;
 };
 

@@ -15,7 +15,7 @@ from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant, require_admin
 from app.core.security import TokenPayload
 from app.models.alert import Alert, AlertRule, EmailNotification
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 
 router = APIRouter()
 

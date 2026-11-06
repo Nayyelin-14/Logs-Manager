@@ -148,7 +148,7 @@ const DashboardStatsPage = () => {
   const userId = user?.role === "USER" ? String(user.id) : undefined;
   const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery(useDashboardStats(tenant, range, userId));
   const createdRules = data?.alertsRuleByDay?.reduce((sum, item) => sum + item._count.id, 0) ?? 0;
-  const recentLogsQuery = useInfiniteQuery(LogsInfiniteQueryWithFilters({ date: "", search: "", severity: null, eventType: null, source: null, tenant }));
+  const recentLogsQuery = useInfiniteQuery(LogsInfiniteQueryWithFilters({ date: "", search: "", severity: null, eventType: null, source: null, tenant: null, user: null, srcIp: null }));
   const recentLogs = recentLogsQuery.data?.pages.flatMap((page) => page.logs).slice(0, 4) ?? [];
 
   if (isLoading) return <DashboardSkeleton />;

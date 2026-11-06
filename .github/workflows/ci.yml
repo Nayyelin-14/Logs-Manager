@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: logs
+          POSTGRES_PASSWORD: postgres_pass
+          POSTGRES_DB: logs_manager_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U logs -d logs_manager_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          cd backend-fastapi
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Run file size check
+        run: |
+          chmod +x scripts/check_file_sizes.sh
+          bash scripts/check_file_sizes.sh
+
+      - name: Run backend tests
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:5432/logs_manager_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+        run: |
+          cd backend-fastapi
+          . .venv/bin/activate
+          python -m pytest -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.saas.yml config -q
+
+      - name: Build backend image
+        run: |
+          docker build -t lms-backend ./backend-fastapi
+
+      - name: Build ingest image
+        run: |
+          docker build -t lms-ingest ./ingest
+
+      - name: Build frontend image
+        run: |
+          docker build -t lms-frontend ./frontend/lms

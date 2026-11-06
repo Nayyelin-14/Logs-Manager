@@ -1,7 +1,6 @@
 import { AxiosError } from "axios";
 import { redirect, type ActionFunctionArgs } from "react-router-dom";
 import API from "../../api";
-import useAuthStore, { authStatus } from "../../store/authStore";
 import { useUserStore } from "../../store/userStore";
 
 export const loginAction = async ({ request }: ActionFunctionArgs) => {
@@ -27,6 +26,12 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
       role: userData.role,
       tenant: userData.tenant,
     });
+
+    // Also save to sessionStorage for loader access
+    sessionStorage.setItem("auth-email", userData.email);
+    sessionStorage.setItem("auth-tenant", userData.tenant);
+    sessionStorage.setItem("auth-role", userData.role);
+
     if (userData.role === "VIEWER") {
       return redirect("/dashboard");
     } else {
@@ -35,9 +40,8 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Login Failed" };
-    } else {
-      throw error;
     }
+    throw error;
   }
 };
 
@@ -45,6 +49,11 @@ export const logoutAction = async () => {
   try {
     const response = await API.post("/auth/logout");
     const userStore = useUserStore.getState();
+
+    // Clear sessionStorage
+    sessionStorage.removeItem("auth-email");
+    sessionStorage.removeItem("auth-tenant");
+    sessionStorage.removeItem("auth-role");
 
     if (response.status !== 200) {
       return { error: response.data || "Logout failed" };
@@ -55,8 +64,7 @@ export const logoutAction = async () => {
   } catch (error) {
     if (error instanceof AxiosError) {
       return error.response?.data || { error: "Logout Failed" };
-    } else {
-      throw error;
     }
+    throw error;
   }
 };

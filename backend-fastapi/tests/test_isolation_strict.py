@@ -13,17 +13,17 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.core.database import async_session_maker
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 from app.models.alert import Alert, AlertRule
 from app.models.enums import Source, Action
-from sqlalchemy import text
+from sqlalchemy import select, text
 import uuid
 import asyncio
+from datetime import datetime, timezone
 
 
 SEED_DATA = {}
 
-# Fixed IDs for idempotent seeding
 ISO_LOG_DEMOA = "iso_log_demoa_1"
 ISO_LOG_DEMOB = "iso_log_demob_1"
 ISO_LOG_ADMIN_DELETE = "iso_log_admin_delete"
@@ -36,62 +36,64 @@ ISO_ALERT_DEMOB = "iso_alert_demob"
 async def _seed_isolation_data():
     """Insert demo data with fixed ids; idempotent so repeated runs are safe."""
     async with async_session_maker() as session:
-        # demoA log (for viewerB cross-tenant read test + admin positive control)
-        log_a = await session.get(SecurityEvent, ISO_LOG_DEMOA)
-        if not log_a:
-            log_a = SecurityEvent(
+        demoa_ts = datetime(2025, 8, 20, 7, 20, 0, tzinfo=timezone.utc)
+        demob_ts = datetime(2025, 8, 20, 8, 20, 0, tzinfo=timezone.utc)
+        
+        log_a = await session.execute(select(Event).where(Event.id == ISO_LOG_DEMOA))
+        if not log_a.scalar_one_or_none():
+            log_a = Event(
                 id=ISO_LOG_DEMOA,
+                ts=demoa_ts,
                 tenant="demoa",
                 source=Source.AD,
                 event_type="LogonFailed",
                 action=Action.LOGIN,
                 severity=7,
-                user="demo\\eve",
+                user_name="demo\\eve",
                 host="DC01",
                 src_ip="203.0.113.77",
                 raw={"_seed": True},
-                tags=["seed"],
+                _tags=["seed"],
             )
             session.add(log_a)
 
-        # demoB log (for viewerB own-tenant read test)
-        log_b = await session.get(SecurityEvent, ISO_LOG_DEMOB)
-        if not log_b:
-            log_b = SecurityEvent(
+        log_b = await session.execute(select(Event).where(Event.id == ISO_LOG_DEMOB))
+        if not log_b.scalar_one_or_none():
+            log_b = Event(
                 id=ISO_LOG_DEMOB,
+                ts=demob_ts,
                 tenant="demob",
                 source=Source.AWS,
                 event_type="CreateUser",
                 action=Action.CREATE,
                 severity=6,
-                user="admin",
+                user_name="admin",
                 host="EC2",
                 raw={"_seed": True},
-                tags=["seed"],
+                _tags=["seed"],
             )
             session.add(log_b)
 
-        # demoA admin-delete log (firewall)
-        log_admin_delete = await session.get(SecurityEvent, ISO_LOG_ADMIN_DELETE)
-        if not log_admin_delete:
-            log_admin_delete = SecurityEvent(
+        log_admin_delete = await session.execute(select(Event).where(Event.id == ISO_LOG_ADMIN_DELETE))
+        if not log_admin_delete.scalar_one_or_none():
+            log_admin_delete = Event(
                 id=ISO_LOG_ADMIN_DELETE,
+                ts=demob_ts,
                 tenant="demoa",
                 source=Source.FIREWALL,
                 event_type="traffic_blocked",
                 action=Action.DENY,
                 severity=4,
-                user="external",
+                user_name="external",
                 host="FW01",
                 src_ip="10.0.1.10",
                 raw={"_seed": True, "_admin_delete_test": True},
-                tags=["seed"],
+                _tags=["seed"],
             )
             session.add(log_admin_delete)
 
-        # demoA alert rule
-        rule_a = await session.get(AlertRule, ISO_RULE_DEMOA)
-        if not rule_a:
+        rule_a = await session.execute(select(AlertRule).where(AlertRule.id == ISO_RULE_DEMOA))
+        if not rule_a.scalar_one_or_none():
             rule_a = AlertRule(
                 id=ISO_RULE_DEMOA,
                 name="Test Rule A",
@@ -103,9 +105,8 @@ async def _seed_isolation_data():
             )
             session.add(rule_a)
 
-        # demoA alert
-        alert_a = await session.get(Alert, ISO_ALERT_DEMOA)
-        if not alert_a:
+        alert_a = await session.execute(select(Alert).where(Alert.id == ISO_ALERT_DEMOA))
+        if not alert_a.scalar_one_or_none():
             alert_a = Alert(
                 id=ISO_ALERT_DEMOA,
                 rule_id=ISO_RULE_DEMOA,
@@ -116,12 +117,16 @@ async def _seed_isolation_data():
                 status="open",
                 title="Alert A",
                 dedupe_key="test-a",
+                group_key="test-a",
+                group_value="test",
+                count=1,
+                first_seen=demoa_ts,
+                last_seen=demoa_ts,
             )
             session.add(alert_a)
 
-        # demoB alert rule
-        rule_b = await session.get(AlertRule, ISO_RULE_DEMOB)
-        if not rule_b:
+        rule_b = await session.execute(select(AlertRule).where(AlertRule.id == ISO_RULE_DEMOB))
+        if not rule_b.scalar_one_or_none():
             rule_b = AlertRule(
                 id=ISO_RULE_DEMOB,
                 name="Test Rule B",
@@ -133,9 +138,8 @@ async def _seed_isolation_data():
             )
             session.add(rule_b)
 
-        # demoB alert
-        alert_b = await session.get(Alert, ISO_ALERT_DEMOB)
-        if not alert_b:
+        alert_b = await session.execute(select(Alert).where(Alert.id == ISO_ALERT_DEMOB))
+        if not alert_b.scalar_one_or_none():
             alert_b = Alert(
                 id=ISO_ALERT_DEMOB,
                 rule_id=ISO_RULE_DEMOB,
@@ -146,12 +150,16 @@ async def _seed_isolation_data():
                 status="open",
                 title="Alert B",
                 dedupe_key="test-b",
+                group_key="test-b",
+                group_value="test",
+                count=1,
+                first_seen=demob_ts,
+                last_seen=demob_ts,
             )
             session.add(alert_b)
 
         await session.commit()
 
-        # Update SEED_DATA for test use
         SEED_DATA["demoA_log_id"] = ISO_LOG_DEMOA
         SEED_DATA["demoB_log_id"] = ISO_LOG_DEMOB
         SEED_DATA["demoA_admin_delete_log_id"] = ISO_LOG_ADMIN_DELETE
@@ -161,24 +169,20 @@ async def _seed_isolation_data():
         SEED_DATA["demoB_rule_id"] = ISO_RULE_DEMOB
 
 
+from conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    VIEWER_A_EMAIL,
+    VIEWER_A_PASSWORD,
+    VIEWER_B_EMAIL,
+    VIEWER_B_PASSWORD,
+)
+
 @pytest.fixture(scope="module", autouse=True)
 def isolation_seed(test_database):
     """Ensure the demo rows these tests need exist; runs after session seed."""
     asyncio.run(_seed_isolation_data())
     yield
-
-
-@pytest.fixture(scope="session", autouse=True)
-def db_info():
-    """Print database info to prove which DB is used."""
-    async def _info():
-        async with async_session_maker() as session:
-            res = await session.execute(text("SELECT current_database(), inet_server_addr(), current_schema()"))
-            row = res.fetchone()
-            print(f"\n=== DATABASE INFO: db={row[0]} host={row[1]} schema={row[2]} ===\n")
-
-    asyncio.run(_info())
-    return None
 
 
 @pytest.fixture(scope="session")
@@ -192,12 +196,12 @@ def test_client():
 def test_data():
     """Return user credentials."""
     return {
-        "admin_email": "admin@demo.local",
-        "admin_password": "Admin123!",
-        "viewer_a_email": "viewerA@demo.local",
-        "viewer_a_password": "ViewerA123!",
-        "viewer_b_email": "viewerB@demo.local",
-        "viewer_b_password": "ViewerB123!",
+        "admin_email": ADMIN_EMAIL,
+        "admin_password": ADMIN_PASSWORD,
+        "viewer_a_email": VIEWER_A_EMAIL,
+        "viewer_a_password": VIEWER_A_PASSWORD,
+        "viewer_b_email": VIEWER_B_EMAIL,
+        "viewer_b_password": VIEWER_B_PASSWORD,
     }
 
 
@@ -217,11 +221,9 @@ def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
     logs = data.get("logs", [])
     assert len(logs) >= 1, f"Expected at least 1 row, got {len(logs)}"
 
-    # Zero demoa rows - viewer bypass does NOT work
     demo_a_logs = [l for l in logs if l.get("tenant") == "demoa"]
     assert len(demo_a_logs) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_logs)} demoa logs"
 
-    # All returned rows are demob (viewer forced to own tenant)
     for log in logs:
         assert log.get("tenant") == "demob", f"VULNERABILITY: viewerB sees tenant={log.get('tenant')}"
 
@@ -240,11 +242,9 @@ def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
     alerts = data.get("alerts", [])
     assert len(alerts) >= 1, f"Expected at least 1 row, got {len(alerts)}"
 
-    # Zero demoa alerts - viewer bypass does NOT work
     demo_a_alerts = [a for a in alerts if a.get("tenant") == "demoa"]
     assert len(demo_a_alerts) == 0, f"VULNERABILITY: viewerB sees {len(demo_a_alerts)} demoa alerts"
 
-    # All returned rows are demob
     for alert in alerts:
         assert alert.get("tenant") == "demob", f"VULNERABILITY: viewerB sees tenant={alert.get('tenant')}"
 
@@ -423,7 +423,6 @@ def test_23_admin_create_admin_tenant_null(test_client, test_data):
         "password": test_data["admin_password"]
     })
 
-    # Verify existing admin has tenant NULL
     response = test_client.get("/api/auth/auth-check")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     user_data = response.json().get("user", {})
@@ -468,7 +467,7 @@ def test_14_admin_dashboard_tenants_both(test_client, test_data):
 
 
 def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
-    """ROLE-CHECK: viewerB GET /api/get-all-data -> 403 (admin-only endpoint)."""
+    """FINDING-TEST: viewerB GET /api/get-all-data -> 403 (admin-only endpoint)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -479,7 +478,7 @@ def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
 
 
 def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
-    """ROLE-CHECK: viewerB GET /api/get-all-data?tenant=demoA -> 403 (admin-only)."""
+    """FINDING-TEST: viewerB GET /api/get-all-data?tenant=demoA -> 403 (admin-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -496,7 +495,6 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
         "password": test_data["viewer_b_password"]
     })
 
-    # ?tenant=all
     response = test_client.get("/api/get-logs?tenant=all")
     assert response.status_code == 200, f"Expected 200 for ?tenant=all, got {response.status_code}"
     data = response.json()
@@ -504,7 +502,6 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
     for log in logs:
         assert log.get("tenant") == "demob", f"VULNERABILITY: viewerB with ?tenant=all sees tenant={log.get('tenant')}"
 
-    # ?tenant=DemoA (mixed case)
     response = test_client.get("/api/get-logs?tenant=DemoA")
     assert response.status_code == 200, f"Expected 200 for ?tenant=DemoA, got {response.status_code}"
     data = response.json()
@@ -520,7 +517,6 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
         "password": test_data["viewer_a_password"]
     })
 
-    # get-logs
     response = test_client.get("/api/get-logs")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     data = response.json()
@@ -528,7 +524,6 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
     for log in logs:
         assert log.get("tenant") == "demoa", f"VULNERABILITY: viewerA sees tenant={log.get('tenant')}"
 
-    # get-alerts
     response = test_client.get("/api/get-alerts")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
     data = response.json()
@@ -538,8 +533,7 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
 
 
 def test_19_no_cookie_routes_return_401():
-    """FINDING-TEST: every route except /healthz, /ready, /login called with NO cookie -> exactly 401.
-    Uses a fresh TestClient (no cookies from previous logins)."""
+    """FINDING-TEST: every route except /healthz, /ready, /login called with NO cookie -> exactly 401."""
     from fastapi.testclient import TestClient
     from app.main import app
 

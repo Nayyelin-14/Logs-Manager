@@ -1,88 +1,144 @@
 SHELL := /bin/bash
 
-.PHONY: help up down restart logs ps seed test test-backend clean docs architecture seeds samples validate backend-up backend-down backend-ps backend-test backend-migrate backend-shell
+# Repo root (this Makefile lives at repo root)
+REPO_ROOT := $(shell pwd)
+BACKEND_DIR := $(REPO_ROOT)/backend-fastapi
+COMPOSE_BASE := docker compose -f docker-compose.yml
+COMPOSE := $(COMPOSE_BASE) -f docker-compose.appliance.yml
+COMPOSE_SAAS := $(COMPOSE_BASE) -f docker-compose.saas.yml
+
+# Test configuration - can be overridden via environment
+TEST_DB_PORT ?= 55432
+TEST_REDIS_PORT ?= 56379
+
+.PHONY: help up down up-saas down-saas restart logs ps seed test lint validate demo reset maintenance verify env samples backend-test backend-up backend-down backend-ps backend-shell backend-test backend-migrate
 
 # -----------------------
-# Top-level targets
+# Help
 # -----------------------
 
 help:
 	@echo "Logs Manager - Fullstack assignment targets:"
 	@echo ""
-	@echo "  make up              Start Docker Compose stack (FastAPI appliance mode)"
+	@echo "  make up              Start Docker Compose stack (appliance mode)"
+	@echo "  make up-saas         Start Docker Compose stack (SaaS mode, requires env vars)"
 	@echo "  make down            Stop and remove Docker Compose stack"
+	@echo "  make down-saas       Stop and remove SaaS Docker Compose stack"
+	@echo "  make restart         Restart Docker Compose stack"
 	@echo "  make logs            Follow container logs"
 	@echo "  make ps              Show container status"
-	@echo "  make seed            Seed demo data (tenants, users, logs, alert rule)"
+	@echo "  make env             Create .env from .env.example if missing"
+	@echo "  make seed            Seed demo tenants, users, logs, alert rules"
+	@echo "  make demo            Run bruteforce simulator to trigger alerts"
 	@echo "  make test            Run backend pytest tests"
+	@echo "  make lint            Run file size check + backend/frontend lint"
 	@echo "  make validate        Validate configuration and code"
+	@echo "  make maintenance     Run retention maintenance once"
+	@echo "  make reset           Dev data reset (confirmation required, refuses Neon)"
+	@echo "  make verify          Run acceptance checklist against running stack"
+	@echo "  make backend-shell   Shell into backend container"
 
 # -----------------------
-# FastAPI Docker targets (canonical)
+# Docker Compose - Appliance mode
 # -----------------------
 
-up: ## Start Docker Compose stack (FastAPI appliance mode)
-	@cd backend-fastapi && docker compose up -d --build
+up: env ## Start Docker Compose stack (appliance mode)
+	$(COMPOSE) up -d --build
 
 down: ## Stop and remove Docker Compose stack
-	@cd backend-fastapi && docker compose down
+	$(COMPOSE) down
 
 restart: ## Restart Docker Compose stack
-	@cd backend-fastapi && docker compose restart
+	$(COMPOSE) restart
 
 logs: ## Follow container logs
-	@cd backend-fastapi && docker compose logs -f
+	$(COMPOSE) logs -f
 
 ps: ## Show container status
-	@cd backend-fastapi && docker compose ps
+	$(COMPOSE) ps
 
 # -----------------------
-# Backend-fastapi targets (alias for clarity)
+# Docker Compose - SaaS mode
 # -----------------------
 
-backend-up: ## Start just the backend-fastapi services (postgres+redis+backend)
-	@cd backend-fastapi && docker compose up -d --build
+up-saas: env ## Start Docker Compose stack (SaaS mode)
+	$(COMPOSE_SAAS) up -d --build
 
-backend-down: ## Stop backend-fastapi services
-	@cd backend-fastapi && docker compose down
-
-backend-ps: ## Show backend-fastapi container status
-	@cd backend-fastapi && docker compose ps
-
-backend-test: ## Run backend pytest tests
-	@cd backend-fastapi && ./.venv/bin/python -m pytest -q
-
-test: backend-test ## Alias for backend-test
-
-backend-migrate: ## Apply Alembic migrations inside backend-fastapi container
-	@cd backend-fastapi && source .venv/bin/activate && alembic upgrade head
-
-backend-shell: ## Shell into backend-fastapi container
-	@cd backend-fastapi && docker compose exec backend sh
+down-saas: ## Stop and remove SaaS Docker Compose stack
+	$(COMPOSE_SAAS) down
 
 # -----------------------
 # Configuration
 # -----------------------
 
-env: ## Create backend-fastapi/.env from its template if it doesn't exist
-	@test -f backend-fastapi/.env || cp backend-fastapi/.env.example backend-fastapi/.env
-	@echo "Using backend-fastapi/.env (an existing file is never overwritten)"
+env: ## Create .env from .env.example if missing
+	@test -f .env || cp .env.example .env
+	@echo "Using .env (an existing file is never overwritten)"
 
 # -----------------------
 # Seed data
 # -----------------------
 
-seed: ## Seed demo tenants, users, logs, and an alert rule (uses Docker database)
-	@cd backend-fastapi && docker compose exec -T backend python scripts/seed_demo_data.py
+seed: env ## Seed demo tenants, users, logs, alert rules
+	$(COMPOSE) exec -T backend python scripts/seed_demo_data.py
 
-seeds: seed ## Alias for seed target
+seeds: seed ## Alias for seed
 
 # -----------------------
-# Samples
+# Demo
 # -----------------------
 
-samples: ## Copy/verify sample log files and scripts
-	@echo "Samples directory already present at samples/"
+demo: env ## Run bruteforce simulator to trigger alerts (requires running stack)
+	@python3 $(REPO_ROOT)/samples/simulator.py \
+		--rate 20 --duration 15 --scenario bruteforce \
+		--tenants demoA \
+		--url http://localhost:4500 \
+		--api-key "$${INGEST_API_KEY:-dev-ingest-key-change-me}" \
+		--syslog-host 127.0.0.1 --syslog-port 514
+
+# -----------------------
+# Backend targets (aliases)
+# -----------------------
+
+backend-up: up
+backend-down: down
+backend-ps: ps
+backend-shell: ## Shell into backend container
+	$(COMPOSE) exec backend sh
+
+backend-test: ## Run backend pytest tests (requires running stack or container exec)
+	@cd $(BACKEND_DIR) && TEST_DATABASE_URL="postgresql+asyncpg://logs:postgres_pass@localhost:$(TEST_DB_PORT)/logs_manager_test?sslmode=disable" TEST_REDIS_PORT=$(TEST_REDIS_PORT) ./.venv/bin/python -m pytest -q
+
+test: backend-test ## Alias for backend-test
+
+backend-migrate: ## Apply Alembic migrations
+	@cd $(BACKEND_DIR) && .venv/bin/python -m alembic upgrade head
+
+# -----------------------
+# Maintenance
+# -----------------------
+
+maintenance: env ## Run retention maintenance once
+	$(COMPOSE) exec -T backend python -m app.services.retention --days $${RETENTION_DAYS:-7}
+
+# -----------------------
+# Reset (dev only)
+# -----------------------
+
+reset: env ## Dev data reset (confirmation required; refuses Neon)
+	@echo -n "This will destroy all data. Type 'yes' to continue: " && read ans && \
+	if [ "$$ans" = "yes" ]; then \
+		case "$$(grep DATABASE_URL .env 2>/dev/null | cut -d= -f2)" in \
+			*neon*|*Neon*) echo "Refusing to reset Neon database."; exit 1 ;; \
+		esac; \
+		$(COMPOSE) down -v 2>/dev/null || true; \
+		$(COMPOSE) up -d --build; \
+		echo "Waiting for services..."; \
+		sleep 10; \
+		$(COMPOSE) exec -T backend python scripts/seed_demo_data.py; \
+	else \
+		echo "Reset cancelled."; \
+	fi
 
 # -----------------------
 # Validation
@@ -90,37 +146,37 @@ samples: ## Copy/verify sample log files and scripts
 
 validate: ## Validate configuration and code
 	@echo "Validating configuration..."
-	@test -f backend-fastapi/app/main.py && echo "FastAPI app exists" || (echo "FASTAPI MISSING"; exit 1)
-	@test -f backend-fastapi/migrations/versions/a1b2c3d4e5f6_fresh_baseline.py && echo "Alembic migration exists" || (echo "MIGRATION MISSING"; exit 1)
-	@test -f backend-fastapi/scripts/seed_demo_data.py && echo "Seed script exists" || (echo "SEED SCRIPT MISSING"; exit 1)
-	@test -f backend-fastapi/docker-compose.yml && echo "Compose file exists" || (echo "COMPOSE FILE MISSING"; exit 1)
-	@test -f backend-fastapi/.env.example && echo "Env template exists" || (echo "ENV TEMPLATE MISSING"; exit 1)
+	@test -f docker-compose.yml && echo "Compose: OK" || (echo "Compose: MISSING"; exit 1)
+	@test -f docker-compose.appliance.yml && echo "Compose (appliance): OK" || (echo "Compose appliance: MISSING"; exit 1)
+	@test -f docker-compose.saas.yml && echo "Compose (saas): OK" || (echo "Compose saas: MISSING"; exit 1)
+	@test -f .env.example && echo ".env.example: OK" || (echo ".env.example: MISSING"; exit 1)
+	@test -f $(BACKEND_DIR)/app/main.py && echo "FastAPI app: OK" || (echo "FastAPI app: MISSING"; exit 1)
+	@test -f $(BACKEND_DIR)/scripts/seed_demo_data.py && echo "Seed script: OK" || (echo "Seed script: MISSING"; exit 1)
+	@test -d $(REPO_ROOT)/ingest && echo "Ingest directory: OK" || (echo "Ingest dir: MISSING"; exit 1)
+	@test -f $(REPO_ROOT)/samples/simulator.py && echo "Simulator: OK" || (echo "Simulator: MISSING"; exit 1)
 	@echo "Validation complete"
 
 # -----------------------
-# Documentation
+# Lint
 # -----------------------
 
-docs: ## Generate documentation files
-	@echo "Documentation targets should be run individually:"
-	@echo "  make docs.architecture - Generate architecture.md"
-	@echo "  make docs.setup-appliance - Generate setup_appliance.md"
-	@echo "  make docs.setup-saas - Generate setup_saas.md"
+lint: ## File size check + basic validation
+	@bash $(REPO_ROOT)/scripts/check_file_sizes.sh
+	@test -f docker-compose.yml && echo "Compose: OK" || (echo "Compose: MISSING"; exit 1)
+	@test -f docker-compose.appliance.yml && echo "Compose (appliance): OK" || (echo "Compose appliance: MISSING"; exit 1)
+	@test -f docker-compose.saas.yml && echo "Compose (saas): OK" || (echo "Compose saas: MISSING"; exit 1)
+	@test -f Caddyfile && echo "Caddyfile: OK" || (echo "Caddyfile: MISSING"; exit 1)
 
-docs.architecture: ## Generate /docs/architecture.md
-	@echo "Creating /docs/architecture.md ..."
-	@mkdir -p /docs
-	@printf '# Architecture Documentation\n\nTODO: Add architecture documentation here.\n' > /docs/architecture.md
-	@echo "Done. Edit /docs/architecture.md as needed."
+# -----------------------
+# Verify (acceptance checklist)
+# -----------------------
 
-docs.setup-appliance: ## Generate /docs/setup_appliance.md
-	@echo "Creating /docs/setup_appliance.md ..."
-	@mkdir -p /docs
-	@printf '# Appliance Setup Guide\n\nTODO: Add appliance setup instructions here.\n' > /docs/setup_appliance.md
-	@echo "Done. Edit /docs/setup_appliance.md as needed."
+verify: ## Run acceptance checklist against running stack
+	@bash $(REPO_ROOT)/scripts/acceptance_check.sh
 
-docs.setup-saas: ## Generate /docs/setup_saas.md
-	@echo "Creating /docs/setup_saas.md ..."
-	@mkdir -p /docs
-	@printf '# SaaS Setup Guide\n\nTODO: Add SaaS setup instructions here.\n' > /docs/setup_saas.md
-	@echo "Done. Edit /docs/setup_saas.md as needed."
+# -----------------------
+# Samples
+# -----------------------
+
+samples: ## List sample files
+	@ls -la $(REPO_ROOT)/samples/

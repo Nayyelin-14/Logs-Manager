@@ -74,14 +74,23 @@ def upgrade() -> None:
         sa.Column('triggeredAt', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('event_ids', postgresql.ARRAY(sa.String()), nullable=False),
         sa.Column('severity', sa.String(length=50), nullable=False),
-        sa.Column('status', sa.String(length=50), nullable=False),
+        sa.Column('status', sa.Enum('open', 'acknowledged', 'resolved', name='alert_status'), server_default='open', nullable=False),
         sa.Column('title', sa.String(length=255), nullable=False),
+        sa.Column('tags', postgresql.ARRAY(sa.String()), server_default='{}', nullable=False),
         sa.Column('dedupe_key', sa.String(length=255), nullable=True),
+        sa.Column('group_key', sa.String(length=255), nullable=True),
+        sa.Column('count', sa.Integer(), server_default='1', nullable=False),
+        sa.Column('first_seen', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('last_seen', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('acknowledged_by', sa.String(length=100), nullable=True),
+        sa.Column('acknowledged_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['rule_id'], ['alert_rules.id'], name=op.f('fk_alerts_rule_id_alert_rules')),
     )
     op.create_index('ix_alerts_tenant_status', 'alerts', ['tenant', 'status'], unique=False)
     op.create_index('ix_alerts_rule_dedupe_triggered', 'alerts', ['rule_id', 'dedupe_key', 'triggeredAt'], unique=False)
+    op.create_index('ix_alerts_dedupe_key_active', 'alerts', ['dedupe_key'], unique=True, 
+                    postgresql_where=sa.text("status != 'resolved' AND dedupe_key IS NOT NULL"))
 
     op.create_table('email_notifications',
         sa.Column('id', sa.String(length=150), nullable=False),
@@ -104,71 +113,8 @@ def upgrade() -> None:
     op.create_index('ix_email_notifications_alert_id', 'email_notifications', ['alertId'], unique=False)
     op.create_index('ix_email_notifications_created_at', 'email_notifications', ['createdAt'], unique=False)
 
-    op.create_table('security_logs',
-        sa.Column('id', sa.String(length=25), nullable=False),
-        sa.Column('@timestamp', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('tenant', sa.String(length=100), nullable=False),
-        sa.Column('source', sa.Enum('FIREWALL', 'CROWDSTRIKE', 'AWS', 'M365', 'AD', 'API', 'NETWORK', name='Source'), nullable=False),
-        sa.Column('vendor', sa.String(length=100), nullable=True),
-        sa.Column('product', sa.String(length=100), nullable=True),
-        sa.Column('event_type', sa.String(length=200), nullable=False),
-        sa.Column('canonical_event_type', sa.String(length=200), nullable=True),
-        sa.Column('original_event_type', sa.String(length=200), nullable=True),
-        sa.Column('event_subtype', sa.String(length=200), nullable=True),
-        sa.Column('severity', sa.Integer(), nullable=False),
-        sa.Column('action', sa.Enum('ALLOW', 'DENY', 'CREATE', 'DELETE', 'LOGIN', 'LOGOUT', 'ALERT', 'QUARANTINE', 'CREATEUSER', name='Action'), nullable=True),
-        sa.Column('src_ip', sa.String(length=45), nullable=True),
-        sa.Column('src_port', sa.String(length=10), nullable=True),
-        sa.Column('dst_ip', sa.String(length=45), nullable=True),
-        sa.Column('dst_port', sa.String(length=10), nullable=True),
-        sa.Column('protocol', sa.String(length=20), nullable=True),
-        sa.Column('user', sa.String(length=255), nullable=True),
-        sa.Column('host', sa.String(length=255), nullable=True),
-        sa.Column('process', sa.String(length=255), nullable=True),
-        sa.Column('url', sa.Text(), nullable=True),
-        sa.Column('http_method', sa.String(length=10), nullable=True),
-        sa.Column('status_code', sa.Integer(), nullable=True),
-        sa.Column('rule_name', sa.String(length=255), nullable=True),
-        sa.Column('rule_id', sa.String(length=255), nullable=True),
-        sa.Column('cloud_account_id', sa.String(length=100), nullable=True),
-        sa.Column('cloud_region', sa.String(length=100), nullable=True),
-        sa.Column('cloud_service', sa.String(length=100), nullable=True),
-        sa.Column('raw', postgresql.JSONB(), nullable=False),
-        sa.Column('_tags', postgresql.ARRAY(sa.String()), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('ip', sa.String(length=45), nullable=True),
-        sa.Column('description', sa.Text(), nullable=True),
-        sa.Column('eventId', sa.Integer(), nullable=True),
-        sa.Column('loginType', sa.Integer(), nullable=True),
-        sa.Column('priority', sa.Integer(), nullable=True),
-        sa.Column('sha256', sa.String(length=64), nullable=True),
-        sa.Column('status', sa.String(length=50), nullable=True),
-        sa.Column('interface', sa.String(length=100), nullable=True),
-        sa.Column('mac', sa.String(length=17), nullable=True),
-        sa.Column('ingested_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-    )
-    op.execute('CREATE INDEX ix_security_logs_timestamp ON security_logs ("@timestamp")')
-    op.execute('CREATE INDEX ix_security_logs_tenant_timestamp ON security_logs (tenant, "@timestamp")')
-    op.execute('CREATE INDEX ix_security_logs_source_timestamp ON security_logs (source, "@timestamp")')
-    op.create_index('ix_security_logs_event_type', 'security_logs', ['event_type'], unique=False)
-    op.create_index('ix_security_logs_canonical_event_type', 'security_logs', ['canonical_event_type'], unique=False)
-    op.create_index('ix_security_logs_severity', 'security_logs', ['severity'], unique=False)
-    op.create_index('ix_security_logs_tenant_user', 'security_logs', ['tenant', 'user'], unique=False)
-    op.create_index('ix_security_logs_tenant_src_ip', 'security_logs', ['tenant', 'src_ip'], unique=False)
-    op.create_index('ix_security_logs_src_ip', 'security_logs', ['src_ip'], unique=False)
-    op.execute('CREATE INDEX ix_security_logs_tenant_created_at_desc ON security_logs (tenant, created_at DESC)')
-    op.execute('CREATE INDEX ix_security_logs_tenant_source_created_at_desc ON security_logs (tenant, source, created_at DESC)')
-    op.execute('CREATE INDEX ix_security_logs_tenant_action_created_at_desc ON security_logs (tenant, action, created_at DESC)')
-    op.execute('CREATE INDEX ix_security_logs_tenant_event_type_created_at_desc ON security_logs (tenant, event_type, created_at DESC)')
-    op.execute('CREATE INDEX ix_security_logs_tenant_canonical_event_type_created_at_desc ON security_logs (tenant, canonical_event_type, created_at DESC)')
-    op.create_index('ix_security_logs_ingested_at', 'security_logs', ['ingested_at'], unique=False)
-
 
 def downgrade() -> None:
-    op.drop_index('ix_security_logs_ingested_at', table_name='security_logs')
-    op.drop_table('security_logs')
     op.drop_index('ix_email_notifications_created_at', table_name='email_notifications')
     op.drop_index('ix_email_notifications_alert_id', table_name='email_notifications')
     op.drop_index('ix_email_notifications_tenant_status', table_name='email_notifications')
@@ -190,3 +136,4 @@ def downgrade() -> None:
     op.execute('DROP TYPE IF EXISTS "Source"')
     op.execute('DROP TYPE IF EXISTS "Status"')
     op.execute('DROP TYPE IF EXISTS "Role"')
+    op.execute('DROP TYPE IF EXISTS "alert_status"')

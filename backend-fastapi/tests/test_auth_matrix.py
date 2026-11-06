@@ -23,6 +23,14 @@ import pytest
 settings = get_settings()
 
 
+from conftest import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    VIEWER_A_EMAIL,
+    VIEWER_A_PASSWORD,
+    VIEWER_B_EMAIL,
+    VIEWER_B_PASSWORD,
+)
 def _login(client, email: str, password: str):
     res = client.post("/api/auth/login", json={"email": email, "password": password})
     return res
@@ -38,19 +46,19 @@ def _auth_check(client):
 
 def _get_admin_client():
     client = TestClient(app)
-    _login(client, "admin@demo.local", "Admin123!")
+    _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
     return client
 
 
 def _get_viewer_a_client():
     client = TestClient(app)
-    _login(client, "viewerA@demo.local", "ViewerA123!")
+    _login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
     return client
 
 
 def _get_viewer_b_client():
     client = TestClient(app)
-    _login(client, "viewerB@demo.local", "ViewerB123!")
+    _login(client, VIEWER_B_EMAIL, VIEWER_B_PASSWORD)
     return client
 
 
@@ -79,14 +87,14 @@ class TestLoginAndSession:
 
     def test_login_success_sets_httponly_cookies(self):
         client = TestClient(app)
-        res = _login(client, "admin@demo.local", "Admin123!")
+        res = _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         assert res.status_code == 200, f"login failed: {res.text}"
         assert "accessToken" in client.cookies, "accessToken cookie not set"
         assert "refreshToken" in client.cookies, "refreshToken cookie not set"
 
     def test_login_wrong_password_returns_401_same_message(self):
         client = TestClient(app)
-        res = _login(client, "admin@demo.local", "WrongPassword!")
+        res = _login(client, ADMIN_EMAIL, "WrongPassword!")
         assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
         assert res.json()["detail"] == "Invalid credentials"
 
@@ -125,7 +133,7 @@ class TestLoginAndSession:
 
     def test_expired_access_token_with_valid_refresh_refreshes(self):
         client = TestClient(app)
-        _login(client, "admin@demo.local", "Admin123!")
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         
         refresh_token = client.cookies.get("refreshToken")
         assert refresh_token is not None, "refresh token not set"
@@ -145,7 +153,7 @@ class TestLoginAndSession:
     def test_expired_refresh_token_returns_401(self):
         """Expired refresh token should return 401."""
         client = TestClient(app)
-        _login(client, "admin@demo.local", "Admin123!")
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         
         refresh_token = client.cookies.get("refreshToken")
         assert refresh_token is not None, "refresh token not set"
@@ -165,7 +173,7 @@ class TestLoginAndSession:
 
     def test_logout_invalidates_cookie(self):
         client = TestClient(app)
-        _login(client, "admin@demo.local", "Admin123!")
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         assert client.get("/api/get-logs").status_code == 200
         
         _logout(client)
@@ -175,7 +183,7 @@ class TestLoginAndSession:
 
     def test_access_token_not_accepted_as_refresh_token(self):
         client = TestClient(app)
-        _login(client, "admin@demo.local", "Admin123!")
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         access_token = client.cookies.get("accessToken")
         
         client2 = TestClient(app)
@@ -451,7 +459,7 @@ class TestRefreshRestrictions:
 
     def test_refresh_token_works_for_token_refresh(self):
         client = TestClient(app)
-        _login(client, "admin@demo.local", "Admin123!")
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         
         refresh_token = client.cookies.get("refreshToken")
         assert refresh_token is not None, "refresh token not set"

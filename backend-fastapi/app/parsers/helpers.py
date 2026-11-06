@@ -159,7 +159,7 @@ def map_aws_verb(event_name: Optional[str]) -> Optional[str]:
     if not event_name:
         return None
     if event_name.startswith("Create"):
-        return "CREATEUSER"
+        return "CREATE"
     if event_name.startswith("Delete"):
         return "DELETE"
     if "Login" in event_name or "SignIn" in event_name:
@@ -206,7 +206,7 @@ def map_ad_action(event_id: Optional[int]) -> Optional[str]:
         4624: "LOGIN",
         4625: "LOGIN",
         4634: "LOGOUT",
-        4720: "CREATEUSER",
+        4720: "CREATE",
         4726: "DELETE",
     }
     return mapping.get(event_id)
@@ -224,22 +224,45 @@ def determine_outcome(
     """
     Determine the outcome (success/failure/unknown) from event data.
     
-    Priority order for authentication-related outcomes:
-    1. AD: Event ID 4624 -> success, 4625 -> failure
-    2. M365: status field like 'Success', 'Failure'
-    3. AWS: status field like 'Failure' (from API response)
-    4. API: event_type containing 'failed' or 'failure' -> failure
-    5. Canonical event types: ad_logon_success/login_success -> success, ad_logon_failed/login_failed -> failure
-    6. Status field: success/successful/succeeded -> success, failure/failed/denied/error -> failure
-    7. Action field: only for LOGIN/LOGOUT events -> failure/error for failures
-    8. Default: unknown (including firewall actions which are not authentication)
+    Precedence rules:
+    1. Explicit status field (if recognized) takes highest priority
+    2. Event ID for authentication events (4624→success, 4625→failure)
+    3. Canonical event type (ad_logon_failed, login_failed, etc.)
+    4. Event type string (contains "failed"/"failure"/"success"/"succeeded")
+    5. Action field for authentication events
+    6. Default: unknown
+    
+    Args:
+        event_type: Original event type from source
+        canonical_event_type: Resolved canonical event type
+        status: Status field from event (e.g., "Success", "Failure")
+        action: Action field
+        severity: Severity value
+        event_id: Windows Event ID
+        source: Source system name
+    
+    Returns:
+        "success", "failure", or "unknown"
     """
+    # 1. Check explicit status field first (highest priority)
+    if status:
+        status_lower = str(status).lower()
+        if status_lower in ("success", "successful", "succeeded"):
+            return "success"
+        if "failure" in status_lower or "failed" in status_lower or "denied" in status_lower or "error" in status_lower:
+            # Exception: firewall actions with failure status -> unknown
+            if source and str(source).lower() == "firewall":
+                return "unknown"
+            return "failure"
+    
+    # 2. Event ID for authentication events
     if event_id is not None:
         if event_id == 4624:
             return "success"
         if event_id == 4625:
             return "failure"
     
+    # 3. Canonical event types
     if canonical_event_type:
         canonical_lower = canonical_event_type.lower()
         if canonical_lower in ("ad_logon_success", "login_success", "logon_success", "userloggedin"):
@@ -247,32 +270,23 @@ def determine_outcome(
         if canonical_lower in ("ad_logon_failed", "login_failed", "logon_failed"):
             return "failure"
     
+    # 4. Event type string
     if event_type:
         event_lower = str(event_type).lower()
+        # Only check for failure if status was not provided or unrecognized
         if "failed" in event_lower or "failure" in event_lower:
             return "failure"
         if "success" in event_lower:
             return "success"
     
-    if status:
-        status_lower = str(status).lower()
-        if status_lower in ("success", "successful", "succeeded"):
-            return "success"
-        if source and str(source).lower() == "firewall":
-            return "unknown"
-        if "failure" in status_lower or "failed" in status_lower or "denied" in status_lower or "error" in status_lower:
-            return "failure"
-    
+    # 5. Action field for authentication events  
     if action:
         action_lower = str(action).lower()
         if action_lower in ("failure", "error"):
             return "failure"
-        if action_lower in ("deny", "drop", "reject", "block", "allow", "permit", "pass"):
-            return "unknown"
         if action_lower in ("login", "logout"):
-            if source and str(source).lower() == "aws":
-                return "unknown"
-            if source and str(source).lower() == "firewall":
+            if source and str(source).lower() in ("firewall", "aws"):
                 return "unknown"
     
+    # 6. Default: unknown
     return "unknown"

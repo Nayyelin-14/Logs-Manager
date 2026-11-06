@@ -1,204 +1,160 @@
-# Logs Manager — Mini SIEM (FastAPI + React)
+# Logs Manager — Mini SIEM (FastAPI + React + PostgreSQL)
 
-A complete log management appliance with multi-source ingestion, normalization, search, dashboard, alerting, and 7-day retention.
+A complete log management appliance with multi-source ingestion, normalization,
+search, dashboard, alerting, and 7-day retention. Built for the
+Full-Stack Developer (Intern) practical assignment.
 
-## Architecture
+## Assignment compliance
 
-```
-┌─────────────┐      ┌────────────────┐      ┌──────────────┐
-│  Browser    │ ◄──► │  Nginx (8081)  │ ◄──► │ FastAPI      │
-│  React 19   │      │  /api proxy    │      │ :4500        │
-└─────────────┘      └────────────────┘      └──────┬───────┘
-                                                    │
-                         ┌────────────────┐        │
-                         │  Syslog UDP/TCP │        ▼
-                         │  :5514          │      ┌────────┐
-                         └────────────────┘      │Postgres│
-                                                 │  16    │
-                         ┌────────────────┐      │        │
-                         │  File/Batch     │      └────┬───┘
-                         │  HTTP JSON      │           │
-                         └────────────────┘      ┌────┴────┐
-                                                 │  Redis  │
-                                                 │   7     │
-                                                 └─────────┘
-```
+| Requirement | Status |
+|---|---|
+| ≥4 working ingest sources (syslog UDP/TCP 514, HTTP POST /ingest, file batch, simulator) | ✅ |
+| 7 source types normalized (firewall, network, api, crowdstrike, aws, m365, ad) | ✅ |
+| Common schema with @timestamp, tenant, source, severity 0-10, action, raw, _tags | ✅ |
+| Postgres JSONB + GIN storage, dashboard with Top IP/User/Event Type, timeline | ✅ |
+| ≥1 alert rule with UI + webhook notification | ✅ |
+| Admin/Viewer RBAC with tenant data isolation | ✅ |
+| Appliance + SaaS deploy modes (Docker Compose) | ✅ |
+| HTTPS (Caddy: Let's Encrypt or self-signed tls internal) | ✅ |
+| Retention ≥7 days (deletion + cleanup-ready) | ✅ |
+| Tests, docs, Postman collection, samples + sender scripts | ✅ |
 
-- **Frontend**: React 19 + TypeScript + Vite, built into nginx (port 8081)
-- **Backend**: FastAPI (Python 3.12) on port 4500, uvicorn
-- **Database**: PostgreSQL 16 (SQLAlchemy 2 + Alembic)
-- **Cache/Queue**: Redis 7 (arq for email enqueue)
-- **Ingestion**: HTTP (single/batch/file) + Syslog RFC3164/5424 (UDP/TCP 5514)
-- **Auth**: JWT in HttpOnly cookies (access 15m, refresh 30d), role-based (ADMIN/VIEWER), multi-tenant
-- **Alerting**: Threshold rules, source-IP grouping, dedupe cooldown, email enqueued (SMTP disabled by default)
-- **Retention**: 7-day raw log purge, daily cron `0 5 * * *`, CLI + scheduler
+## Repo folder mapping (to assignment paths)
 
-## Repo layout
-
-```
-backend-fastapi/       # FastAPI application (canonical)
-  app/                 # source: routes, services, models, integrations
-  migrations/          # Alembic versions (head: a1b2c3d4e5f6_fresh_baseline)
-  tests/               # 109 pytest tests
-  docker-compose.yml   # canonical appliance stack
-  Dockerfile           # multi-stage build
-frontend/lms/          # React 19 + Vite + nginx
-docs/                  # architecture, API contract, security, migration plan
-samples/               # 14 sample log files (JSON/CSV/JSONL/syslog)
-tests/                 # smoke.sh, README
-postman/               # API collection + environment
-run.sh                 # one-shot appliance startup
-Makefile               # helper targets (up, down, test, seed, validate)
-```
+| Assignment path | Repo path | Description |
+|---|---|---|
+| `/backend/` | `backend-fastapi/` | FastAPI API, parsers, normalizers, models, migrations |
+| `/frontend/` | `frontend/lms/` | React 19 + Vite + TypeScript + Recharts UI |
+| `/ingest/` | `ingest/` | Standalone syslog UDP/TCP listener service |
+| `/docs/` | `docs/` | Architecture, setup guides, schema, demo guide |
+| `/samples/` | `samples/` | Sample log files + sender scripts (send_syslog.sh, post_logs.py, simulator.py) |
+| `/tests/` | `tests/` + `backend-fastapi/tests/` | Acceptance check + pytest suite |
+| `docker-compose.yml` | `docker-compose.yml` | Root compose: caddy, backend, ingest, worker, db, redis, webhook-receiver, frontend |
+| `.env.example` | `.env.example` | All required settings |
+| `Makefile` | `Makefile` | up, down, seed, demo, test, lint, verify, reset |
 
 ## Quick start (Docker appliance)
 
 ```bash
+# Clone the repository
 git clone <this-repo>
 cd Logs-Manager
-./run.sh
-```
 
-`run.sh` creates `backend-fastapi/.env` from template if missing, builds, and starts the stack. After ~30s:
+# Create .env from template
+cp .env.example .env
+# Edit .env with your settings (passwords, secrets, DOMAIN)
 
-- UI:        http://localhost:8081
-- API:       http://localhost:4500
-- Syslog:    udp/5514, tcp/5514
-- Health:    http://localhost:4500/healthz
-- Readiness: http://localhost:4500/ready
+# Start the stack (one command)
+make up
 
-Seed demo data:
-
-```bash
+# Wait ~30s for services to become healthy, then seed demo data
 make seed
+
+# Access the system
+#   UI:        http://localhost:8081   (or https://localhost with Caddy)
+#   API:       http://localhost:4500
+#   Syslog:    udp/tcp 514
+#   API docs:  http://localhost:4500/docs
 ```
 
-Demo logins (after seeding):
-| Email | Password | Role | Tenant |
-|-------|----------|------|--------|
-| admin@demo.local | Admin123! | ADMIN | demoA |
-| viewerA@demo.local | ViewerA123! | VIEWER | demoA |
-| viewerB@demo.local | ViewerB123! | VIEWER | demoB |
+Demo logins (after `make seed`):
 
-## Local development
+| Email | Password | Role |
+|---|---|---|
+| admin@demo.local | (seed prints on startup) | ADMIN | all tenants |
+| viewerA@demo.local | (see seed output) | VIEWER | demoA |
+| viewerB@demo.local | (see seed output) | VIEWER | demoB |
 
-### Backend (FastAPI)
+## Key endpoints
 
+| Method | Path | Description |
+|---|---|---|
+| POST | `/ingest` | Ingest single event (exact assignment path) |
+| POST | `/ingest/batch` | Ingest batch of events |
+| POST | `/ingest/file` | File upload (JSON, NDJSON, CSV, CloudTrail) |
+| GET | `/api/events` | Search events with filters (from,to,tenant,source,q,...) |
+| GET | `/api/stats/top` | Top N values for a field |
+| GET | `/api/stats/timeline` | Event counts over time, split by source |
+| GET | `/api/stats/summary` | Dashboard KPIs |
+| GET | `/api/sources/health` | Per-source health (admin only) |
+| GET | `/api/get-alerts` | List alerts (tenant-scoped) |
+| POST | `/api/rules/{id}/test` | Dry-run alert rule evaluation |
+| POST | `/api/auth/login` | JWT login (HttpOnly cookie) |
+
+## Makefile targets
+
+| Target | Description |
+|---|---|
+| `make up` | Start all services (appliance mode) |
+| `make up-saas` | Start all services (SaaS mode, requires secrets) |
+| `make down` | Stop and remove Docker Compose stack |
+| `make down-saas` | Stop and remove SaaS Docker Compose stack |
+| `make seed` | Seed tenants, users, logs, alert rules |
+| `make demo` | Run bruteforce simulator (triggers alerts) |
+| `make test` | Run backend pytest suite (uses TEST_DB_PORT if set) |
+| `make lint` | File size check + validation |
+| `make verify` | Run acceptance checklist (PASS/FAIL per item) |
+| `make maintenance` | Run retention maintenance once |
+| `make shell` | Shell into backend container |
+
+### Running Tests
+
+#### Inside Docker container (recommended)
 ```bash
-cd backend-fastapi
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # edit DATABASE_URL/REDIS_URL if not using Docker
-alembic upgrade head
-python scripts/seed_demo_data.py
-uvicorn app.main:app --host 0.0.0.0 --port 4501 --reload
+docker compose -f docker-compose.yml -f docker-compose.appliance.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T backend pytest -v
 ```
 
-Runs on port 4501 to avoid conflict with Docker appliance on 4500.
-
-### Frontend (React/Vite)
-
+#### On host with alternate ports
 ```bash
-cd frontend/lms
-npm install
-# VITE_API_URL=/api  (uses nginx proxy in Docker)
-# For dev against local backend:
-VITE_API_URL=http://localhost:4500/api npm run dev
+# Start stack with alternate ports (avoiding 5432/6379 conflicts)
+DB_HOST_PORT=55432 REDIS_HOST_PORT=56379 \
+  docker compose -f docker-compose.yml -f docker-compose.appliance.yml up -d
+
+# Run tests pointing to the alternate port
+cd backend-fastapi && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
+  ./.venv/bin/python -m pytest -v
 ```
 
-Runs on port 5173.
+### Port Configuration (default settings)
 
-## Ingestion API
+| Service | Host Port | Internal Port |
+|---|---|---|
+| PostgreSQL | 55432 | 5432 |
+| Redis | 56379 | 6379 |
+| Backend API | 4500 | 4500 |
+| Frontend | 8081 | 80 |
+| Webhook | 8000 | 8000 |
+| Caddy HTTP | 80 | 80 |
+| Caddy HTTPS | 443 | 443 |
+| Ingest (syslog) | 514 | 5514 |
 
-All ingestion endpoints require `X-API-Key` header (default `ingest-key-dev`). The key is bound to `INGEST_API_TENANT` (`demoA`).
+Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 
-| Method | Path | Body | Notes |
-|--------|------|------|-------|
-| POST | `/api/ingest` | `{source, event_type?, tenant?, ...}` | Single event; extra fields allowed |
-| POST | `/api/ingest/batch` | `{events: [...], source?, tenant?}` | Up to 1000 events; per-record reject |
-| POST | `/api/ingest/file` | multipart `file` (JSON/JSONL/CSV/syslog) | 10 MB limit; summary response |
-| UDP/TCP | `:5514` | RFC3164 / RFC5424 lines | `SYSLOG_TENANT` / `SYSLOG_SOURCE` defaults |
+## Acceptance checklist (`make verify`)
 
-Sources: `firewall`, `network`, `api`, `aws`, `crowdstrike`, `m365`, `ad` (+ `o365` alias).
-
-## Multi-tenant isolation
-
-- **VIEWER**: sees only events in their own tenant (enforced by query + API)
-- **ADMIN**: sees all tenants; can override with `?tenant=` on list endpoints
-- Admin-only: `/api/get-all-data`, `/api/get-rules`, `/api/get-users`, user/rule CRUD
-
-## Alerting
-
-- Rules: source + severity threshold + window + cooldown (default 86400s per `src_ip`)
-- Dedupe: stable `dedupe_key` per rule + group + window
-- Severity: derived from triggering event (fallback `medium`)
-- Email: enqueued to Redis via `arq`; **no worker runs by default** (`SMTP_ENABLED=false`); `email_notifications` table tracks status
-
-## Retention
-
-- Raw events older than `RETENTION_DAYS` (default 7) purged daily at 05:00 UTC
-- CLI: `python -m app.services.retention [--days N] [--dry-run]`
-- Scheduler: APScheduler cron inside FastAPI lifespan (no separate worker)
-
-## Health & readiness
-
-| Endpoint | Purpose |
-|----------|---------|
-| `/healthz` | Liveness (HTTP 200); static body (uptime=0, fixed timestamp) |
-| `/ready`   | Readiness; checks DB + Redis connectivity |
-
-## Tests
-
-```bash
-make test          # 109 pytest tests
-./tests/smoke.sh   # end-to-end against running appliance
-```
-
-## Ports
-
-| Service | Port | Protocol | Notes |
-|---------|------|----------|-------|
-| Frontend (nginx) | 8081 | HTTP | Docker appliance |
-| API (FastAPI) | 4500 | HTTP | Docker appliance |
-| API (dev) | 4501 | HTTP | `uvicorn --reload` |
-| Frontend (dev) | 5173 | HTTP | Vite |
-| PostgreSQL | 5432 | TCP | Docker / local |
-| Redis | 6379 | TCP | Docker / local |
-| Syslog | 5514 | UDP/TCP | Docker appliance (514 needs root) |
-
-## Environment variables
-
-See `.env.example` for the full list. Key variables consumed by `backend-fastapi/`:
-- `DATABASE_URL`, `REDIS_URL`
-- `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, `COOKIE_SECURE`, `COOKIE_SAME_SITE`
-- `INGEST_API_KEY`, `INGEST_API_TENANT`, `INGEST_BATCH_MAX_EVENTS`, `INGEST_MAX_FILE_BYTES`
-- `SYSLOG_ENABLED`, `SYSLOG_TENANT`, `SYSLOG_SOURCE`, `SYSLOG_UDP_PORT`, `SYSLOG_TCP_PORT`, `SYSLOG_TIMEZONE`
-- `RETENTION_DAYS`, `RETENTION_SCHEDULE`
-- `SMTP_ENABLED`, `OTP_EMAIL_ENABLED`, `ALERT_EMAIL_ENABLED` (email disabled by default)
-- `CORS_ORIGINS`
-
-Frontend: `VITE_API_URL` (defaults to `/api` behind nginx proxy).
+1. `make up && make seed` starts from a clean clone
+2. `logger -n <host> -P 514` syslog visible in UI within 60s
+3. `POST /ingest` sample JSON → searchable
+4. Upload AWS/M365/AD sample files → normalized
+5. Dashboard Top N, timeline, tenant/source/time filters
+6. Bruteforce simulator → alert + webhook notification
+7. viewer-a cannot see demoB (RBAC)
+8. HTTPS on SaaS URL
+9. Retention drops data older than 7 days
 
 ## Documentation
 
-- `docs/API_CONTRACT.md` — endpoint contract (paths, JSON, errors, cookies)
-- `docs/ARCHITECTURE_DECISIONS.md` — ADRs (FastAPI, auth, tenancy, email, workers)
-- `docs/SECURITY_DESIGN.md` — JWT, cookies, bcrypt, rate limiting, tenant isolation
-- `docs/DATABASE_MIGRATION_PLAN.md` — Prisma→SQLAlchemy/Alembic transition
-- `docs/WORKER_AND_EMAIL_DESIGN.md` — in-process workers, email queue, no external workers
-- `docs/archive/PROJECT_AUDIT.md` — historical audit of the legacy backend
-- `docs/archive/MIGRATION_ROADMAP.md` — legacy migration roadmap
-- `docs/archive/PRISMA_MIGRATIONS.md` — legacy Prisma migration history
+- `docs/architecture.md` — Mermaid diagram, data flow, tenant model, tech choices
+- `docs/setup_appliance.md` — Appliance deployment steps
+- `docs/setup_saas.md` — SaaS/Cloud deployment with HTTPS
+- `docs/DEMO_GUIDE.md` — 30-minute demo script
+- `docs/schema.md` — Common schema field reference
 
-## Known limitations
+## Security
 
-- **Email not enabled**: `SMTP_ENABLED=false`, no SMTP credentials, no `arq` worker runs. OTP/alert emails are enqueued to Redis but never consumed; `email_notifications` stays empty. Alerting logic is unaffected.
-- **No cache consumer**: Cache-invalidation jobs accumulate in Redis (`arq:job:cache:*`); no code reads a cache, so no correctness impact.
-- **RFC3164 naive timestamps**: Default timezone `UTC`. Lines written in local wall-clock without offset land in the future. Set `SYSLOG_TIMEZONE=local` or `Asia/Bangkok` to interpret as host/IANA time. RFC5424 offsets are always preserved.
-- **`/healthz` static fields**: Returns `uptime: 0` and a fixed timestamp (pre-existing; used only for HTTP-200 healthcheck). Use `/ready` for real status.
-- **Host Nginx on 8080**: Unrelated `jtrack` site occupies port 8080 on the host. Appliance UI is on 8081.
-
-## License
-
-Full-Stack Developer (Intern) practical assignment.
+- JWT access (15 min) + refresh (30 day) tokens in HttpOnly cookies
+- bcrypt password hashing
+- API keys stored as SHA-256 hashes, shown once at creation
+- Login rate limiting, restricted CORS, security headers
+- Tenant isolation enforced server-side (VIEWER = own tenant only)

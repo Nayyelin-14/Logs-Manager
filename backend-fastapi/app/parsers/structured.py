@@ -124,32 +124,32 @@ def normalize_network(event: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize Network/Router Syslog events."""
     # Start with base syslog normalization
     firewall = normalize_syslog(event)
-    
+
     # Extract additional network-specific fields from raw message
     message = safe_string(pick(event, ["message", "msg", "raw"]))
     regex = r"<(\d+)>(\w+ \d+ \d+:\d+:\d+) (\S+)(?: if=(\S+))?(?: event=(\S+))?(?: mac=(\S+))?(?: reason=(\S+))?"
     match = message and re.match(regex, message)
-    
+
     has_explicit_timestamp = bool(pick(event, ["timestamp", "@timestamp", "time", "ts"]))
-    
+
     original_event_type = (
         firewall["event_type"] if firewall["event_type"] != "network_traffic"
         else (match.group(5) if match else "link_event")
     )
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.NETWORK)
-    
+
     result = {
         **firewall,
         "source": Source.NETWORK,
-        "priority": firewall["priority"] or (match.group(1) and int(match.group(1))),
-        "timestamp": has_explicit_timestamp and firewall["timestamp"] or safe_timestamp(match.group(2) if match else None),
-        "host": firewall["host"] or (match.group(3) if match else "unknown"),
+        "priority": firewall["priority"] or (match.group(1) if match else None),
+        "timestamp": has_explicit_timestamp and firewall["timestamp"] or (match and safe_timestamp(match.group(2)) or firewall["timestamp"]),
+        "host": firewall["host"] or (match and match.group(3) or None),
         "event_type": original_event_type,
         "canonical_event_type": canonical_event_type,
         "original_event_type": original_event_type,
-        "description": firewall["description"] or (match.group(7) if match else None),
-        "mac": firewall["mac"] or (match.group(6) if match else None),
-        "interface": firewall["interface"] or (match.group(4) if match else None),
+        "description": firewall["description"] or (match and match.group(7) or None),
+        "mac": firewall["mac"] or (match and match.group(6) or None),
+        "interface": firewall["interface"] or (match and match.group(4) or None),
         "vendor": firewall["vendor"] if firewall["vendor"] != "generic" else "generic",
         "product": firewall["product"] if firewall["product"] != "firewall" else "network",
     }

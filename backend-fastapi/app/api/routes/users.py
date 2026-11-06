@@ -15,6 +15,7 @@ from app.core.database import get_session
 from app.core.dependencies import get_current_user, require_admin
 from app.core.security import hash_password, TokenPayload
 from app.models.user import User
+from app.models.events import Event
 
 router = APIRouter()
 
@@ -266,7 +267,7 @@ async def get_all_data(
     tenant = tenant if tenant and tenant != "all" else current_user.tenant
     
     total_events = await session.execute(
-        select(func.count()).select_from(SecurityEvent).where(SecurityEvent.tenant == tenant)
+        select(func.count()).select_from(Event).where(Event.tenant == tenant)
     )
     total_alerts = await session.execute(
         select(func.count()).select_from(Alert).where(Alert.tenant == tenant)

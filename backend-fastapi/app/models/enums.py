@@ -14,22 +14,22 @@ class Status(str, enum.Enum):
 
 
 class Action(str, enum.Enum):
-    ALLOW = "ALLOW"
-    DENY = "DENY"
-    CREATE = "CREATE"
-    DELETE = "DELETE"
-    LOGIN = "LOGIN"
-    LOGOUT = "LOGOUT"
-    ALERT = "ALERT"
-    QUARANTINE = "QUARANTINE"
-    CREATEUSER = "CREATEUSER"
+    ALLOW = "allow"
+    DENY = "deny"
+    CREATE = "create"
+    DELETE = "delete"
+    LOGIN = "login"
+    LOGOUT = "logout"
+    ALERT = "alert"
+    QUARANTINE = "quarantine"
+    CREATEUSER = "createuser"
 
 
 class Source(str, enum.Enum):
-    FIREWALL = "FIREWALL"
-    CROWDSTRIKE = "CROWDSTRIKE"
-    AWS = "AWS"
-    M365 = "M365"
-    AD = "AD"
-    API = "API"
-    NETWORK = "NETWORK"
+    FIREWALL = "firewall"
+    CROWDSTRIKE = "crowdstrike"
+    AWS = "aws"
+    M365 = "m365"
+    AD = "ad"
+    API = "api"
+    NETWORK = "network"

@@ -3,6 +3,7 @@ import { AuthForm } from "../../AppComponents/Forms/AuthForm";
 
 import { toast } from "sonner";
 import { useEffect } from "react";
+
 function LoginPage() {
   const actionData = useActionData();
   useEffect(() => {
@@ -14,7 +15,7 @@ function LoginPage() {
   }, [actionData]);
   return (
     <div className="w-full">
-      <AuthForm formName="login" />
+      <AuthForm />
     </div>
   );
 }

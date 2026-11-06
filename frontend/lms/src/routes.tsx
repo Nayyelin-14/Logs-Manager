@@ -1,33 +1,21 @@
-import { createBrowserRouter, redirect } from "react-router-dom";
+import { createBrowserRouter } from "react-router-dom";
 import { Suspense, lazy } from "react";
 import RootLayout from "./pages/RootLayout";
 import NotFound from "./pages/NotFound";
 import { ShieldCheck, LoaderCircle } from "lucide-react";
 
 // Actions
-import {
-  loginAction,
-  logoutAction,
-} from "./router/actions";
-
-// Loaders
-import {
-  authCheckLoader,
-  dashboardLoader,
-  managementLoader,
-} from "./router/loaders";
+import { loginAction, logoutAction } from "./router/actions";
 
 // Lazy-loaded pages
 const DashBoard = lazy(() => import("./pages/ManageDashboard.tsx/DashBoard"));
 const Dashboard_stats = lazy(() => import("./pages/Dashboard-stats"));
 const LoginPage = lazy(() => import("./pages/Auth/LoginPage"));
-const AuthRootLayout = lazy(() => import("./pages/Auth/AuthRootLayout"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const LogsPage = lazy(() => import("./pages/LogsPage"));
 const AlertsPage = lazy(() => import("./pages/AlertsPage"));
 const RulesPage = lazy(() => import("./pages/RulesPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
-import { useUserStore } from "./store/userStore";
 
 // eslint-disable-next-line react-refresh/only-export-components
 const SuspenseFallback = () => (
@@ -41,6 +29,10 @@ const SuspenseFallback = () => (
     </div>
   </div>
 );
+
+// Simple loaders that just return null (auth check done client-side)
+const dashboardLoader = () => null;
+const managementLoader = () => null;
 
 const router = createBrowserRouter([
   {
@@ -87,9 +79,6 @@ const router = createBrowserRouter([
       {
         path: "/logout",
         action: logoutAction,
-        loader: () => {
-          return redirect("/");
-        },
       },
     ],
   },

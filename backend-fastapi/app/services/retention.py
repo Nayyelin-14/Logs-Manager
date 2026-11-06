@@ -15,28 +15,28 @@ from typing import Optional
 from sqlalchemy import delete, func, select
 
 from app.core.config import get_settings
-from app.models.security_event import SecurityEvent
+from app.models.events import Event
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
 async def count_expired(session, days: Optional[int] = None) -> int:
-    """Count raw events older than the retention window."""
+    """Count raw events older than the retention window based on ingested_at."""
     retention_days = settings.RETENTION_DAYS if days is None else days
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     result = await session.execute(
-        select(func.count()).select_from(SecurityEvent).where(SecurityEvent.timestamp < cutoff)
+        select(func.count()).select_from(Event).where(Event.ingested_at < cutoff)
     )
     return int(result.scalar() or 0)
 
 
 async def purge_expired_events(session, days: Optional[int] = None) -> int:
-    """Delete raw events older than the retention window. Returns rows deleted."""
+    """Delete raw events older than the retention window based on ingested_at. Returns rows deleted."""
     retention_days = settings.RETENTION_DAYS if days is None else days
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     result = await session.execute(
-        delete(SecurityEvent).where(SecurityEvent.timestamp < cutoff)
+        delete(Event).where(Event.ingested_at < cutoff)
     )
     await session.commit()
     deleted = int(result.rowcount or 0)
