@@ -15,18 +15,16 @@ It also includes robust authentication flows and a rich set of reusable UI compo
 
 ## Features
 
-- **User Access**: Login, registration, OTP verification, and password recovery
-- **Role-Based Access Control (RBAC)**: Separate permissions for Admin and User
-  - **Admin**: Full access to manage alert rules, alerts, logs, and user accounts
-  - **User**: Can view alerts and create/delete logs, cannot perform administrative tasks
+- **Authentication**: Login and logout for admin-provisioned accounts. Public registration, OTP verification, and password recovery are not implemented.
+- **Role-Based Access Control (RBAC)**: Separate permissions for `ADMIN` and `VIEWER`
+  - **ADMIN**: Full access to dashboard, logs, alerts, analytics, rules, users, and tenants
+  - **VIEWER**: Read-only access to dashboard, logs, alerts, and analytics
 - **Analytics Dashboard**: Browse logs, apply filters, search efficiently, and visualize data with interactive charts
-- **Alert Rule (Admin)**: Create, edit, delete, and monitor alerts
+- **Alert Rules (Admin)**: Create, edit, enable/disable, test, and delete rules
 - **UI Components**: Built with shadcn/ui and Tailwind for a modern, responsive, and consistent interface
-- **State Management**: Global state managed with Zustand for users, filters, and app settings
+- **State Management**: Zustand for session and user state
 - **Data Handling**: Efficient data fetching, caching, and syncing using React Router actions/loaders and TanStack Query
 - **Form Validation**: Zod schemas integrated with React Hook Form for robust input validation
-- **Developer Experience**: Modular, reusable, and scalable architecture for maintainable and high-performance code
-- **Theming & Styling**: Dark/light mode support and customizable Tailwind themes
 - **Performance Optimizations**: Lazy loading, code splitting, and optimized rendering for faster UI
 
 ---
@@ -43,8 +41,8 @@ It also includes robust authentication flows and a rich set of reusable UI compo
 - **React Hook Form**: Form management
 - **Recharts**: Charts and data visualization
 - **Lucide React**: Icons library
-- **Lottie React**: Animations
 - **Zustand**: Lightweight state management
+- **React Router**: Routing, loaders, and actions
 
 ---
 
@@ -67,58 +65,50 @@ It also includes robust authentication flows and a rich set of reusable UI compo
 
 ## How to Run
 
-### Clone the Repository
+For the complete application, use the root-level workflow:
 
 ```bash
-
-git clone <your-repo-url>
-cd frontend
-
-#install dependencies
-npm install
-
-## Environment Variables
-#Create a .env file in the root folder and add your configuration:
-VITE_API_URL=https://your-backend-api-url
-
-#Run Development Server
-npm run dev
-
-#Build for Production
-npm run build
+make up
+make seed
 ```
+
+The UI is served at `http://localhost:8080`. See the root
+[`README.md`](../../README.md) for prerequisites and shutdown commands.
+
+For frontend-only development:
+
+```bash
+cd frontend/lms
+npm install
+echo 'VITE_API_URL=http://localhost:4500' > .env
+npm run dev
+```
+
+Use `npm run lint`, `npx tsc -b`, and `npm run build` to run the frontend
+checks. The root `make check-frontend` target runs the same commands.
 
 ## Folder Structure
 
 ```
-
-frontend/
-├─ node_modules/ # Node.js dependencies
-├─ public/ # Public assets like index.html
-├─ src/ # Main source code
-│ ├─ api/ # API calls and request handling
-│ ├─ AppComponents/ # Reusable app components / layout components
-│ ├─ assets/ # Images, icons, fonts, CSS
-│ ├─ components/ # ShadcnUI components
-│ ├─ hooks/ # Custom React hooks
-│ ├─ lib/ # Utility libraries / helper functions
-│ ├─ data/ # Sample data
-│ ├─ pages/ # Page-level components (views)
-│ ├─ router/ # Route actions and loaders
-│ ├─ Schemas/ # zod validation schemas
-│ ├─ store/ # State management (Zustand)
-│ ├─ types/ # TypeScript types and interfaces
-│ ├─ index.css # Global styles
-│ ├─ main.tsx # Entry point for the app
-│ ├─ rotues.tsx # Routing configuration
-│ └─ vite-env.d.ts # Vite TypeScript environment declarations
-├─ .env # Environment variables
-├─ .eslintrc.js # ESLint configuration
-├─ .gitignore # Git ignore rules
-├─ index.html # Main HTML template
-├─ package.json # Project dependencies and scripts
-├─ tsconfig.json # TypeScript configuration
-├─ tsconfig.node.json # Node-specific TS config
-└─ vite.config.ts # Vite configuration
-
+frontend/lms/
+├─ public/              # Static assets
+├─ src/
+│  ├─ api/              # API calls and request handling
+│  ├─ AppComponents/    # Reusable app and layout components
+│  ├─ assets/           # Images, icons, and styles
+│  ├─ components/       # shadcn/ui components
+│  ├─ hooks/            # Custom React hooks
+│  ├─ lib/              # Utilities and constants
+│  ├─ pages/            # Page-level views
+│  ├─ router/           # Route actions and loaders
+│  ├─ Schemas/          # Zod validation schemas
+│  ├─ store/            # Zustand state
+│  ├─ types/            # TypeScript types
+│  ├─ main.tsx          # Entry point
+│  └─ routes.tsx        # Route configuration
+├─ index.html
+├─ package.json
+├─ playwright.config.ts
+├─ vite.config.ts
+└─ eslint.config.js
 ```

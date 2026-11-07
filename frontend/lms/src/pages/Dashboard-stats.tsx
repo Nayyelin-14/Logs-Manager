@@ -145,7 +145,7 @@ const DashboardStatsPage = () => {
   const user = useUserStore((state) => state.user);
   const [tenant, setTenant] = useState("all");
   const [range, setRange] = useState("7d");
-  const userId = user?.role === "USER" ? String(user.id) : undefined;
+  const userId = user?.role === "VIEWER" ? String(user.id) : undefined;
   const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery(useDashboardStats(tenant, range, userId));
   const createdRules = data?.alertsRuleByDay?.reduce((sum, item) => sum + item._count.id, 0) ?? 0;
   const recentLogsQuery = useInfiniteQuery(LogsInfiniteQueryWithFilters({ date: "", search: "", severity: null, eventType: null, source: null, tenant: null, user: null, srcIp: null }));

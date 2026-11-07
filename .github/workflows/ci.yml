@@ -39,6 +39,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install backend dependencies
         run: |
           cd backend-fastapi
@@ -46,10 +51,19 @@ jobs:
           . .venv/bin/activate
           pip install -r requirements.txt
 
+      - name: Install frontend dependencies
+        run: cd frontend/lms && npm ci
+
+      - name: Environment sync check (example files only)
+        run: python3 scripts/check_env_sync.py
+
       - name: Run file size check
         run: |
           chmod +x scripts/check_file_sizes.sh
           bash scripts/check_file_sizes.sh
+
+      - name: Run frontend checks
+        run: cd frontend/lms && npm run lint && npx tsc -b && npm run build
 
       - name: Run backend tests
         env:
@@ -68,8 +82,8 @@ jobs:
 
       - name: Validate compose files
         run: |
-          docker compose -f docker-compose.yml config -q
-          docker compose -f docker-compose.yml -f docker-compose.saas.yml config -q
+          docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.appliance.yml config -q
+          docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.saas.yml config -q
 
       - name: Build backend image
         run: |

@@ -1,11 +1,12 @@
+import { redirect } from "react-router-dom";
+
+import { useUserStore } from "../../store/userStore";
+
 /**
  * Auth check loaders for React Router v6
- * 
- * Note: React Router v6 loaders run in a special context where hooks
- * cannot be used. Authentication state is managed client-side via:
- * - AuthForm component for login
- * - UserStore for global user state
- * - Session storage for persistent login across refreshes
+ *
+ * Loaders run outside React, so read the persisted user store directly
+ * instead of using hooks.
  */
 
 export const dashboardLoader = async () => {
@@ -14,6 +15,11 @@ export const dashboardLoader = async () => {
 };
 
 export const managementLoader = async () => {
-  // Admin data fetching done client-side in components
+  const user = useUserStore.getState().user;
+
+  if (user?.role !== "ADMIN") {
+    return redirect("/dashboard");
+  }
+
   return null;
 };

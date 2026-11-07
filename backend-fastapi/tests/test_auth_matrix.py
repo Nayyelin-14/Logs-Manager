@@ -418,6 +418,47 @@ class TestUserManagement:
         res = admin.delete(f"/api/delete-user/{admin_id}")
         assert res.status_code == 403, f"BUG: expected 403, got {res.status_code}: {res.text}"
 
+    def test_get_users_sorted_by_create_at_desc(self):
+        admin = _get_admin_client()
+        res = admin.get("/api/get-users")
+        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
+        users = res.json()["usersList"]
+        assert users, "expected at least one seeded user"
+        timestamps = [datetime.fromisoformat(user["createAt"]) for user in users]
+        assert timestamps == sorted(timestamps, reverse=True), (
+            f"users not sorted by createAt desc: {[user['createAt'] for user in users]}"
+        )
+
+    def test_created_user_appears_first_in_users_list(self):
+        admin = _get_admin_client()
+        email = _unique_email("sortcheck")
+        res = admin.post(
+            "/api/create-user",
+            data={"username": "sortcheck", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+        assert res.status_code == 201, f"create failed: {res.text}"
+
+        res = admin.get("/api/get-users")
+        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
+        users = res.json()["usersList"]
+        assert users[0]["email"] == email, "newest user should be first when sorted by createAt desc"
+        assert users[0]["role"] == "VIEWER"
+
+    def test_legacy_users_endpoint_returns_admin_listing(self):
+        admin = _get_admin_client()
+        res = admin.get("/api/users/anything")
+        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
+        data = res.json()
+        assert "usersList" in data and "newCursor" in data
+        for user in data["usersList"]:
+            assert user["role"] in {"VIEWER", "ADMIN"}, f"unexpected role: {user['role']}"
+
+    def test_viewer_cannot_list_users_via_either_endpoint(self):
+        viewer = _get_viewer_a_client()
+        for path in ("/api/get-users", "/api/users/anything"):
+            res = viewer.get(path)
+            assert res.status_code == 403, f"viewer {path}: expected 403, got {res.status_code}: {res.text}"
+
     def test_new_user_can_login_and_sees_only_their_tenant(self):
         admin = _get_admin_client()
         email = _unique_email("newviewer2")

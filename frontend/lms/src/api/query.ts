@@ -21,7 +21,9 @@ export const queryClient = new QueryClient({
 });
 
 const getAllusers = async (q?: string) => {
-  const response = await adminApi.get(`users/${q ?? " "}`);
+  const response = await adminApi.get("/get-users", {
+    params: q ? { search: q } : undefined,
+  });
 
   return response.data;
 };

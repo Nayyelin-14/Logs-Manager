@@ -76,19 +76,19 @@ export default function AnalyticsPage() {
 
   const alertsBySeverity = useMemo(() => {
     const counts = new Map(
-      (data?.alertCountsBySeverity ?? []).map((item: any) => [item.severity?.toLowerCase() ?? "", item.count ?? 0]) ?? [],
+      (data?.alertCountsBySeverity ?? []).map((item) => [item.severity?.toLowerCase() ?? "", item.count ?? 0]) ?? [],
     );
     return severityLevels.map((level) => ({ ...level, value: Number(counts.get(level.key) ?? 0) }));
   }, [data?.alertCountsBySeverity]);
 
   const sources = useMemo(() => {
-    const sorted = [...(data?.sources ?? [])].sort((a: any, b: any) => (b._count ?? 0) - (a._count ?? 0));
-    const top = sorted.slice(0, 4).map((item: any, index: number) => ({
+    const sorted = [...(data?.sources ?? [])].sort((a, b) => (b._count ?? 0) - (a._count ?? 0));
+    const top = sorted.slice(0, 4).map((item, index: number) => ({
       name: item.source ?? "Unknown",
       value: item._count ?? 0,
       color: sourceColors[index % sourceColors.length],
     }));
-    const otherCount = sorted.slice(4).reduce((sum: number, item: any) => sum + (item._count ?? 0), 0);
+    const otherCount = sorted.slice(4).reduce((sum: number, item) => sum + (item._count ?? 0), 0);
     if (otherCount > 0) top.push({ name: "Other sources", value: otherCount, color: "var(--surface-muted)" });
     return top;
   }, [data?.sources]);
@@ -107,11 +107,11 @@ export default function AnalyticsPage() {
   }
 
   const activeAlerts = data.alertCountsByStatus
-    ?.filter((item: any) => !["resolved", "closed"].includes((item.status ?? "").toLowerCase()))
-    ?.reduce((sum: number, item: any) => sum + (item.count ?? 0), 0) ?? 0;
-  const alertTotal = alertsBySeverity.reduce((sum: number, item: any) => sum + item.value, 0);
-  const sourceTotal = (data?.sources ?? []).reduce((sum: number, item: any) => sum + (item._count ?? 0), 0);
-  const maxActivity = Math.max(1, ...(activity.flat().map((cell: any) => cell.count ?? 0).filter((c: number) => !isNaN(c))));
+    ?.filter((item) => !["resolved", "closed"].includes((item.status ?? "").toLowerCase()))
+    ?.reduce((sum: number, item) => sum + (item.count ?? 0), 0) ?? 0;
+  const alertTotal = alertsBySeverity.reduce((sum: number, item) => sum + item.value, 0);
+  const sourceTotal = (data?.sources ?? []).reduce((sum: number, item) => sum + (item._count ?? 0), 0);
+  const maxActivity = Math.max(1, ...(activity.flat().map((cell) => cell.count ?? 0).filter((c: number) => !isNaN(c))));
   const peak = activity.flat().reduce<ActivityCell | null>(
     (best: ActivityCell | null, cell: ActivityCell) => (cell.count > (best?.count ?? 0) ? cell : best),
     null,
@@ -145,7 +145,7 @@ export default function AnalyticsPage() {
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="all">All tenants</SelectItem>
-                {((data?.tenants ?? []) || []).map((item: any) => (
+                {((data?.tenants ?? []) || []).map((item) => (
                   <SelectItem key={item.tenant} value={item.tenant}>
                     {item.tenant}
                   </SelectItem>
@@ -154,7 +154,7 @@ export default function AnalyticsPage() {
             </Select>
           )}
           <div className="inline-flex rounded-xl bg-rail p-1" role="group" aria-label="Analytics time range">
-            {[{" value": "1d", "label": "Today" }, {" value": "3d", "label": "3 days" }, {" value": "7d", "label": "7d" }].map((option: any) => (
+            {[{ value: "1d", label: "Today" }, { value: "3d", label: "3 days" }, { value: "7d", label: "7d" }].map((option) => (
               <Button key={option.value} type="button" size="sm" variant={range === option.value ? "signal" : "ghost"} className="h-8 px-3 text-xs" aria-pressed={range === option.value} onClick={() => setRange(option.value)}>
                 {option.label}
               </Button>
@@ -221,7 +221,7 @@ export default function AnalyticsPage() {
               </span>
             </div>
             <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-surface">
-              {alertsBySeverity.map((item: any) => (
+              {alertsBySeverity.map((item) => (
                 <span
                   key={item.key}
                   title={`${item.name}: ${item.value}`}
@@ -230,7 +230,7 @@ export default function AnalyticsPage() {
               ))}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3">
-              {alertsBySeverity.map((item: any) => (
+              {alertsBySeverity.map((item) => (
                 <div
                   key={item.key}
                   className="flex items-center justify-between gap-2 text-[11px]"
@@ -275,13 +275,13 @@ export default function AnalyticsPage() {
                       paddingAngle={2}
                       stroke="var(--surface)"
                     >
-                      {sources.map((item: any) => (
+                      {sources.map((item) => (
                         <Cell key={item.name} fill={item.color} />
                       ))}
                     </Pie>
                     <Tooltip
                       contentStyle={chartTooltipStyle}
-                      formatter={(value: any) => [Number(value).toLocaleString(), "events"]}
+                      formatter={(value) => [Number(value).toLocaleString(), "events"]}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -295,7 +295,7 @@ export default function AnalyticsPage() {
               <div className="w-full min-w-0 space-y-2 px-1">
                 {sources
                   .slice(0, 4)
-                  .map((item: any) => (
+                  .map((item) => (
                     <div
                       key={item.name}
                       className="flex items-center justify-between gap-2 text-[10px]"
@@ -347,17 +347,17 @@ export default function AnalyticsPage() {
           <div className="min-w-[650px]">
             <div className="grid grid-cols-[48px_repeat(8,minmax(0,1fr))] gap-1.5 pb-2 text-center font-mono text-[9px] text-ink-muted">
               <span className="text-left">UTC</span>
-              {intervals.map((item: any) => (
+              {intervals.map((item) => (
                 <span key={item.start}>{item.label}</span>
               ))}
             </div>
             <div className="flex flex-col gap-1.5">
-              {activity.map((row: any, day: number) => (
+              {activity.map((row, day: number) => (
                 <div key={day} className="grid grid-cols-[48px_repeat(8,minmax(0,1fr))] items-center gap-1.5">
                   <span className="text-[11px] text-ink-muted">
                     {weekdays[day] ?? "?"}
                   </span>
-                  {row.map((cell: any) => {
+                  {row.map((cell) => {
                     const intensity =
                       cell.count !== undefined && maxActivity > 0
                         ? Math.round(
@@ -403,10 +403,10 @@ export default function AnalyticsPage() {
             <EmptyState icon={Activity} title="No event categories" description="Categories appear as events are indexed." />
           ) : (
             <div className="space-y-3.5 p-4 pt-3">
-              {((data?.topEventTypes ?? []) || []).slice(0, 7).map((item: any, index: number) => {
+              {((data?.topEventTypes ?? []) || []).slice(0, 7).map((item, index: number) => {
                 const max =
                   Math.max(
-                    ...((data?.topEventTypes ?? []) || []).map((entry: any) => entry.count ?? 0),
+                    ...((data?.topEventTypes ?? []) || []).map((entry) => entry.count ?? 0),
                     1,
                   );
                 return (

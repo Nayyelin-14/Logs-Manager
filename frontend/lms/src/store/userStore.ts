@@ -1,12 +1,13 @@
 // store/useUserStore.ts
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { Role } from "../types/types";
 
 export type UserData = {
   id: string;
   username: string;
   email: string;
-  role?: string;
+  role?: Role;
   tenant?: string;
 };
 

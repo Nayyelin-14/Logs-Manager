@@ -24,3 +24,4 @@ export const CreateSchema = z.object({
 });
 
 export type CreateUserFormValues = z.infer<typeof CreateSchema>;
+export type CreateUserFormInput = z.input<typeof CreateSchema>;

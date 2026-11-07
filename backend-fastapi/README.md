@@ -21,24 +21,25 @@ See docs/architecture.md for the full architecture diagram and tenant model.
 
 ## Quick Start (Development)
 
+Use the root-level workflow (the canonical entry point):
+
 ```bash
-# 1. Install dependencies
-cd backend-fastapi
-make env       # copies .env.example to .env
+# Clone the repository and create .env
+cp .env.example .env
 # Edit .env with your settings (or use defaults)
 
-# 2. Start the services
-make backend-up
+# 1. Start all services (appliance mode)
+make up
 
-# 3. Wait for services to start (~30 seconds)
+# 2. Wait ~30s for services to become healthy, then seed demo data
+make seed
 
-# 4. Seed the database
-make backend-seed
-# or: python scripts/seed_demo_data.py
-
-# 5. Verify it's working
-make backend-ps
+# 3. Verify
+make test            # backend pytest suite
+make check-frontend  # frontend typecheck, lint, and build
 ```
+
+For backend-only development, start `db` and `redis` with Compose and run the FastAPI app on port 4500. See `docs/setup_appliance.md` for detailed steps.
 
 ## Available Services
 
@@ -54,30 +55,44 @@ make backend-ps
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/login` - Login with username/password
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/otp` - OTP verification
+- `POST /api/auth/login` - Login (HttpOnly JWT cookies)
+- `GET /api/auth/auth-check` - Verify session
 - `POST /api/auth/logout` - Logout (clears cookies)
+- Public registration, OTP verification, and password recovery are not implemented; users are admin-provisioned via `POST /api/create-user`.
 
 ### Ingestion
-- `POST /api/ingest` - Single event or batch
-- `POST /api/ingest/file` - File upload (AWS, M365, AD JSON/NDJSON)
-- `GET /api/search` - Search events with filters
-- `GET /api/stats` - Dashboard statistics
+- `POST /ingest` / `POST /api/ingest` - Single event (exact assignment path)
+- `POST /ingest/batch` / `POST /api/ingest/batch` - Batch events
+- `POST /ingest/file` / `POST /api/ingest/file` - File upload (JSON, NDJSON, CSV, syslog text)
+- `GET /api/events` / `GET /api/get-logs` - Search events with filters
+- `GET /api/stats/summary` - Dashboard KPIs
+- `GET /api/stats/top` - Top N values for a field
+- `GET /api/stats/timeline` - Event counts over time, split by source
+- `GET /api/sources/health` - Per-source health (admin only)
+- `GET /api/dashboard` - Dashboard statistics
 
 ### Alerts & Rules
-- `GET /api/rules` - List alert rules
-- `POST /api/rules` - Create rule (Admin)
-- `PUT /api/rules/{id}` - Update rule (Admin)
-- `PATCH /api/rules/{id}/enabled` - Enable/disable (Admin)
-- `DELETE /api/rules/{id}` - Delete rule (Admin)
-- `GET /api/alerts` - List alerts (tenant-scoped)
+- `GET /api/get-alerts` - List alerts (tenant-scoped)
 - `PATCH /api/alerts/{id}` - Update alert status (Admin)
-- `POST /api/alerts/{id}/ack` - Acknowledge alert (Admin)
+- `GET /api/get-rules` - List alert rules
+- `POST /api/create-alertRule` - Create rule (Admin)
+- `PUT /api/update-rule/{id}` - Update rule (Admin)
+- `PATCH /api/rules/{id}/enabled` - Enable/disable rule (Admin)
+- `DELETE /api/delete-rule/{id}` - Delete rule (Admin)
+- `POST /api/rules/{id}/test` - Dry-run rule evaluation (Admin)
 
-### Users
-- `GET /api/users` - List users (Admin)
-- `POST /api/users` - Create user (Admin)
+### Users & Tenants (Admin)
+- `GET /api/get-users` - List users
+- `POST /api/create-user` - Create user
+- `PUT /api/update-user` - Update user
+- `DELETE /api/delete-user/{user_id}` - Delete user
+- `GET /api/get-all-data` - Aggregated dashboard counts
+- `GET /api/tenants` - List tenants
+- `POST /api/tenants` - Create tenant (API key returned once)
+- `PATCH /api/tenants/{name}` - Activate/deactivate tenant
+- `POST /api/tenants/{name}/rotate-key` - Rotate tenant API key
+
+Full details: `docs/API_CONTRACT.md` and `docs/SECURITY_DESIGN.md`.
 
 ## Environment Variables
 
@@ -104,10 +119,10 @@ See `.env.example` for all required settings. Key variables:
 - `CORS_ORIGINS` - Allowed origins for CORS
 
 > **Email delivery status: not enabled.** `SMTP_ENABLED=false` in both
-> `.env` and `docker-compose.yml`, no SMTP credentials are configured, and no
-> arq worker process runs in the appliance. OTP/alert emails are written to
-> the Redis `email_queue` but are never consumed or delivered; the
-> `email_notifications` table stays empty. Alerting itself is unaffected.
+> `.env` and `docker-compose.yml`, and no SMTP credentials are configured.
+> Alert emails are enqueued to Redis but are not consumed/delivered by the
+> alert/retention worker; the `email_notifications` table stays empty.
+> Alerting itself is unaffected. There is no self-registration or OTP flow.
 
 ## Development
 
@@ -118,7 +133,7 @@ make test  # Runs pytest against the test database (tests/conftest.py)
 # or: pytest tests/ -q
 ```
 
-All 109 tests pass, including:
+The full suite passes (507 tests after consolidating the standalone tenancy tests), including:
 - Ingestion API (single/batch/file, tenant enforcement, limits)
 - Syslog + batch parsing and source resolution
 - Retention (7-day purge, dry-run, cron parsing, timezone policy)

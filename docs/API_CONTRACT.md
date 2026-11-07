@@ -49,36 +49,7 @@ All endpoints preserve:
 }
 ```
 
-### 2.2 POST `/api/auth/register`
-
-| Aspect | Contract |
-|--------|---------|
-| **Method** | POST |
-| **Path** | `/api/auth/register` |
-| **Request Body** | `{ username, email, tenant }` |
-| **Response (200)** | `{ message, userData: OtpRecord, tenant, username, token }` |
-| **Flow** | Creates OTP, queues email, returns rememberToken |
-
-### 2.3 POST `/api/auth/verify-Otp`
-
-| Aspect | Contract |
-|--------|---------|
-| **Method** | POST |
-| **Path** | `/api/auth/verify-Otp` |
-| **Request Body** | `{ username, email, tenant, otp, token }` |
-| **Response (200)** | `{ isSuccess: true, message, token: verifyToken }` |
-| **Errors** | 400 (validation), 403 (expired/wrong/rate-limited) |
-
-### 2.4 POST `/api/auth/confirm-password`
-
-| Aspect | Contract |
-|--------|---------|
-| **Method** | POST |
-| **Path** | `/api/auth/confirm-password` |
-| **Request Body** | `{ email, username, tenant, password, confirmPassword, token }` |
-| **Response (201)** | `{ message, userId, userData: UserPublic }` |
-| **Cookies Set** | `accessToken`, `refreshToken` |
-| **Errors** | 400 (validation), 403 (expired/wrong token), 500 |
+**Registration / OTP / password recovery:** `POST /api/auth/register`, `POST /api/auth/verify-Otp`, and `POST /api/auth/confirm-password` are **not implemented**. Accounts are admin-provisioned with `POST /api/create-user`; there is no public self-registration or OTP flow.
 
 ### 2.5 POST `/api/auth/logout`
 
@@ -158,7 +129,7 @@ All endpoints preserve:
 | **Auth** | JWT required |
 | **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`, `date`, `search`, `limit`, `cursor` |
 | **Pagination** | Cursor-based (`cursor` = last event ID) |
-| **Response (200)** | `{ logs: LogWithSeverityLevel[], hasNextPage: boolean, newCursor: string\|null }` |
+| **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number }` |
 
 **LogWithSeverityLevel:**
 ```json
@@ -176,11 +147,11 @@ All endpoints preserve:
 }
 ```
 
-**Severity Mapping (Frontend expects):**
+**Severity Mapping (backend):**
 - `0-3` → `"low"`
-- `4-7` → `"medium"`
-- `8-10` → `"high"`
-- `>=9` → `"critical"` (if used)
+- `4-6` → `"medium"`
+- `7-8` → `"high"`
+- `9-10` → `"critical"`
 
 **Tenant Scoping:**
 - `VIEWER` (role=VIEWER): Ignores `tenant` query param, forces `tenant = user.tenant`
@@ -207,8 +178,8 @@ All endpoints preserve:
 | **Method** | GET |
 | **Path** | `/api/dashboard` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant` param REMOVED — ADMIN scoped to own tenant |
-| **Response (200)** | Same (scoped to admin's tenant) |
+| **Query Params** | `tenant` (optional). VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
+| **Response (200)** | Same (tenant-scoped per rules above) |
 
 **DashboardStats (Key Fields):**
 ```json
@@ -231,15 +202,7 @@ All endpoints preserve:
 }
 ```
 
-### 5.2 GET `/api/user-dashboard/:userId` (Viewer)
-
-| Aspect | Contract |
-|--------|---------|
-| **Method** | GET |
-| **Path** | `/api/user-dashboard/{userId}` |
-| **Auth** | JWT required, role=VIEWER |
-| **Query Params** | `range` (`1d`,`3d`,`7d`) |
-| **Response** | Same structure as admin but scoped to user's tenant |
+**`/api/user-dashboard/:userId`:** not implemented; viewers use `GET /api/dashboard` scoped to their own tenant.
 
 ---
 
@@ -252,9 +215,9 @@ All endpoints preserve:
 | **Method** | GET |
 | **Path** | `/api/get-alerts` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant` param REMOVED — scoped to user's tenant |
-| **Pagination** | Cursor-based |
-| **Response (200)** | `{ alerts: AlertWithRule[], hasNextPage, newCursor }` |
+| **Query Params** | `tenant`, `status`, `severity`, `search`, `limit`, `cursor`. VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
+| **Pagination** | Cursor-based (`newCursor`) |
+| **Response (200)** | `{ alerts: AlertWithRule[], hasNextPage: boolean, newCursor: string|null }` |
 
 **AlertWithRule:**
 ```json
@@ -294,8 +257,8 @@ All endpoints preserve:
 | **Method** | GET |
 | **Path** | `/api/get-rules` |
 | **Auth** | ADMIN required |
-| **Query Params** | `tenant` param REMOVED — scoped to admin's tenant |
-| **Response (200)** | `{ rules: AlertRule[], hasNextPage, newCursor }` |
+| **Query Params** | `tenant`, `search`, `limit`, `cursor`. VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
+| **Response (200)** | `{ rules: AlertRule[], hasNextPage: boolean, newCursor: string|null }` |
 
 **AlertRule:**
 ```json
@@ -338,9 +301,9 @@ All endpoints preserve:
 | Aspect | Contract |
 |--------|---------|
 | **Method** | PATCH |
-| **Path** | `/api/rules/{id}/enabled` |
+| **Path** | `/api/rules/{id}/enabled?enabled=true` |
 | **Auth** | ADMIN required |
-| **Request Body** | `{ enabled: boolean }` |
+| **Query Params** | `enabled` (boolean) |
 | **Response (200)** | `{ message, rule }` |
 
 ### 7.5 DELETE `/api/delete-rule/:id`
@@ -412,8 +375,8 @@ All endpoints preserve:
 | **Method** | GET |
 | **Path** | `/api/get-all-data` |
 | **Auth** | ADMIN required |
-| **Query Params** | **REMOVED** — scoped to admin's tenant |
-| **Response** | Counts for dashboard cards |
+| **Query Params** | `tenant` (optional). Admin cross-tenant view when empty/`all`; otherwise scoped |
+| **Response** | Counts for dashboard cards; includes `tenants` when viewing all tenants |
 
 ---
 

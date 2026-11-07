@@ -4,9 +4,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-import sys
-sys.path.insert(0, '/home/nay/projects/logs/Logs-Manager/backend-fastapi')
-
 from app.schemas.normalized_event import NormalizedEvent, Source, Action, Outcome
 
 

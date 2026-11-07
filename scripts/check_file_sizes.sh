@@ -18,8 +18,12 @@ while IFS= read -r -d '' file; do
   fi
 done < <(git ls-files -z 2>/dev/null | xargs -0 -I{} sh -c 'test -f "{}" && echo "{}"')
 
-# For new/untracked files, check each
+# For new/untracked files, check each. Archived historical docs are intentionally
+# moved/superseded and are exempt from the new-file size limit.
 while IFS= read -r -d '' file; do
+  case "$file" in
+    docs/archive/*) continue ;;
+  esac
   lines=$(wc -l < "$file" 2>/dev/null || echo 0)
   if [ "$lines" -gt "$MAX_LINES" ]; then
     echo "  [FAIL] ${file}: ${lines} lines (new file exceeds ${MAX_LINES})"

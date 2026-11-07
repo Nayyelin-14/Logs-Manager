@@ -11,7 +11,7 @@ COMPOSE_SAAS := $(COMPOSE_BASE) -f docker-compose.saas.yml
 TEST_DB_PORT ?= 55432
 TEST_REDIS_PORT ?= 56379
 
-.PHONY: help up down up-saas down-saas restart logs ps seed test lint validate demo reset maintenance verify env samples backend-test backend-up backend-down backend-ps backend-shell backend-test backend-migrate
+.PHONY: help up down up-saas down-saas restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate
 
 # -----------------------
 # Help
@@ -37,6 +37,13 @@ help:
 	@echo "  make reset           Dev data reset (confirmation required, refuses Neon)"
 	@echo "  make verify          Run acceptance checklist against running stack"
 	@echo "  make backend-shell   Shell into backend container"
+	@echo "  make frontend-install  Install frontend dependencies (npm ci)"
+	@echo "  make frontend-check  Frontend lint + typecheck + production build"
+	@echo "  make check-env       Environment sync check (example files only; safe for CI)"
+	@echo "  make check-files     File size and configuration validation"
+	@echo "  make check           check-env + check-files + frontend-check"
+	@echo "  make compose-check   Validate Docker Compose files parse"
+	@echo "  make test-deps       Start only db + redis for backend tests"
 
 # -----------------------
 # Docker Compose - Appliance mode
@@ -110,6 +117,27 @@ backend-test: ## Run backend pytest tests (requires running stack or container e
 	@cd $(BACKEND_DIR) && TEST_DATABASE_URL="postgresql+asyncpg://logs:postgres_pass@localhost:$(TEST_DB_PORT)/logs_manager_test?sslmode=disable" TEST_REDIS_PORT=$(TEST_REDIS_PORT) ./.venv/bin/python -m pytest -q
 
 test: backend-test ## Alias for backend-test
+
+frontend-install: ## Install frontend dependencies
+	cd $(REPO_ROOT)/frontend/lms && npm ci
+
+frontend-check: ## Frontend lint + typecheck + production build
+	cd $(REPO_ROOT)/frontend/lms && npm run lint && npx tsc -b && npm run build
+
+check-env: ## Environment sync check (example files only; safe for CI)
+	python3 $(REPO_ROOT)/scripts/check_env_sync.py
+
+check-files: ## File size and configuration validation
+	@bash $(REPO_ROOT)/scripts/check_file_sizes.sh
+
+check: check-env check-files frontend-check ## Run safe acceptance checks (no local .env.local read)
+
+compose-check: ## Validate Docker Compose files parse
+	docker compose -f docker-compose.yml -f docker-compose.appliance.yml config -q
+	docker compose -f docker-compose.yml -f docker-compose.saas.yml config -q
+
+test-deps: env ## Start only db + redis for backend tests
+	$(COMPOSE) up -d db redis
 
 backend-migrate: ## Apply Alembic migrations
 	@cd $(BACKEND_DIR) && .venv/bin/python -m alembic upgrade head

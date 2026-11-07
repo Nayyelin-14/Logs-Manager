@@ -75,10 +75,16 @@ async def _get_evidence_ids(
     group_by: str,
     group_value: str,
     window_start: datetime,
-    window_end: datetime,
     rule: AlertRule,
 ) -> tuple[list[str], list[str]]:
-    """Fetch up to 100 event IDs and tags for the matching group in the window."""
+    """Fetch up to 100 event IDs and tags for the matching group in the window.
+
+    The predicate must match the aggregate query exactly. In particular it
+    must not add an upper bound: the aggregate query counts every event with
+    ``ts >= window_start``, including future-dated events, so bounding
+    evidence at ``now`` would make ``len(event_ids) < count`` and the next
+    evaluation would "discover" already-counted events and double-count them.
+    """
     group_column = getattr(Event, group_by, None)
     if group_column is None:
         return [], []
@@ -86,7 +92,6 @@ async def _get_evidence_ids(
     conditions = [
         Event.tenant == tenant,
         Event.ts >= window_start,
-        Event.ts <= window_end,
         group_column == group_value,
     ]
     conditions.extend(_build_filter_conditions(rule))
@@ -194,7 +199,7 @@ async def evaluate_rule(
             continue
 
         evidence_ids, tags = await _get_evidence_ids(
-            session, tenant, group_by, str(group_value), window_start, now, rule
+            session, tenant, group_by, str(group_value), window_start, rule
         )
 
         try:

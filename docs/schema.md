@@ -162,7 +162,7 @@ Syslog severity (0=worst, 7=best) → Normalized (0-10, 10=worst):
 
 ## Database Storage
 
-The `events` table is partitioned by RANGE on `ts` (daily). A DEFAULT partition captures events outside defined partition ranges.
+The `events` table is a single Postgres table (no declarative partitioning). Retention is deletion-based: the worker deletes events older than `RETENTION_DAYS` (default 7). See `docs/schema.png` for the current schema diagram.
 
 ### Indexes
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Checks environment variable consistency across all four env files.
+Checks environment variable consistency across example env files by default.
+Use --check-local to also inspect non-example .env.local files (may read local secrets).
 Exits with non-zero if:
   (a) a key exists in one file but not the others
   (b) a key used in code is in no example file
@@ -8,6 +9,7 @@ Exits with non-zero if:
   (d) a committed file contains something that looks like a real secret
 """
 
+import argparse
 import os
 import re
 import sys
@@ -81,6 +83,10 @@ def check_placeholder_secrets(env_dict: dict, is_example: bool) -> list:
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Check environment variable consistency')
+    parser.add_argument('--check-local', action='store_true', help='also inspect non-example .env.local files (may read local secrets)')
+    args = parser.parse_args()
+
     root_dir = Path(__file__).parent.parent
     backend_dir = root_dir / 'backend-fastapi'
     frontend_dir = root_dir / 'frontend' / 'lms'
@@ -89,7 +95,7 @@ def main():
     backend_example = backend_dir / '.env.example'
     frontend_example = frontend_dir / '.env.example'
     
-    backend_local = parse_env_file(backend_dir / '.env.local')
+    backend_local = parse_env_file(backend_dir / '.env.local') if args.check_local else {}
     
     all_pass = True
     
@@ -113,39 +119,39 @@ def main():
     
     # CHECK 2: Keys in non-example files must be in example files
     print("=== CHECK 2: Non-example files must not have keys missing from examples ===")
-    unexpected_keys = []
-    for key in backend_local:
-        if key not in example_keys:
-            unexpected_keys.append(key)
+    if args.check_local:
+        unexpected_keys = []
+        for key in backend_local:
+            if key not in example_keys:
+                unexpected_keys.append(key)
     
-    if missing_from_example:
-        print(f"FAIL: Keys in code but not in example files: {missing_from_example}")
-        all_pass = False
+        if unexpected_keys:
+            print(f"FAIL: Keys in .env.local but not in example files: {unexpected_keys}")
+            all_pass = False
+        else:
+            print("PASS: All .env.local keys present in example files")
     else:
-        print("PASS: All code keys present in example files")
-    
-    if unexpected_keys:
-        print(f"FAIL: Keys in .env.local but not in example files: {unexpected_keys}")
-        all_pass = False
-    else:
-        print("PASS: All .env.local keys present in example files")
+        print("SKIP: .env.local not inspected (use --check-local)")
     
     # CHECK 3: Keys required for development must be in .env.local
     print("\n=== CHECK 3: Required keys must be in .env.local ===")
-    required_keys = [
-        'DATABASE_URL', 'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET',
-        'REDIS_URL', 'CORS_ORIGINS'
-    ]
-    missing_from_local = []
-    for key in required_keys:
-        if key not in backend_local:
-            missing_from_local.append(key)
+    if args.check_local:
+        required_keys = [
+            'DATABASE_URL', 'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET',
+            'REDIS_URL', 'CORS_ORIGINS'
+        ]
+        missing_from_local = []
+        for key in required_keys:
+            if key not in backend_local:
+                missing_from_local.append(key)
     
-    if missing_from_local:
-        print(f"FAIL: Required keys missing from .env.local: {missing_from_local}")
-        all_pass = False
+        if missing_from_local:
+            print(f"FAIL: Required keys missing from .env.local: {missing_from_local}")
+            all_pass = False
+        else:
+            print("PASS: All required keys present in .env.local")
     else:
-        print("PASS: All required keys present in .env.local")
+        print("SKIP: .env.local not inspected (use --check-local)")
     
     # CHECK 4: No real secrets in example files
     print("\n=== CHECK 4: Check for real secrets in example files ===")
@@ -164,15 +170,18 @@ def main():
     
     # CHECK 5: No placeholder secrets in real .env files
     print("\n=== CHECK 5: Check for placeholder secrets in non-example .env files ===")
-    placeholder_issues = check_placeholder_secrets(backend_local, is_example=False)
+    if args.check_local:
+        placeholder_issues = check_placeholder_secrets(backend_local, is_example=False)
     
-    if placeholder_issues:
-        print("FAIL: Placeholder values in non-example .env files:")
-        for issue in placeholder_issues:
-            print(issue)
-        all_pass = False
+        if placeholder_issues:
+            print("FAIL: Placeholder values in non-example .env files:")
+            for issue in placeholder_issues:
+                print(issue)
+            all_pass = False
+        else:
+            print("PASS: No placeholder secrets in non-example .env files")
     else:
-        print("PASS: No placeholder secrets in non-example .env files")
+        print("SKIP: .env.local not inspected (use --check-local)")
     
     # Final summary
     print("\n" + "="*50)

@@ -1,6 +1,6 @@
 # Tests
 
-The backend test suite is in `backend-fastapi/tests/` and runs with **pytest** (109 tests).
+The backend test suite is in `backend-fastapi/tests/` and runs with **pytest** (507 tests after moving the standalone `tests_unit/test_tenancy_isolation.py` suite into `backend-fastapi/tests/unit/`).
 
 ## Quick start
 
@@ -24,6 +24,7 @@ cd backend-fastapi
 | `test_syslog_and_batch.py` | RFC3164/RFC5424 parsing, source aliases, RFC3164 timezone policy, RFC5424 offsets untouched |
 | `test_retention.py` | 7-day purge, dry-run, cron parsing, APScheduler integration |
 | `test_tenant_isolation.py` | VIEWER sees only own tenant; ADMIN cross-tenant queries; forced tenant scoping |
+| `tests/unit/test_tenancy_isolation.py` | Pure unit tests for `normalize_tenant`, `effective_tenant`, role/tenant consistency, and removed `/api/auth/register` route |
 | `test_alert_rule.py` | Alert rule CRUD, threshold evaluation, dedupe cooldown |
 | `test_functional.py` | End-to-end flow: login → ingest → alert → dashboard |
 
@@ -61,7 +62,7 @@ Run `make seed` first so the demo accounts and an alert rule exist.
 
 ## CI note
 
-Tests require Docker PostgreSQL and Redis (provided by `backend-fastapi/docker-compose.yml`). A typical CI job would:
+Tests require Docker PostgreSQL and Redis (provided by the root `docker-compose.yml`, not a backend-specific Compose file). A typical CI job would:
 
 ```yaml
 services:
@@ -74,5 +75,5 @@ services:
     ports: ["6379:6379"]
 steps:
   - cd backend-fastapi && pip install -r requirements.txt
-  - cd backend-fastapi && .venv/bin/python -m pytest -q
+  - TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 .venv/bin/python -m pytest -q
 ```

@@ -14,7 +14,11 @@ import {
 } from "../../components/ui/form";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
-import { CreateSchema } from "../../Schemas/AuthSchema";
+import {
+  CreateSchema,
+  type CreateUserFormInput,
+  type CreateUserFormValues,
+} from "../../Schemas/AuthSchema";
 import { useAppMutation } from "../../hooks/useMutationApi";
 import { invalidateAllDataCount, invalidateUserQueries } from "../../api/query";
 import { PassworInput } from "./PasswordInput";
@@ -25,13 +29,12 @@ interface CreateFormProps {
   tenant: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CreateForm: React.FC<CreateFormProps> = ({
   formName,
   setOpen,
   tenant,
 }) => {
-  const form = useForm<any>({
+  const form = useForm<CreateUserFormInput, unknown, CreateUserFormValues>({
     resolver: zodResolver(CreateSchema),
     defaultValues: {
       username: "",
@@ -54,7 +57,7 @@ const CreateForm: React.FC<CreateFormProps> = ({
     errorMessage: "Failed to create user.",
   });
 
-  const onSubmit = form.handleSubmit((values: any) => createUser(values, {
+  const onSubmit = form.handleSubmit((values) => createUser(values, {
     onSuccess: () => setOpen(false),
   }));
 

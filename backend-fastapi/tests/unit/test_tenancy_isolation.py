@@ -5,7 +5,11 @@ These tests verify tenant isolation by inspecting code directly
 without needing a live database connection.
 """
 
+from pathlib import Path
+
 import pytest
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class TestTenantEnforcementLogic:
@@ -87,7 +91,7 @@ class TestRegisterEndpointRemoved:
     
     def test_register_endpoint_route_removed(self):
         """POST /api/auth/register route must NOT exist - prevents tenant impersonation."""
-        route_path = 'backend-fastapi/app/api/routes/auth.py'
+        route_path = str(BACKEND_DIR / "app/api/routes/auth.py")
         with open(route_path, 'r') as f:
             content = f.read()
         
@@ -125,7 +129,8 @@ class TestAdminTenantIsNull:
     
     def test_seed_demo_sets_admin_tenant_none(self):
         """Admin should be seeded with tenant=None."""
-        with open('backend-fastapi/scripts/seed_demo_data.py', 'r') as f:
+        seed_path = str(BACKEND_DIR / "scripts" / "seed_demo_data.py")
+        with open(seed_path, 'r') as f:
             content = f.read()
         
         # Check that admin user is seeded with tenant=None

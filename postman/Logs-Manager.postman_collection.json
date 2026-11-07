@@ -1,17 +1,57 @@
 {
   "info": {
     "name": "Logs Manager API",
-    "description": "Ingestion, query, alerting, and admin API for the Logs Manager (Mini SIEM)."
+    "description": "Canonical Postman collection for the Logs Manager (Mini SIEM) API. Start by logging in; Postman stores the auth cookies for subsequent requests. Ingestion requests use X-API-Key."
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:4500" },
-    { "key": "apiKey", "value": "{{INGEST_API_KEY}}" },
-    { "key": "tenant", "value": "demoa" },
-    { "key": "adminEmail", "value": "admin@demo.local" },
-    { "key": "adminPassword", "value": "{{SEED_ADMIN_PASSWORD}}" },
-    { "key": "viewerEmail", "value": "viewerA@demo.local" },
-    { "key": "viewerPassword", "value": "{{SEED_VIEWER_A_PASSWORD}}" },
-    { "key": "ruleId", "value": "" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4500"
+    },
+    {
+      "key": "apiKey",
+      "value": "dev-ingest-key-change-me"
+    },
+    {
+      "key": "tenant",
+      "value": "demoa"
+    },
+    {
+      "key": "adminEmail",
+      "value": "admin@demo.local"
+    },
+    {
+      "key": "adminPassword",
+      "value": "{{SEED_ADMIN_PASSWORD}}"
+    },
+    {
+      "key": "viewerEmail",
+      "value": "viewerA@demo.local"
+    },
+    {
+      "key": "viewerPassword",
+      "value": "{{SEED_VIEWER_A_PASSWORD}}"
+    },
+    {
+      "key": "alertId",
+      "value": ""
+    },
+    {
+      "key": "ruleId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "tenantName",
+      "value": "demoa"
+    },
+    {
+      "key": "newTenantName",
+      "value": "demob"
+    }
   ],
   "item": [
     {
@@ -42,14 +82,20 @@
           "name": "Login",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/login",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
-            },
-            "url": "{{baseUrl}}/api/auth/login"
+            }
           },
-          "description": "Login with email/password. Sets auth cookies."
+          "response": [],
+          "description": "Login with email/password. Sets auth cookies used by later requests."
         },
         {
           "name": "Auth check",
@@ -57,7 +103,8 @@
             "method": "GET",
             "url": "{{baseUrl}}/api/auth/auth-check"
           },
-          "description": "Verify current session is valid."
+          "response": [],
+          "description": "Verify the current session."
         },
         {
           "name": "Logout",
@@ -65,171 +112,360 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/auth/logout"
           },
+          "response": [],
           "description": "Clear session cookies."
         }
       ]
     },
     {
-      "name": "Ingestion",
+      "name": "Ingestion - /api",
+      "item": [
+        {
+          "name": "Single event - POST /api/ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/ingest",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"api\",\n  \"tenant\": \"{{tenant}}\",\n  \"event_type\": \"app_login_failed\",\n  \"user\": \"alice\",\n  \"src_ip\": \"203.0.113.7\",\n  \"reason\": \"wrong_password\",\n  \"severity\": 5\n}"
+            }
+          },
+          "response": [],
+          "description": "Requires X-API-Key. Tenant is resolved from the API key."
+        },
+        {
+          "name": "Batch events - POST /api/ingest/batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/ingest/batch",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant\": \"{{tenant}}\",\n  \"events\": [\n    {\n      \"source\": \"api\",\n      \"event_type\": \"batch_event_1\",\n      \"user\": \"alice\"\n    },\n    {\n      \"source\": \"aws\",\n      \"eventName\": \"CreateUser\",\n      \"eventSource\": \"iam.amazonaws.com\"\n    }\n  ]\n}"
+            }
+          },
+          "response": [],
+          "description": "Requires X-API-Key."
+        },
+        {
+          "name": "File upload - POST /api/ingest/file",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "text",
+                  "value": "samples/batch_sample.jsonl"
+                },
+                {
+                  "key": "source",
+                  "type": "text",
+                  "value": "{{tenant}}"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/ingest/file",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ]
+          },
+          "response": [],
+          "description": "Requires X-API-Key. Select a JSON/JSONL/CSV/syslog file in Postman."
+        }
+      ]
+    },
+    {
+      "name": "Ingestion - assignment exact paths",
       "item": [
         {
           "name": "Single event - POST /ingest",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-API-Key", "value": "{{apiKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
             ],
+            "url": "{{baseUrl}}/ingest",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"source\": \"api\",\n  \"tenant\": \"{{tenant}}\",\n  \"event_type\": \"app_login_failed\",\n  \"user\": \"alice\",\n  \"src_ip\": \"203.0.113.7\",\n  \"reason\": \"wrong_password\",\n  \"severity\": 5\n}"
-            },
-            "url": "{{baseUrl}}/api/ingest"
+            }
           },
-          "description": "Ingest a single security event with API key authentication."
+          "response": [],
+          "description": "Unprefixed alias required by the assignment. Requires X-API-Key."
         },
         {
           "name": "Batch events - POST /ingest/batch",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-API-Key", "value": "{{apiKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
             ],
+            "url": "{{baseUrl}}/ingest/batch",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"tenant\": \"{{tenant}}\",\n  \"events\": [\n    {\n      \"source\": \"api\",\n      \"event_type\": \"batch_event_1\",\n      \"user\": \"alice\"\n    },\n    {\n      \"source\": \"aws\",\n      \"eventName\": \"CreateUser\",\n      \"eventSource\": \"iam.amazonaws.com\"\n    }\n  ]\n}"
-            },
-            "url": "{{baseUrl}}/api/ingest/batch"
+            }
           },
-          "description": "Ingest multiple events as a batch."
+          "response": [],
+          "description": "Unprefixed alias required by the assignment. Requires X-API-Key."
         },
         {
           "name": "File upload - POST /ingest/file",
           "request": {
             "method": "POST",
-            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
             "body": {
               "mode": "formdata",
               "formdata": [
-                { "key": "file", "type": "file", "src": "samples/batch_sample.jsonl" },
-                { "key": "source", "type": "text", "value": "{{tenant}}" }
+                {
+                  "key": "file",
+                  "type": "text",
+                  "value": "samples/batch_sample.jsonl"
+                },
+                {
+                  "key": "source",
+                  "type": "text",
+                  "value": "{{tenant}}"
+                }
               ]
             },
-            "url": "{{baseUrl}}/api/ingest/file"
+            "url": "{{baseUrl}}/ingest/file",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ]
           },
-          "description": "Upload a file for batch ingestion (JSON, JSONL, CSV)."
+          "response": [],
+          "description": "Unprefixed alias required by the assignment. Requires X-API-Key."
         }
       ]
     },
     {
-      "name": "Events - GET /api/events",
+      "name": "Events",
       "item": [
         {
-          "name": "List events",
+          "name": "List events - GET /api/events",
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}"
           },
+          "response": [],
           "description": "List events with optional filters."
         },
         {
-          "name": "Search events by event type",
+          "name": "List logs (legacy alias) - GET /api/get-logs",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-logs?limit=50&tenant={{tenant}}"
+          },
+          "response": [],
+          "description": "Same handler as /api/events."
+        },
+        {
+          "name": "Search by event type",
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&event_type=app_login_failed"
-          }
+          },
+          "response": []
         },
         {
-          "name": "Search events by source IP",
+          "name": "Search by source IP",
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&src_ip=203.0.113.7"
-          }
+          },
+          "response": []
         },
         {
           "name": "Filter by severity (high)",
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/events?limit=50&tenant={{tenant}}&severity=high"
-          }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete log (Admin)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/delete-log/{{logId}}"
+          },
+          "response": [],
+          "description": "Set the logId collection variable first."
         }
       ]
     },
     {
-      "name": "Stats - Dashboard",
+      "name": "Dashboard and stats",
       "item": [
         {
-          "name": "Get summary /api/stats/summary",
+          "name": "Dashboard - GET /api/dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/dashboard?tenant={{tenant}}&range=7d"
+          },
+          "response": []
+        },
+        {
+          "name": "Aggregate counts - GET /api/get-all-data",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/get-all-data?tenant={{tenant}}"
+          },
+          "response": []
+        },
+        {
+          "name": "Stats summary",
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/stats/summary?tenant={{tenant}}"
           },
-          "description": "Dashboard KPIs: total events, failed logins, alerts, sources."
+          "response": []
         },
         {
-          "name": "Get top N /api/stats/top",
+          "name": "Stats top",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/stats/top?field=src_ip&limit=10&tenant={{tenant}}"
+            "url": "{{baseUrl}}/api/stats/top?field=src_ip&n=10&tenant={{tenant}}"
           },
-          "description": "Top N values for a field."
+          "response": []
         },
         {
-          "name": "Get timeline /api/stats/timeline",
+          "name": "Stats timeline",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/stats/timeline?from=24h&tenant={{tenant}}"
+            "url": "{{baseUrl}}/api/stats/timeline?from=2020-01-01T00:00:00Z&interval=1d&tenant={{tenant}}"
           },
-          "description": "Event counts over time, split by source."
+          "response": []
+        },
+        {
+          "name": "Sources health (Admin)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/sources/health?tenant={{tenant}}"
+          },
+          "response": []
         }
       ]
     },
     {
-      "name": "Alerts - /api/alerts",
+      "name": "Alerts",
       "item": [
         {
-          "name": "List alerts",
+          "name": "List alerts - GET /api/get-alerts",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/alerts?limit=25&tenant={{tenant}}"
-          }
+            "url": "{{baseUrl}}/api/get-alerts?limit=25&tenant={{tenant}}"
+          },
+          "response": []
         },
         {
-          "name": "Update alert status",
+          "name": "Update alert status (Admin)",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"status\": \"resolved\"\n}"
-            },
-            "url": "{{baseUrl}}/api/alerts/{{alertId}}"
-          }
+            }
+          },
+          "response": [],
+          "description": "Set alertId from the list response."
         }
       ]
     },
     {
-      "name": "Alert Rules - /api/rules",
+      "name": "Alert rules",
       "item": [
         {
-          "name": "List rules",
+          "name": "List rules - GET /api/get-rules",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/rules?limit=25&tenant={{tenant}}"
-          }
+            "url": "{{baseUrl}}/api/get-rules?limit=25&tenant={{tenant}}"
+          },
+          "response": []
         },
         {
-          "name": "Create rule",
+          "name": "Create rule - POST /api/create-alertRule",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/create-alertRule",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Brute force detection\",\n  \"description\": \"Triggers when 5+ failed logins from same IP within 5 minutes\",\n  \"tenant\": \"{{tenant}}\",\n  \"enabled\": true,\n  \"severity\": \"high\",\n  \"threshold\": 5,\n  \"window_minutes\": 5,\n  \"cooldown_minutes\": 15,\n  \"group_by\": \"src_ip\",\n  \"conditions\": [\n    { \"type\": \"repeated_failures\", \"groupBy\": \"src_ip\", \"threshold\": 5, \"windowSeconds\": 300 }\n  ],\n  \"webhook_url\": \"http://webhook-receiver:8000/webhook\"\n}"
-            },
-            "url": "{{baseUrl}}/api/rules"
-          }
+              "raw": "{\n  \"name\": \"Brute force detection\",\n  \"description\": \"Triggers when 5+ failed logins from the same IP within 5 minutes\",\n  \"tenant\": \"{{tenant}}\",\n  \"enabled\": true,\n  \"severity\": \"high\",\n  \"conditions\": [\n    {\n      \"type\": \"repeated_failures\",\n      \"groupBy\": \"src_ip\",\n      \"threshold\": 5,\n      \"windowSeconds\": 300\n    }\n  ]\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update rule - PUT /api/update-rule/{id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/update-rule/{{ruleId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Brute force detection (updated)\",\n  \"description\": \"Updated by Postman\",\n  \"severity\": \"critical\",\n  \"enabled\": true\n}"
+            }
+          },
+          "response": []
         },
         {
           "name": "Test rule - POST /api/rules/{id}/test",
@@ -237,32 +473,179 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/rules/{{ruleId}}/test"
           },
-          "description": "Dry-run: returns what WOULD trigger for this rule right now."
+          "response": [],
+          "description": "Dry run; creates nothing."
         },
         {
-          "name": "Toggle rule enabled",
+          "name": "Toggle rule enabled - PATCH /api/rules/{id}/enabled",
           "request": {
             "method": "PATCH",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": true\n}"
-            },
-            "url": "{{baseUrl}}/api/rules/{{ruleId}}/enabled"
-          }
+            "url": "{{baseUrl}}/api/rules/{{ruleId}}/enabled?enabled=true"
+          },
+          "response": [],
+          "description": "enabled is a query parameter."
+        },
+        {
+          "name": "Delete rule - DELETE /api/delete-rule/{id}",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/delete-rule/{{ruleId}}"
+          },
+          "response": []
         }
       ]
     },
     {
-      "name": "Sources Health - /api/sources/health",
+      "name": "Users (Admin)",
       "item": [
         {
-          "name": "Get sources health (Admin only)",
+          "name": "List users - GET /api/get-users",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/sources/health"
+            "url": "{{baseUrl}}/api/get-users?tenant={{tenant}}&limit=25"
           },
-          "description": "Per-source health status (syslog listener, last event time, etc.)."
+          "response": []
+        },
+        {
+          "name": "Create user - POST /api/create-user",
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "username",
+                  "type": "text",
+                  "value": "newviewer"
+                },
+                {
+                  "key": "email",
+                  "type": "text",
+                  "value": "newviewer@demo.local"
+                },
+                {
+                  "key": "tenant",
+                  "type": "text",
+                  "value": "{{tenant}}"
+                },
+                {
+                  "key": "role",
+                  "type": "text",
+                  "value": "VIEWER"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "ACTIVE"
+                },
+                {
+                  "key": "password",
+                  "type": "text",
+                  "value": "ChangeMe123!"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/create-user"
+          },
+          "response": [],
+          "description": "Multipart form data."
+        },
+        {
+          "name": "Update user - PUT /api/update-user",
+          "request": {
+            "method": "PUT",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "id",
+                  "type": "text",
+                  "value": "{{userId}}"
+                },
+                {
+                  "key": "role",
+                  "type": "text",
+                  "value": "VIEWER"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/update-user"
+          },
+          "response": [],
+          "description": "Multipart form data. Set userId first."
+        },
+        {
+          "name": "Delete user - DELETE /api/delete-user/{id}",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/delete-user/{{userId}}"
+          },
+          "response": [],
+          "description": "Set userId first."
+        }
+      ]
+    },
+    {
+      "name": "Tenants (Admin)",
+      "item": [
+        {
+          "name": "List tenants - GET /api/tenants",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/tenants"
+          },
+          "response": []
+        },
+        {
+          "name": "Create tenant - POST /api/tenants",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/tenants",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{newTenantName}}\",\n  \"is_active\": true\n}"
+            }
+          },
+          "response": [],
+          "description": "The response returns the API key once."
+        },
+        {
+          "name": "Activate/deactivate tenant - PATCH /api/tenants/{name}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/tenants/{{newTenantName}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": true\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Rotate tenant API key - POST /api/tenants/{name}/rotate-key",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tenants/{{newTenantName}}/rotate-key"
+          },
+          "response": [],
+          "description": "The old key is invalidated immediately."
         }
       ]
     }

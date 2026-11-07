@@ -3,9 +3,6 @@
 from datetime import datetime, timezone
 import pytest
 
-import sys
-sys.path.insert(0, '/home/nay/projects/logs/Logs-Manager/backend-fastapi')
-
 from app.integrations.syslog import parse_syslog_message
 from app.parsers.firewall_helpers import parse_syslog_pri
 

@@ -6,6 +6,7 @@ import { ShieldCheck, LoaderCircle } from "lucide-react";
 
 // Actions
 import { loginAction, logoutAction } from "./router/actions";
+import { dashboardLoader, managementLoader } from "./router/loaders";
 
 // Lazy-loaded pages
 const DashBoard = lazy(() => import("./pages/ManageDashboard.tsx/DashBoard"));
@@ -29,10 +30,6 @@ const SuspenseFallback = () => (
     </div>
   </div>
 );
-
-// Simple loaders that just return null (auth check done client-side)
-const dashboardLoader = () => null;
-const managementLoader = () => null;
 
 const router = createBrowserRouter([
   {

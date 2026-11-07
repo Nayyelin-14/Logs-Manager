@@ -3,6 +3,8 @@ Alerting engine tests: detection, deduplication, tenant isolation, concurrency.
 All tests hit the real API with real database operations.
 """
 
+import asyncio
+
 import pytest
 import json
 import time
@@ -11,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.database import async_session_maker
 from app.models.alert import Alert, AlertRule
+from app.models.events import Event
 from app.models.security_event import SecurityEvent
 from sqlalchemy import select, text
 import uuid
@@ -452,11 +455,90 @@ def test_alerting_9_cross_tenant_isolation(client, api_key_demoa, api_key_demob)
     assert len(demob_alerts) == 1, f"Expected 1 demob alert, got {len(demob_alerts)}"
     assert demoa_alerts[0]["tenant"] == "demoa" and demoa_alerts[0]["count"] == 5
     assert demob_alerts[0]["tenant"] == "demob" and demob_alerts[0]["count"] == 5
+    # Evidence must cover exactly the five events that produced the count.
+    # A mismatch here means a later evaluation would double-count events.
+    assert len(demoa_alerts[0]["eventIds"]) == 5
+    assert len(demob_alerts[0]["eventIds"]) == 5
     
     # viewerA (demoa) must not see demob's alert
     client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     viewer_alerts = client.get("/api/get-alerts").json().get("alerts", [])
     assert all(a["tenant"] != "demob" for a in viewer_alerts), "viewerA saw demob alerts"
+
+
+def test_alerting_9b_alert_evidence_never_crosses_tenants(client, api_key_demoa, api_key_demob):
+    """Regression: demoa alert evidence contains only demoa events (same IP as demob)."""
+    src_ip = "198.51.100.210"
+    base_ts = datetime.now(timezone.utc)
+
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demoa",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\evidence{i}",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": (base_ts + timedelta(seconds=i)).isoformat(),
+                "tags": [MARKER, f"test_cross_9b_evidence_a_{i}"],
+            },
+            headers={"X-API-Key": api_key_demoa},
+        )
+        assert res.status_code == 200
+
+    for i in range(5):
+        res = client.post(
+            "/api/ingest",
+            json={
+                "tenant": "demob",
+                "source": "ad",
+                "event_id": 4625,
+                "event_type": "LogonFailed",
+                "user": f"demo\\\\evidence{i}",
+                "src_ip": src_ip,
+                "action": "LOGIN",
+                "status": "Failure",
+                "severity": 7,
+                "@timestamp": (base_ts + timedelta(seconds=i + 100)).isoformat(),
+                "tags": [MARKER, f"test_cross_9b_evidence_b_{i}"],
+            },
+            headers={"X-API-Key": api_key_demob},
+        )
+        assert res.status_code == 200
+
+    client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    alerts = client.get("/api/get-alerts").json().get("alerts", [])
+    demoa_alerts = [a for a in alerts if a["tenant"] == "demoa" and src_ip in (a.get("dedupeKey") or "")]
+    demob_alerts = [a for a in alerts if a["tenant"] == "demob" and src_ip in (a.get("dedupeKey") or "")]
+    assert len(demoa_alerts) == 1
+    assert len(demob_alerts) == 1
+
+    demoa_ids = set(demoa_alerts[0]["eventIds"])
+    demob_ids = set(demob_alerts[0]["eventIds"])
+    assert len(demoa_ids) == 5
+    assert len(demob_ids) == 5
+    assert demoa_ids.isdisjoint(demob_ids)
+    assert demoa_alerts[0]["count"] == 5
+    assert demob_alerts[0]["count"] == 5
+
+    async def _event_tenants():
+        async with async_session_maker() as session:
+            rows = (
+                await session.execute(
+                    select(Event.id, Event.tenant).where(Event.id.in_(demoa_ids | demob_ids))
+                )
+            ).all()
+            return {event_id: tenant for event_id, tenant in rows}
+
+    tenants_by_id = asyncio.run(_event_tenants())
+    assert set(tenants_by_id) == demoa_ids | demob_ids
+    assert all(tenants_by_id[event_id] == "demoa" for event_id in demoa_ids)
+    assert all(tenants_by_id[event_id] == "demob" for event_id in demob_ids)
 
 
 def test_alerting_10_viewer_sees_own_tenant_alerts(client):
@@ -512,9 +594,30 @@ def test_alerting_11_concurrent_ingest_single_alert(client, api_key_demoa):
     assert len(alerts) == 1, f"Expected 1 alert from concurrent ingests, got {len(alerts)}"
 
 
-def test_alerting_12_batch_500_events_completes(client, api_key_demoa):
-    """12. Batch of 500 events completes under 5 seconds and runs bounded alert queries."""
+def test_alerting_12_batch_500_events_completes(client, api_key_demoa, monkeypatch):
+    """12. Batch of 500 events completes under 5 seconds and runs bounded alert queries.
+
+    The benchmark measures event evaluation and persistence only. Replace the
+    webhook transport with a deterministic in-process stub so external DNS or
+    retry backoff cannot dominate the measured time. Retry behavior itself is
+    covered by tests/unit/test_notifier.py.
+    """
     import time
+    import app.services.alerting.alerter as alerter
+
+    delivered = []
+
+    async def fake_send_webhook(*, webhook_url, payload, **kwargs):
+        delivered.append(payload)
+        return [{
+            "attempt": 1,
+            "status": "sent",
+            "http_code": 200,
+            "error": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }]
+
+    monkeypatch.setattr(alerter, "send_webhook", fake_send_webhook)
     
     events = [
         {
@@ -543,6 +646,7 @@ def test_alerting_12_batch_500_events_completes(client, api_key_demoa):
     assert res.status_code == 200, res.text
     assert elapsed < 5, f"Batch took {elapsed:.2f}s, should be < 5s"
     assert res.json()["ingested"] == 500
+    assert delivered, "expected the threshold alert to reach the stubbed webhook transport"
 
 
 def test_alerting_13_rule_validation_unknown_type(client):

@@ -237,109 +237,21 @@ async def get_current_user(
 
 ---
 
-## 3. OTP Authentication
+## 3. Authentication Flow
 
-### 3.1 OTP Generation (Exact Match)
-
-```python
-# app/core/security.py
-from crypto import random_bytes
-
-def generate_otp() -> int:
-    """6-digit OTP: (3 random bytes as hex) % 900000 + 100000"""
-    return (int.from_bytes(random_bytes(3), "big") % 900000) + 100000
-
-def generate_token() -> str:
-    """32-byte hex token for OTP verification"""
-    return random_bytes(32).hex()
+Authentication is **login-only**. There is **no public self-registration**, **no OTP verification**, and **no password-recovery flow**. Admin users create accounts with `POST /api/create-user`; clients log in with `POST /api/auth/login` and receive HttpOnly JWT cookies. The legacy `Otp` table/email flow is not implemented and not used by any route.
 ```
-
-### 3.2 OTP Storage
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `email` | String (unique) | User email |
-| `opt_code` | String | Bcrypt-hashed OTP |
-| `remember_token` | String | 32-byte hex, sent to frontend |
-| `verify_token` | String | Set after OTP verified |
-| `count` | SmallInt | OTP request count today |
-| `error` | SmallInt | Failed verification count today |
-| `created_at` | DateTime | |
-| `updated_at` | DateTime | |
-
-### 3.3 OTP Verification Flow
-
-```
-POST /api/auth/register (username, email, tenant)
-    │
-    ▼
-Generate OTP + hash (bcrypt) + remember_token
-    │
-    ▼
-Store in Otp table (count=1, error=0)
-    │
-    ▼
-Queue OTP email (arq job)
-    │
-    ▼
-Return { message, userData: OtpRecord, tenant, username, token: remember_token }
-
----
-
-POST /api/auth/verify-Otp (username, email, tenant, otp, token)
-    │
-    ▼
-Validate token matches remember_token
-    │
-    ▼
-Check OTP not expired (2 min)
-    │
-    ▼
-Verify OTP (bcrypt compare)
-    │
-    ▼
-On success: generate verify_token, reset count/error
-    │
-    ▼
-Return { isSuccess: true, token: verify_token }
-
----
-
-POST /api/auth/confirm-password (email, username, tenant, password, confirmPassword, token)
-    │
-    ▼
-Validate token matches verify_token
-    │
-    ▼
-Check not expired (10 min)
-    │
-    ▼
-Hash password (bcrypt)
-    │
-    ▼
-Create User record
-    │
-    ▼
-Issue access + refresh tokens, set cookies
-    │
-    ▼
-Return { message, userId, userData: UserPublic }
-```
-
----
 
 ## 4. Role-Based Access Control
 
 ### 4.1 Role Mapping
 
-| Prisma Role | Assignment Role | Description |
-|-------------|-----------------|-------------|
-| `USER` | VIEWER | Read-only access to own tenant |
-| `ADMIN` | ADMIN | Administrative access within their own tenant |
+| Code Role | Assignment Role | Description |
+|-----------|-----------------|-------------|
+| `ADMIN` | ADMIN | Full administrative access; may query all tenants when `tenant` is empty/`all`, or a specific tenant otherwise |
+| `VIEWER` | VIEWER | Read-only access; always forced to `user.tenant`, ignoring requested `tenant` |
 
-**No code changes needed** — the role values `USER` and `ADMIN` are used directly in authorization checks. The assignment's "VIEWER" concept maps to existing `USER` role.
-
-**Critical**: ADMIN does **not** automatically have access to all tenants. Cross-tenant access is prohibited unless a separate platform-level role is introduced (not in current scope).
+The code uses `ADMIN` and `VIEWER` directly. There is no legacy `USER` role.
 
 ### 4.2 Authorization Dependencies
 
@@ -371,29 +283,31 @@ async def get_current_user_any(current_user: TokenPayload = Depends(get_current_
 | Endpoint | Required Dependency | Notes |
 |----------|---------------------|-------|
 | `POST /api/auth/login` | None | Public |
-| `POST /api/auth/register` | None | Public |
-| `POST /api/auth/verify-Otp` | None | Public |
-| `POST /api/auth/confirm-password` | None | Public |
 | `POST /api/auth/logout` | `get_current_user` | Authenticated |
 | `GET /api/auth/auth-check` | `get_current_user` | Authenticated |
 | `POST /api/ingest` | `verify_api_key` OR `get_current_user` | API key or user |
 | `POST /api/ingest/batch` | `verify_api_key` OR `get_current_user` | API key or user |
+| `POST /api/ingest/file` | `verify_api_key` OR `get_current_user` | API key or user |
 | `GET /api/get-logs` | `get_current_user` | VIEWER+ (tenant-scoped) |
-| `DELETE /api/delete-log/:id` | `require_admin` | Admin only (own tenant) |
+| `DELETE /api/delete-log/:id` | `require_admin` | Admin only |
 | `GET /api/dashboard` | `get_current_user` | VIEWER+ (tenant-scoped) |
-| `GET /api/user-dashboard/:id` | `require_viewer` | Viewer only (own tenant) |
 | `GET /api/get-alerts` | `get_current_user` | VIEWER+ (tenant-scoped) |
-| `PATCH /api/alerts/:id` | `require_admin` | Admin only (own tenant) |
-| `GET /api/get-rules` | `require_admin` | Admin only (own tenant) |
-| `POST /api/create-alertRule` | `require_admin` | Admin only (own tenant) |
-| `PUT /api/update-rule/:id` | `require_admin` | Admin only (own tenant) |
-| `PATCH /api/rules/:id/enabled` | `require_admin` | Admin only (own tenant) |
-| `DELETE /api/delete-rule/:id` | `require_admin` | Admin only (own tenant) |
-| `GET /api/get-users` | `require_admin` | Admin only (own tenant) |
-| `POST /api/create-user` | `require_admin` | Admin only (own tenant) |
-| `PUT /api/update-user` | `require_admin` | Admin only (own tenant) |
-| `DELETE /api/delete-user/:id` | `require_admin` | Admin only (own tenant) |
-| `GET /api/get-all-data` | `require_admin` | Admin only (own tenant) |
+| `PATCH /api/alerts/:id` | `require_admin` | Admin only |
+| `GET /api/get-rules` | `require_admin` | Admin only |
+| `POST /api/create-alertRule` | `require_admin` | Admin only |
+| `PUT /api/update-rule/:id` | `require_admin` | Admin only |
+| `PATCH /api/rules/:id/enabled` | `require_admin` | Admin only |
+| `DELETE /api/delete-rule/:id` | `require_admin` | Admin only |
+| `POST /api/rules/:id/test` | `require_admin` | Admin only |
+| `GET /api/get-users` | `require_admin` | Admin only |
+| `POST /api/create-user` | `require_admin` | Admin only |
+| `PUT /api/update-user` | `require_admin` | Admin only |
+| `DELETE /api/delete-user/:id` | `require_admin` | Admin only |
+| `GET /api/get-all-data` | `require_admin` | Admin only |
+| `GET /api/tenants` | `require_admin` | Admin only |
+| `POST /api/tenants` | `require_admin` | Admin only |
+| `PATCH /api/tenants/{name}` | `require_admin` | Admin only |
+| `POST /api/tenants/{name}/rotate-key` | `require_admin` | Admin only |
 
 ---
 
@@ -423,11 +337,9 @@ async def get_effective_tenant(
 ) -> str:
     """
     Resolves effective tenant for query filtering.
-    - VIEWER (USER): always user.tenant (ignores requested_tenant)
-    - ADMIN: always user.tenant (ignores requested_tenant)
-    - Cross-tenant access: PROHIBITED by default
-    
-    If cross-tenant access is needed in future, introduce a separate
+    - VIEWER: always user.tenant (ignores requested_tenant)
+    - ADMIN: requested tenant if provided; empty/`all` means all tenants
+    - Cross-tenant reads are allowed for ADMIN via `tenant` query param; writes remain scoped to the admin's tenant where the route enforces ownership
     platform-level role (e.g., SUPER_ADMIN) with explicit authorization.
     """
     # Both VIEWER and ADMIN are scoped to their own tenant
@@ -683,8 +595,6 @@ async def rate_limit_middleware(request: Request, call_next):
 | Endpoint | Limit |
 |----------|-------|
 | `POST /api/auth/login` | 5 req/min per IP |
-| `POST /api/auth/register` | 3 req/min per IP |
-| `POST /api/auth/verify-Otp` | 10 req/min per IP |
 | `POST /api/ingest` | 100 req/min per API key |
 
 ---
@@ -760,7 +670,7 @@ SMTP credentials (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `S
 | SameSite protection | `COOKIE_SAME_SITE=none` (cross-origin) / `lax` (same-origin) |
 | Timing-safe key comparison | `secrets.compare_digest()` |
 | Bcrypt cost ≥ 12 | `bcrypt.gensalt(12)` |
-| OTP rate limiting | Max 3 requests/day, 5 errors/day lockout |
+| Login rate limiting | 5 req/min per IP (enforced by middleware/slowapi) |
 | Refresh token rotation | New refresh token issued on each refresh |
 | Tenant isolation enforced | All queries scoped by user.tenant for VIEWER and ADMIN |
 | IDOR protection | All ID-based lookups verify tenant ownership for VIEWER and ADMIN |

@@ -3,7 +3,7 @@ import type { Role, Status } from "../types/types";
 export const roleOptions = [
   { value: "", label: "All Roles" },
   { value: "ADMIN", label: "Admin" },
-  { value: "USER", label: "User" },
+  { value: "VIEWER", label: "Viewer" },
 ];
 
 export const statusOptions = [
@@ -29,9 +29,9 @@ export const getStatusBadge = (status: Status) => {
 export const getRoleBadge = (role: Role) => {
   const roleStyles = {
     ADMIN: "border-signal/70 bg-signal-soft text-signal-ink",
-    USER: "border-border bg-card text-ink-muted",
+    VIEWER: "border-border bg-card text-ink-muted",
   };
-  return roleStyles[role] || roleStyles.USER;
+  return roleStyles[role] || roleStyles.VIEWER;
 };
 
 export const getSeverityStyle = (severity: string | null) => {

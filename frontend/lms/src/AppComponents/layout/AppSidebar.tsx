@@ -55,7 +55,7 @@ const AppSidebar = ({ open, onClose }: AppSidebarProps) => {
 
   // Use the server-verified profile as the source of truth. The auth store
   // also holds temporary registration form values and can be stale here.
-  const role = user?.role ?? "USER";
+  const role = user?.role ?? "VIEWER";
   const isAdmin = role === "ADMIN";
   const displayName = user?.username ?? "Account";
   const tenant = user?.tenant ?? "Workspace";

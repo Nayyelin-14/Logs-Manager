@@ -50,7 +50,7 @@ async def list_users(
             (User.email.ilike(f"%{search}%"))
         )
     
-    query = query.order_by(desc(User.created_at)).limit(limit + 1)
+    query = query.order_by(desc(User.create_at)).limit(limit + 1)
     if cursor:
         query = query.where(User.id > cursor)
     
@@ -107,7 +107,7 @@ async def get_users_infinite(
                 (User.email.ilike(f"%{filters['search']}%"))
             )
     
-    query_stmt = query_stmt.order_by(desc(User.created_at)).limit(limit + 1)
+    query_stmt = query_stmt.order_by(desc(User.create_at)).limit(limit + 1)
     if cursor:
         query_stmt = query_stmt.where(User.id > cursor)
     

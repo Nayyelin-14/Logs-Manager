@@ -89,7 +89,10 @@ graph TB
 4. **Store → Search/Stats**: The FastAPI API serves GET /api/events and GET /api/stats/*
    with tenant-scoped, parameterized SQL queries.
 5. **Store → Alert Worker**: Every 30 seconds, the worker evaluates all enabled alert rules
-   via a single GROUP BY ... HAVING query per rule. Alerts are idempotent (dedupe key).
+   via a single GROUP BY ... HAVING query per rule. Evidence collection uses the same
+   tenant, filter, and `ts >= window_start` predicate as the aggregate (no `ts <= now`
+   bound), so `count` and `eventIds` stay consistent even for future-dated events.
+   Alerts are idempotent (dedupe key).
 6. **Alert → Notify**: Webhook POST with 3 retries + exponential backoff; optional SMTP.
    Results stored in `alerts.notifications`.
 7. **UI**: React dashboard displays Top IP/User/Event Type, timeline, filters, alerts, rules.
@@ -115,6 +118,10 @@ graph TB
 |---|---|
 | ADMIN | All tenants, manage rules/users/API keys, upload files, view all alerts |
 | VIEWER | Own tenant only, read-only, no rule editing |
+
+The frontend uses the same canonical values, `ADMIN` and `VIEWER`. Management
+routes (`/`, `/rules`, `/users`) redirect non-admin sessions to `/dashboard`;
+the backend remains the authorization boundary.
 
 ## Technology choices
 
@@ -175,7 +182,9 @@ See `docs/schema.md` for the full field table and per-source mappings.
   ONE parameterized `GROUP BY ... HAVING count(*) >= threshold` query scoped to
   the rule's tenant and time window.
 - Idempotent via `dedupe_key = rule_id:tenant:group_value`. Open alerts within
-  cooldown are updated (count/last_seen) without re-notification.
+  cooldown are updated (count/last_seen) without re-notification. `count` is the
+  aggregate count for the window; `eventIds` is collected with the identical
+  predicate, so the two cannot diverge.
 - Tenant `*` rules are evaluated per tenant so demoB events never count toward
   demoA.
 

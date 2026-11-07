@@ -13,7 +13,7 @@ import { useUserStore } from "@/store/userStore";
 const UserMenu = () => {
   const user = useUserStore((state) => state.user);
 
-  const role = user?.role ?? "USER";
+  const role = user?.role ?? "VIEWER";
   const displayName = user?.username ?? "Account";
   const displayEmail = user?.email ?? "No email available";
   const tenant = user?.tenant ?? "Workspace";

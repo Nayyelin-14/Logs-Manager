@@ -13,11 +13,15 @@ Full-Stack Developer (Intern) practical assignment.
 | Common schema with @timestamp, tenant, source, severity 0-10, action, raw, _tags | ✅ |
 | Postgres JSONB + GIN storage, dashboard with Top IP/User/Event Type, timeline | ✅ |
 | ≥1 alert rule with UI + webhook notification | ✅ |
-| Admin/Viewer RBAC with tenant data isolation | ✅ |
-| Appliance + SaaS deploy modes (Docker Compose) | ✅ |
-| HTTPS (Caddy: Let's Encrypt or self-signed tls internal) | ✅ |
-| Retention ≥7 days (deletion + cleanup-ready) | ✅ |
-| Tests, docs, Postman collection, samples + sender scripts | ✅ |
+| Admin/Viewer RBAC with tenant data isolation | Implemented |
+| Appliance + SaaS deploy modes (Docker Compose) | Implemented |
+| HTTPS (Caddy: Let's Encrypt or self-signed tls internal) | Implemented |
+| Retention ≥7 days (deletion + cleanup-ready) | Implemented |
+| Tests, docs, Postman collection, samples + sender scripts | Implemented |
+
+Statuses above mean the feature is implemented in code. Runtime/SSL/end-to-end
+verification statuses are in `docs/FINAL_REPORT.md`; some items are marked manual
+or pending because they require a live stack or external network.
 
 ## Repo folder mapping (to assignment paths)
 
@@ -150,6 +154,13 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 - `docs/setup_saas.md` — SaaS/Cloud deployment with HTTPS
 - `docs/DEMO_GUIDE.md` — 30-minute demo script
 - `docs/schema.md` — Common schema field reference
+- `docs/API_CONTRACT.md` — API route and response contract
+- `docs/SECURITY_DESIGN.md` — Auth, RBAC, tenant isolation, and rate limits
+- `docs/FINAL_REPORT.md` — Verification results, fixes, and remaining manual checks
+- `postman/Logs-Manager.postman_collection.json` + `postman/Logs-Manager.postman_environment.json` — canonical Postman collection validated against actual routes
+- `docs/archive/` — superseded design/work logs; not part of the current reviewer-facing docs
+
+Canonical workflow: `make up` → `make seed` → `make verify`. `run.sh` is now a thin wrapper around `make up`; `backend-fastapi/docker-compose.yml` was removed in favor of the root Compose stack and root `Makefile`.
 
 ## Security
 
@@ -158,3 +169,5 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 - API keys stored as SHA-256 hashes, shown once at creation
 - Login rate limiting, restricted CORS, security headers
 - Tenant isolation enforced server-side (VIEWER = own tenant only)
+
+

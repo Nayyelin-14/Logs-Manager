@@ -1,5 +1,6 @@
 # Local Development Makefile for FastAPI Backend
-# Uses existing Neon PostgreSQL and Redis - NO DOCKER REQUIRED
+# The root Makefile is the canonical workflow (make up, make seed, make test).
+# This file contains backend-only convenience targets.
 
 .PHONY: help install install-dev test verify-schema test-connectivity run-dev lint typecheck
 

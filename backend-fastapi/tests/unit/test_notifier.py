@@ -4,9 +4,6 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 
-import sys
-sys.path.insert(0, '/home/nay/projects/logs/Logs-Manager/backend-fastapi')
-
 from app.services.notifier import (
     build_webhook_payload,
     send_webhook,
