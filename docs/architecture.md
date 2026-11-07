@@ -213,6 +213,6 @@ See `docs/schema.md` for the full field table and per-source mappings.
 
 | Assignment | Repo |
 |---|---|
-| `/backend/` | `backend-fastapi/` |
-| `/frontend/` | `frontend/lms/` |
+| `/backend/` | `backend/` |
+| `/frontend/` | `frontend/` |
 | `/ingest/` | `ingest/` |

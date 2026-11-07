@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 # Repo root (this Makefile lives at repo root)
 REPO_ROOT := $(shell pwd)
-BACKEND_DIR := $(REPO_ROOT)/backend-fastapi
+BACKEND_DIR := $(REPO_ROOT)/backend
 COMPOSE_LOCAL := docker compose -p lms_local -f docker-compose.yml
 COMPOSE_VM := docker compose -p lms_vm -f docker-compose.vm.yml
 
@@ -106,10 +106,10 @@ backend-test: ## Run backend pytest tests (requires running stack or container e
 test: backend-test ## Alias for backend-test
 
 frontend-install: ## Install frontend dependencies
-	cd $(REPO_ROOT)/frontend/lms && npm ci
+	cd $(REPO_ROOT)/frontend && npm ci
 
 frontend-check: ## Frontend lint + typecheck + production build
-	cd $(REPO_ROOT)/frontend/lms && npm run lint && npx tsc -b && npm run build
+	cd $(REPO_ROOT)/frontend && npm run lint && npx tsc -b && npm run build
 
 check-env: ## Environment sync check (example files only; safe for CI)
 	python3 $(REPO_ROOT)/scripts/check_env_sync.py

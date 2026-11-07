@@ -1,7 +1,7 @@
 # /ingest — Syslog Ingest Service
 
 Standalone syslog listener (UDP/TCP) that receives firewall and network router
-syslog messages, normalizes them using the backend-fastapi parsers, and inserts
+syslog messages, normalizes them using the backend parsers, and inserts
 them into PostgreSQL via the shared ingestion pipeline.
 
 ## Purpose
@@ -75,10 +75,10 @@ curl -s "http://localhost:4500/api/get-logs?source=firewall&limit=5" -H "Cookie:
 ## Reuse of backend code
 
 This service imports normalizers, parsers, and the ingestion pipeline from
-`backend-fastapi/` (shared Python package). No logic is duplicated.
+`backend/` (shared Python package). No logic is duplicated.
 
 ## Folder mapping
 
 Assignment path `/ingest/` → repo path `ingest/` (this directory).
-Backend path `/backend/` → repo path `backend-fastapi/`.
-Frontend path `/frontend/` → repo path `frontend/lms/`.
+Backend path `/backend/` → repo path `backend/`.
+Frontend path `/frontend/` → repo path `frontend/`.

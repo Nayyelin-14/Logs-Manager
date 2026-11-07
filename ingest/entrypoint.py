@@ -2,7 +2,7 @@
 Syslog ingest service entrypoint.
 
 Runs the asyncio UDP/TCP syslog listener as a standalone process/container,
-reusing the backend-fastapi normalizers and ingestion pipeline.
+reusing the backend normalizers and ingestion pipeline.
 
 Environment variables:
   SYSLOG_UDP_PORT   (default 5514)
@@ -21,8 +21,8 @@ import logging
 import sys
 from pathlib import Path
 
-# Ensure backend-fastapi is importable (shared package)
-BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend-fastapi"
+# Ensure backend is importable (shared package)
+BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 

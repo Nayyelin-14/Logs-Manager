@@ -45,7 +45,7 @@ services:
   ###############################################################################
   backend:
     build:
-      context: ./backend-fastapi
+      context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
@@ -145,7 +145,7 @@ services:
   ###############################################################################
   worker:
     build:
-      context: ./backend-fastapi
+      context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
@@ -239,7 +239,7 @@ services:
   frontend:
     image: logs-manager-frontend:local
     build:
-      context: ./frontend/lms
+      context: ./frontend
       dockerfile: Dockerfile
       args:
         VITE_API_URL: /api

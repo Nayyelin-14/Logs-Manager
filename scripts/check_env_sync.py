@@ -88,7 +88,7 @@ def main():
     args = parser.parse_args()
 
     root_dir = Path(__file__).parent.parent
-    backend_dir = root_dir / 'backend-fastapi'
+    backend_dir = root_dir / 'backend'
     frontend_dir = root_dir / 'frontend' / 'lms'
     
     root_example = root_dir / '.env.example'

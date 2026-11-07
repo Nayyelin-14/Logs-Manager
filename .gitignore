@@ -16,7 +16,7 @@ coverage/
 !.vscode/extensions.json
 
 backend/upload/
-frontend/lms/.vite/
+frontend/.vite/
 
 # Python build/test artifacts (FastAPI)
 .venv/

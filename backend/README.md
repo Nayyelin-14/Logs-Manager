@@ -184,7 +184,7 @@ See docs/setup_saas.md for detailed steps.
 ### Legacy Backend
 
 The original Express backend at `/backend` has been removed.
-This FastAPI backend at `/backend-fastapi` is the only API implementation.
+This FastAPI backend at `/backend` is the only API implementation.
 
 ### License
 

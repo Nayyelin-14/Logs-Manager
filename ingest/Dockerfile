@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install shared backend dependencies first (cached layer)
-COPY backend-fastapi/requirements.txt ./backend-fastapi/requirements.txt
-RUN pip install --no-cache-dir -r backend-fastapi/requirements.txt
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Copy backend-fastapi source (shared normalizers, parsers, syslog listener)
-COPY backend-fastapi/ ./backend-fastapi/
+# Copy backend source (shared normalizers, parsers, syslog listener)
+COPY backend/ ./backend/
 
 # Copy ingest code (entrypoint + webhook_receiver)
 COPY ingest/ ./ingest/

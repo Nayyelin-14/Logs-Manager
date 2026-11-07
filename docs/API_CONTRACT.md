@@ -488,7 +488,7 @@ Includes all endpoints, schemas, security schemes (cookie + API key).
 ### 14.2 Frontend Type Generation (CI Step)
 
 ```bash
-# In frontend/lms
+# In frontend
 npx openapi-typescript http://localhost:4500/openapi.json -o src/types/api.generated.ts
 # OR using orval
 npx orval --input http://localhost:4500/openapi.json --output src/api/generated

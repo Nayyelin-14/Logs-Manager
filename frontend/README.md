@@ -78,7 +78,7 @@ The UI is served at `https://localhost`. See the root
 For frontend-only development:
 
 ```bash
-cd frontend/lms
+cd frontend
 npm install
 echo 'VITE_API_URL=http://localhost:4500' > .env
 npm run dev
@@ -90,7 +90,7 @@ checks. The root `make check-frontend` target runs the same commands.
 ## Folder Structure
 
 ```
-frontend/lms/
+frontend/
 ├─ public/              # Static assets
 ├─ src/
 │  ├─ api/              # API calls and request handling

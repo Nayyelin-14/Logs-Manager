@@ -111,10 +111,10 @@ cd logs-manager
 
 ```bash
 # Copy example
-cp backend-fastapi/.env.example backend-fastapi/.env
+cp backend/.env.example backend/.env
 
 # Edit critical values
-nano backend-fastapi/.env
+nano backend/.env
 ```
 
 **Key settings for SaaS:**

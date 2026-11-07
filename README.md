@@ -27,12 +27,12 @@ need Docker PostgreSQL/Redis and a running Compose stack.
 
 | Assignment path | Repo path | Description |
 |---|---|---|
-| `/backend/` | `backend-fastapi/` | FastAPI API, parsers, normalizers, models, migrations |
-| `/frontend/` | `frontend/lms/` | React 19 + Vite + TypeScript + Recharts UI |
+| `/backend/` | `backend/` | FastAPI API, parsers, normalizers, models, migrations |
+| `/frontend/` | `frontend/` | React 19 + Vite + TypeScript + Recharts UI |
 | `/ingest/` | `ingest/` | Standalone syslog UDP/TCP listener service |
 | `/docs/` | `docs/` | Architecture, setup guides, schema, demo guide |
 | `/samples/` | `samples/` | Sample log files + sender scripts (send_syslog.sh, post_logs.py, simulator.py) |
-| `/tests/` | `tests/` + `backend-fastapi/tests/` | Acceptance check + pytest suite |
+| `/tests/` | `tests/` + `backend/tests/` | Acceptance check + pytest suite |
 | `docker-compose.yml` | `docker-compose.yml` | Root compose: caddy, backend, ingest, worker, db, redis, webhook-receiver, frontend |
 | `.env.example` | `.env.example` | All required settings |
 | `Makefile` | `Makefile` | up, down, seed, demo, test, lint, verify, reset |
@@ -114,7 +114,7 @@ DB_HOST_PORT=55432 REDIS_HOST_PORT=56379 \
   docker compose -p lms_local -f docker-compose.yml up -d
 
 # Run tests pointing to the alternate port
-cd backend-fastapi && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
+cd backend && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
   ./.venv/bin/python -m pytest -v
 ```
 

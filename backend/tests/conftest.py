@@ -7,7 +7,7 @@ Run inside the backend container:
     COMPOSE_PROJECT_NAME=logs_verify docker compose -f docker-compose.yml exec -T backend pytest -v
 
 Or on the host with configurable ports:
-    TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 backend-fastapi/.venv/bin/python -m pytest -v
+    TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 backend/.venv/bin/python -m pytest -v
 """
 
 import asyncio

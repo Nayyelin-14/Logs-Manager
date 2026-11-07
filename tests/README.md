@@ -1,14 +1,14 @@
 # Tests
 
-The backend test suite is in `backend-fastapi/tests/` and runs with **pytest** (507 tests after moving the standalone `tests_unit/test_tenancy_isolation.py` suite into `backend-fastapi/tests/unit/`).
+The backend test suite is in `backend/tests/` and runs with **pytest** (507 tests after moving the standalone `tests_unit/test_tenancy_isolation.py` suite into `backend/tests/unit/`).
 
 ## Quick start
 
 ```bash
 # From repo root
-make test          # runs pytest via backend-fastapi/.venv
+make test          # runs pytest via backend/.venv
 # or
-cd backend-fastapi
+cd backend
 ./.venv/bin/python -m pytest -q
 ```
 
@@ -30,7 +30,7 @@ cd backend-fastapi
 
 ## Conftest
 
-`backend-fastapi/tests/conftest.py`:
+`backend/tests/conftest.py`:
 - Forces a disposable test database `logs_manager_test` on Docker PostgreSQL (never Neon)
 - Sets `NullPool` to avoid cross-event-loop connection reuse
 - Forces Redis to local Docker Redis
@@ -74,6 +74,6 @@ services:
     image: redis:7-alpine
     ports: ["6379:6379"]
 steps:
-  - cd backend-fastapi && pip install -r requirements.txt
+  - cd backend && pip install -r requirements.txt
   - TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 .venv/bin/python -m pytest -q
 ```

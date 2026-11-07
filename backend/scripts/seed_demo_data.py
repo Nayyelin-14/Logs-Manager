@@ -1,6 +1,6 @@
 """
 Seed script for demo data: tenants, users, and logs.
-Runs against the backend-fastapi PostgreSQL/Redis.
+Runs against the backend PostgreSQL/Redis.
 """
 import pathlib
 import sys
