@@ -9,9 +9,10 @@ import logging
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -119,6 +120,18 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
+
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Custom 429 handler that adds Retry-After header."""
+    retry_after = getattr(exc, "retry_after", None) or 60
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Too many login attempts. Try again later."},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
@@ -145,13 +158,7 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# Rate limiting
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api"):
-        # Check rate limit
-        pass
-    return await call_next(request)
+# Rate limiting is applied per-route via slowapi decorators (see app/api/routes/auth.py).
 
 
 # Include routers

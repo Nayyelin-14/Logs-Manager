@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     WORKER_EMBEDDED: bool = False
     SAAS_MODE: bool = False
 
+    # Rate limiting (login brute-force protection)
+    LOGIN_RATE_LIMIT: str = "5/minute"        # max login attempts per IP per minute
+    LOGIN_LOCKOUT_ATTEMPTS: int = 5           # failed attempts before temporary lockout
+    LOGIN_LOCKOUT_MINUTES: int = 15           # lockout duration in minutes
+
     # CORS
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     

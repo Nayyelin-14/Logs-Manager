@@ -1,7 +1,12 @@
-from fastapi import APIRouter, Depends, Response, HTTPException, status
+from fastapi import APIRouter, Depends, Response, HTTPException, status, Request
+from fastapi.responses import JSONResponse
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi import Limiter
 from pydantic import BaseModel, AfterValidator
 from typing import Annotated
 import re
+import time
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import get_settings
@@ -21,6 +26,14 @@ import datetime
 settings = get_settings()
 router = APIRouter()
 
+# Dedicated limiter for the login route (avoids circular import with app.main).
+# Rate limit exceptions are handled by the global handler registered in main.py.
+login_limiter = Limiter(key_func=get_remote_address)
+
+# Per-username failed attempt tracking (in-memory, resets on restart).
+# Key: email -> {"count": int, "first_failed_at": float}
+_FAILED_LOGIN_TRACKER: dict[str, dict] = {}
+
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -37,6 +50,38 @@ SafeEmail = Annotated[str, AfterValidator(_validate_email)]
 class LoginRequest(BaseModel):
     email: SafeEmail
     password: str
+
+
+def _is_locked_out(email: str) -> tuple[bool, int]:
+    """Check if an email is locked out due to repeated failures.
+
+    Returns (locked, retry_after_seconds).
+    """
+    entry = _FAILED_LOGIN_TRACKER.get(email)
+    if not entry:
+        return False, 0
+    elapsed = time.time() - entry["first_failed_at"]
+    if entry["count"] >= settings.LOGIN_LOCKOUT_ATTEMPTS and elapsed < settings.LOGIN_LOCKOUT_MINUTES * 60:
+        return True, int(settings.LOGIN_LOCKOUT_MINUTES * 60 - elapsed)
+    # Lockout expired: reset tracker
+    if elapsed >= settings.LOGIN_LOCKOUT_MINUTES * 60:
+        _FAILED_LOGIN_TRACKER.pop(email, None)
+    return False, 0
+
+
+def _record_failed_login(email: str):
+    """Record a failed login attempt for an email."""
+    now = time.time()
+    entry = _FAILED_LOGIN_TRACKER.get(email)
+    if not entry:
+        _FAILED_LOGIN_TRACKER[email] = {"count": 1, "first_failed_at": now}
+    else:
+        entry["count"] += 1
+
+
+def _clear_failed_logins(email: str):
+    """Clear failed login tracker for an email on successful login."""
+    _FAILED_LOGIN_TRACKER.pop(email, None)
 
 
 class AuthCheckResponse(BaseModel):
@@ -67,22 +112,53 @@ def clear_auth_cookies(response: Response):
 
 
 @router.post("/login")
+@login_limiter.limit("5/minute")
 async def login(
-    request: LoginRequest,
+    request: Request,
+    login_request: LoginRequest,
     response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    result = await session.execute(select(User).where(User.email == request.email))
+    email = login_request.email
+
+    # Per-username lockout check (before DB lookup to avoid user enumeration)
+    locked, retry_after = _is_locked_out(email)
+    if locked:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many login attempts. Try again later."},
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    result = await session.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
     if not user:
+        _record_failed_login(email)
+        locked, retry_after = _is_locked_out(email)
+        if locked:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many login attempts. Try again later."},
+                headers={"Retry-After": str(retry_after)},
+            )
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     if user.status != "ACTIVE":
         raise HTTPException(status_code=403, detail="This account is not active.")
 
-    if user.password and not verify_password(request.password, user.password):
+    if user.password and not verify_password(login_request.password, user.password):
+        _record_failed_login(email)
+        locked, retry_after = _is_locked_out(email)
+        if locked:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many login attempts. Try again later."},
+                headers={"Retry-After": str(retry_after)},
+            )
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    _clear_failed_logins(email)
 
     payload = TokenPayload(
         user_id=user.id,
