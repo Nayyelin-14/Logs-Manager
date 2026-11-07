@@ -27,8 +27,9 @@ settings = get_settings()
 router = APIRouter()
 
 # Dedicated limiter for the login route (avoids circular import with app.main).
+# Uses Redis storage so rate limits are shared across workers/containers.
 # Rate limit exceptions are handled by the global handler registered in main.py.
-login_limiter = Limiter(key_func=get_remote_address)
+login_limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
 
 # Per-username failed attempt tracking (in-memory, resets on restart).
 # Key: email -> {"count": int, "first_failed_at": float}
