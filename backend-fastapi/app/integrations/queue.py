@@ -21,23 +21,9 @@ async def get_redis_pool():
 
 # Job type definitions
 class JobDefs:
-    OTP_EMAIL = "otp_email"
     ALERT_EMAIL = "alert_email"
     INVALIDATE_LOG_CACHE = "invalidate_log_cache"
     INVALIDATE_RULE_CACHE = "invalidate_rule_cache"
-
-
-async def enqueue_otp_email(email: str, otp_code: int, otp_id: int) -> Any:
-    """Enqueue OTP email job."""
-    pool = await get_redis_pool()
-    return await pool.enqueue_job(
-        JobDefs.OTP_EMAIL,
-        email=email,
-        otp_code=otp_code,
-        otp_id=otp_id,
-        _job_id=f"OTP:{otp_id}:email",
-        _queue_name="email_queue",
-    )
 
 
 async def enqueue_alert_email(

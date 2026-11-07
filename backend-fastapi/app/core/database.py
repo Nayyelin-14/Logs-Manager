@@ -61,7 +61,7 @@ async def init_db():
                 raise
             await asyncio.sleep(1)
 
-    required = ["User", "Otp", "alert_rules", "alerts", "email_notifications", "events", "security_logs"]
+    required = ["User", "alert_rules", "alerts", "email_notifications", "events", "tenants"]
     async with engine.connect() as conn:
         res = await conn.execute(
             text("SELECT tablename FROM pg_tables WHERE schemaname='public'")
