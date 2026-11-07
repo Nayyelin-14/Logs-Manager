@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [dev, 'hotfix/*']
   pull_request:
-    branches: [main, master]
+    branches: [dev]
+
+env:
+  IMAGE_REPOSITORY: logs-manager
+  REGISTRY_HOST: ghcr.io
 
 jobs:
   lint-and-test:
@@ -16,7 +20,7 @@ jobs:
           POSTGRES_USER: logs
           POSTGRES_PASSWORD: postgres_pass
           POSTGRES_DB: logs_manager_test
-        ports: ["5432:5432"]
+        ports: ["55432:5432"]
         options: >-
           --health-cmd "pg_isready -U logs -d logs_manager_test"
           --health-interval 10s
@@ -24,13 +28,18 @@ jobs:
           --health-retries 20
       redis:
         image: redis:7-alpine
-        ports: ["6379:6379"]
+        ports: ["56379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 20
-
+    env:
+      TEST_DB_PORT: 55432
+      TEST_REDIS_PORT: 56379
+      TEST_DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:55432/logs_manager_test?sslmode=disable
+      DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:55432/logs_manager_test?sslmode=disable
+      REDIS_URL: redis://localhost:56379
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +52,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install backend dependencies
         run: |
@@ -54,45 +65,211 @@ jobs:
       - name: Install frontend dependencies
         run: cd frontend && npm ci
 
-      - name: Environment sync check (example files only)
+      - name: Environment sync check
         run: python3 scripts/check_env_sync.py
 
-      - name: Run file size check
+      - name: File size check
         run: |
           chmod +x scripts/check_file_sizes.sh
           bash scripts/check_file_sizes.sh
 
-      - name: Run frontend checks
-        run: cd frontend && npm run lint && npx tsc -b && npm run build
+      - name: Frontend typecheck
+        run: cd frontend && npx tsc -b
 
-      - name: Run backend tests
-        env:
-          TEST_DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:5432/logs_manager_test?sslmode=disable
-          REDIS_URL: redis://localhost:6379
+      - name: Frontend lint
+        run: cd frontend && npm run lint
+
+      - name: Frontend build
+        run: cd frontend && npm run build
+
+      - name: Backend tests
         run: |
           cd backend
           . .venv/bin/activate
           python -m pytest -q
 
-  docker-build:
+      - name: Alembic upgrade head (fresh database)
+        env:
+          PGPASSWORD: postgres_pass
+          DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:55432/logs_manager_alembic?sslmode=disable
+        run: |
+          cd backend
+          . .venv/bin/activate
+          psql -h localhost -p 55432 -U logs -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS logs_manager_alembic;"
+          psql -h localhost -p 55432 -U logs -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE logs_manager_alembic OWNER logs;"
+          alembic upgrade head
+
+      - name: Alembic single-head check
+        run: |
+          cd backend
+          . .venv/bin/activate
+          HEADS_COUNT=$(alembic heads | grep -c '(head)')
+          if [ "$HEADS_COUNT" -ne 1 ]; then
+            echo "Expected exactly 1 alembic head, found $HEADS_COUNT" >&2
+            alembic heads
+            exit 1
+          fi
+          echo "Single alembic head confirmed"
+
+  pr-title-check:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        with:
+          types: |
+            feat
+            fix
+            chore
+            build
+            ci
+            docs
+            refactor
+            perf
+            test
+            style
+            revert
+
+  build-smoke-push:
     needs: lint-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Validate compose files
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute build version and tags
+        id: version
         run: |
-          docker compose --env-file .env.example -p lms_local -f docker-compose.yml config -q
-          DOMAIN=example.com docker compose --env-file .env.example -p lms_vm -f docker-compose.vm.yml config -q
+          set -euo pipefail
+          FULL_SHA="${{ github.sha }}"
+          SHORT_SHA="${FULL_SHA:0:7}"
+          CT=$(git show -s --format=%ct "${FULL_SHA}")
+          TAG_TS=$(date -u -d "@${CT}" +%Y%m%d-%H%M%S)
+          CREATED=$(date -u -d "@$CT" +%Y-%m-%dT%H:%M:%SZ)
+          APP_VERSION="0.0.0-dev+${SHORT_SHA}"
+          if [ -f .release-please-manifest.json ]; then
+            MANIFEST_VERSION=$(jq -r '.["."]' .release-please-manifest.json 2>/dev/null || true)
+            if [ -n "${MANIFEST_VERSION}" ] && [ "${MANIFEST_VERSION}" != "null" ]; then
+              if git log -1 --format=%s | grep -Eq '^chore\(.+\): release '; then
+                APP_VERSION="${MANIFEST_VERSION}"
+              else
+                APP_VERSION="${MANIFEST_VERSION}-dev+${SHORT_SHA}"
+              fi
+            fi
+          fi
+          echo "full_sha=${FULL_SHA}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag_ts=${TAG_TS}" >> $GITHUB_OUTPUT
+          echo "created_ts=${CREATED}" >> $GITHUB_OUTPUT
+          echo "app_version=${APP_VERSION}" >> $GITHUB_OUTPUT
+          echo "dev_tag=dev-${TAG_TS}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "owner_lower=${REPO_OWNER,,}" >> $GITHUB_OUTPUT
 
       - name: Build backend image
-        run: |
-          docker build -t lms-backend ./backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          load: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-backend:${{ steps.version.outputs.dev_tag }}
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-backend:${{ steps.version.outputs.full_sha }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.app_version }}
+            GIT_SHA=${{ steps.version.outputs.full_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.full_sha }}
+            org.opencontainers.image.created=${{ steps.version.outputs.created_ts }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build ingest image
-        run: |
-          docker build -t lms-ingest ./ingest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./ingest/Dockerfile
+          load: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-ingest:${{ steps.version.outputs.dev_tag }}
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-ingest:${{ steps.version.outputs.full_sha }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.app_version }}
+            GIT_SHA=${{ steps.version.outputs.full_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.full_sha }}
+            org.opencontainers.image.created=${{ steps.version.outputs.created_ts }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          load: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-frontend:${{ steps.version.outputs.dev_tag }}
+            ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-frontend:${{ steps.version.outputs.full_sha }}
+          build-args: |
+            VITE_API_URL=/api
+            VITE_APP_VERSION=${{ steps.version.outputs.app_version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.full_sha }}
+            org.opencontainers.image.created=${{ steps.version.outputs.created_ts }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        env:
+          BACKEND_IMAGE: ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-backend:${{ steps.version.outputs.full_sha }}
+          INGEST_IMAGE: ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-ingest:${{ steps.version.outputs.full_sha }}
+          FRONTEND_IMAGE: ghcr.io/${{ steps.version.outputs.owner_lower }}/logs-manager-frontend:${{ steps.version.outputs.full_sha }}
         run: |
-          docker build -t lms-frontend ./frontend
+          set -euo pipefail
+          RENDERED=$(docker compose -f docker-compose.vm.yml config)
+          for IMG in "${BACKEND_IMAGE}" "${INGEST_IMAGE}" "${FRONTEND_IMAGE}"; do
+            echo "${RENDERED}" | grep -qF "${IMG}" || { echo "docker-compose.vm.yml does not use ${IMG}" >&2; exit 1; }
+          done
+          docker compose -f docker-compose.vm.yml up -d --wait
+          for EP in healthz ready features version; do
+            echo "Checking /${EP}..."
+            curl -sf "http://localhost:4500/${EP}" >/dev/null
+          done
+          echo "All smoke checks passed."
+
+      - name: Dump logs and tear down
+        if: always()
+        run: |
+          docker compose -f docker-compose.vm.yml logs 2>&1 || true
+          docker compose -f docker-compose.vm.yml down -v 2>&1 || true
+
+      - name: Push images (push events only)
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          OWNER="${{ steps.version.outputs.owner_lower }}"
+          DEV_TAG="${{ steps.version.outputs.dev_tag }}"
+          FULL_SHA="${{ steps.version.outputs.full_sha }}"
+          for PKG in backend ingest frontend; do
+            docker push "ghcr.io/${OWNER}/logs-manager-${PKG}:${DEV_TAG}"
+            docker push "ghcr.io/${OWNER}/logs-manager-${PKG}:${FULL_SHA}"
+          done
