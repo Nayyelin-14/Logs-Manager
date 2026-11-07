@@ -136,6 +136,9 @@ backend-migrate: ## Apply Alembic migrations
 maintenance: env ## Run retention maintenance once
 	$(COMPOSE_LOCAL) exec -T backend python -m app.services.retention --days $${RETENTION_DAYS:-7}
 
+demo-retention: env ## Demonstrate retention: 8-day-old purged, 6-day-old kept
+	bash $(REPO_ROOT)/scripts/demo_retention.sh
+
 # -----------------------
 # Reset (dev only)
 # -----------------------

@@ -170,6 +170,9 @@ See `docs/schema.md` for the full field table and per-source mappings.
     or ClickHouse for append-only analytics.
 - Retention runs hourly via the worker and is also invocable via `make maintenance` or
   `python -m app.services.retention --dry-run`.
+- A demo script `scripts/demo_retention.sh` (and `make demo-retention`) inserts an 8-day-old
+  and a 6-day-old event into a dedicated `retention_test` tenant, runs the purge, and
+  verifies the 8-day-old event is deleted while the 6-day-old event is kept.
 - **Idempotency note**: Deleted rows are not recoverable. For production, implement
   archival backup before deletion.
 
