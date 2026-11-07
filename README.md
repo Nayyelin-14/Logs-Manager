@@ -20,8 +20,8 @@ Full-Stack Developer (Intern) practical assignment.
 | Tests, docs, Postman collection, samples + sender scripts | Implemented |
 
 Statuses above mean the feature is implemented in code. Runtime/SSL/end-to-end
-verification statuses are in `docs/FINAL_REPORT.md`; some items are marked manual
-or pending because they require a live stack or external network.
+verification requires a live stack; some items are marked manual because they
+need Docker PostgreSQL/Redis and a running Compose stack.
 
 ## Repo folder mapping (to assignment paths)
 
@@ -55,9 +55,9 @@ make up
 make seed
 
 # Access the system
-#   UI:        http://localhost:8081   (or https://localhost with Caddy)
-#   API:       http://localhost:4500
-#   Syslog:    udp/tcp 514
+#   UI:        https://localhost:443/ (via Caddy, self-signed cert locally)
+#   API:       http://localhost:4500 (direct) or https://localhost:443/api/ (via Caddy)
+#   Syslog:    udp/tcp 127.0.0.1:514
 #   API docs:  http://localhost:4500/docs
 ```
 
@@ -90,9 +90,7 @@ Demo logins (after `make seed`):
 | Target | Description |
 |---|---|
 | `make up` | Start all services (appliance mode) |
-| `make up-saas` | Start all services (SaaS mode, requires secrets) |
 | `make down` | Stop and remove Docker Compose stack |
-| `make down-saas` | Stop and remove SaaS Docker Compose stack |
 | `make seed` | Seed tenants, users, logs, alert rules |
 | `make demo` | Run bruteforce simulator (triggers alerts) |
 | `make test` | Run backend pytest suite (uses TEST_DB_PORT if set) |
@@ -105,15 +103,15 @@ Demo logins (after `make seed`):
 
 #### Inside Docker container (recommended)
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.appliance.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T backend pytest -v
+docker compose -p lms_local -f docker-compose.yml up -d
+docker compose -p lms_local -f docker-compose.yml exec -T backend pytest -v
 ```
 
 #### On host with alternate ports
 ```bash
 # Start stack with alternate ports (avoiding 5432/6379 conflicts)
 DB_HOST_PORT=55432 REDIS_HOST_PORT=56379 \
-  docker compose -f docker-compose.yml -f docker-compose.appliance.yml up -d
+  docker compose -p lms_local -f docker-compose.yml up -d
 
 # Run tests pointing to the alternate port
 cd backend-fastapi && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
@@ -124,14 +122,14 @@ cd backend-fastapi && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
 
 | Service | Host Port | Internal Port |
 |---|---|---|
-| PostgreSQL | 55432 | 5432 |
-| Redis | 56379 | 6379 |
-| Backend API | 4500 | 4500 |
-| Frontend | 8081 | 80 |
-| Webhook | 8000 | 8000 |
-| Caddy HTTP | 80 | 80 |
-| Caddy HTTPS | 443 | 443 |
-| Ingest (syslog) | 514 | 5514 |
+| Caddy HTTP | 127.0.0.1:8088 | 80 |
+| Caddy HTTPS | 127.0.0.1:443 | 443 |
+| Backend API | 127.0.0.1:4500 | 4500 |
+| PostgreSQL | 127.0.0.1:55432 | 5432 |
+| Redis | 127.0.0.1:56379 | 6379 |
+| Syslog (UDP/TCP) | 127.0.0.1:514 | 5514 |
+| Webhook receiver | 127.0.0.1:8008 | 8000 |
+| Frontend | served via Caddy | 80 |
 
 Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 
@@ -149,6 +147,7 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 
 ## Documentation
 
+- `docs/README.md` — Documentation index and navigation
 - `docs/architecture.md` — Mermaid diagram, data flow, tenant model, tech choices
 - `docs/setup_appliance.md` — Appliance deployment steps
 - `docs/setup_saas.md` — SaaS/Cloud deployment with HTTPS
@@ -156,11 +155,9 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 - `docs/schema.md` — Common schema field reference
 - `docs/API_CONTRACT.md` — API route and response contract
 - `docs/SECURITY_DESIGN.md` — Auth, RBAC, tenant isolation, and rate limits
-- `docs/FINAL_REPORT.md` — Verification results, fixes, and remaining manual checks
 - `postman/Logs-Manager.postman_collection.json` + `postman/Logs-Manager.postman_environment.json` — canonical Postman collection validated against actual routes
-- `docs/archive/` — superseded design/work logs; not part of the current reviewer-facing docs
 
-Canonical workflow: `make up` → `make seed` → `make verify`. `run.sh` is now a thin wrapper around `make up`; `backend-fastapi/docker-compose.yml` was removed in favor of the root Compose stack and root `Makefile`.
+Canonical workflow: `make up` → `make seed` → `make verify`. `run.sh` is a thin wrapper around `make up`.
 
 ## Security
 

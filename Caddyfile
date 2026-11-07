@@ -1,21 +1,8 @@
-# Caddyfile — Logs Manager reverse proxy with TLS
-# DOMAIN env var controls certificate source:
-#   - Public domain: automatic Let's Encrypt
-#   - localhost / IP / empty: Caddy's internal CA (self-signed)
-# HTTP → HTTPS redirect is always enforced.
-
-{
-    admin localhost:2019
-}
-
-# HTTP → HTTPS redirect
 :80 {
-    redir https://{host}{uri} 308
+    redir https://localhost:443{uri} 308
 }
 
-# Main site. {$DOMAIN:localhost} uses Caddy's env placeholder default syntax
-# (required for site addresses; {env.DOMAIN} is only a directive placeholder).
-{$DOMAIN:localhost} {
+localhost:443 {
     reverse_proxy /api/* backend:4500
     reverse_proxy /ingest/* backend:4500
     reverse_proxy /ingest backend:4500

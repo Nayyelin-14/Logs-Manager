@@ -24,6 +24,8 @@ This guide covers deploying Log Manager to a cloud VM with HTTPS/TLS.
 │  Backend     │                  │  Frontend   │
 │  FastAPI     │                  │  (nginx)    │
 │  port 4500   │                  │  port 80    │
+│  (no public  │                  │  (no public │
+│   port)      │                  │   port)     │
 └──────────────┘                  └─────────────┘
        │                                 │
        │                                 ▼
@@ -37,11 +39,19 @@ This guide covers deploying Log Manager to a cloud VM with HTTPS/TLS.
 │  PostgreSQL (port 5432)             │
 │  - Persistent volume                │
 │  - Daily backups recommended      │
+│  - No public port                   │
 └─────────────────────────────────────┘
 
 ┌─────────────────────────────────────┐
 │  Redis (port 6379)                  │
 │  - Cache + email queue              │
+│  - No public port                   │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│  Syslog Ingest (port 514)           │
+│  - Public, but IP-restricted via    │
+│    cloud firewall                   │
 └─────────────────────────────────────┘
 ```
 
@@ -140,51 +150,29 @@ ALERT_EMAIL_RECIPIENTS=security@example.com
 
 ### 5. HTTPS via Caddy (Recommended)
 
-Create a Caddy configuration:
+The repository includes a `Caddyfile` configured for SaaS deployment. Set `DOMAIN`
+in `.env` to your public domain (e.g., `logs.example.com`) and Caddy will obtain
+a Let's Encrypt certificate automatically:
 
-```bash
-cat > Caddyfile << 'EOF'
-logs.example.com {
-    reverse_proxy /api/* backend:4500
-    reverse_proxy /* frontend:80
-    encode gzip
-    
-    # Security headers
-    header {
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        X-XSS-Protection "1; mode=block"
-        Referrer-Policy "strict-origin-when-cross-origin"
-    }
-}
-EOF
+```
+DOMAIN=logs.example.com
+CADDY_EMAIL=admin@example.com
 ```
 
-Deploy with Caddy:
-
-```bash
-# Create caddy-docker-network
-docker network create caddy
-
-# Run Caddy with automatic HTTPS
-docker run -d \
-  --name caddy \
-  --restart unless-stopped \
-  --network caddy \
-  --volume $PWD/Caddyfile:/etc/caddy/Caddyfile \
-  --volume caddy_data:/data \
-  --volume caddy_config:/config \
-  caddy:2-alpine
-```
+The existing `Caddyfile` uses `{$DOMAIN:localhost}` — when `DOMAIN` is set,
+Caddy uses that domain for automatic TLS. When unset (local mode), it falls back
+to a self-signed internal CA certificate.
 
 ### 6. Deploy Application Stack
 
 ```bash
-# Set environment
-export INGEST_API_KEY=$(openssl rand -hex 16)
+# Set environment (all required secrets must be in .env)
+# DOMAIN, POSTGRES_PASSWORD, ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET,
+# INGEST_API_KEY, SEED_ADMIN_PASSWORD, SEED_VIEWER_A_PASSWORD,
+# SEED_VIEWER_B_PASSWORD, CORS_ORIGINS, ALLOWED_HOSTS
 
-# Deploy with docker compose using saas override file
-docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d --build
+# Deploy with standalone VM Compose file (project: lms_vm)
+docker compose -p lms_vm -f docker-compose.vm.yml up -d --build
 ```
 
 Alternatively, use the provided docker-compose.yml with modifications:
@@ -216,7 +204,7 @@ volumes:
 # Wait 1-2 minutes for Let's Encrypt verification
 # Caddy logs will show certificate status
 
-docker logs caddy | grep -i certificate
+docker compose -p lms_vm -f docker-compose.vm.yml logs caddy | grep -i certificate
 ```
 
 ### 8. Seed Initial Data
@@ -224,7 +212,8 @@ docker logs caddy | grep -i certificate
 ```bash
 # Create admin account and sample events
 cd /path/to/logs-manager
-docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T backend python scripts/seed_demo_data.py
+
+docker compose -p lms_vm -f docker-compose.vm.yml exec -T backend python scripts/seed_demo_data.py
 
 # Save the API keys displayed
 # They are required for ingestion
@@ -243,7 +232,7 @@ sudo ufw allow 443/tcp   # HTTPS
 # IMPORTANT: Port 514 (syslog) must be restricted by IP in the cloud firewall
 #   - Only allow trusted syslog sources to send to this port
 #   - Example AWS Security Group rule: source = syslog server IPs only
-# Block internal ports (5432, 6379, 4500, 8081 should NOT be exposed)
+# Block internal ports (5432, 6379, 4500, 8000 should NOT be exposed)
 ```
 
 ### 2. Database Backups
@@ -256,7 +245,7 @@ DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="/opt/backups"
 mkdir -p $BACKUP_DIR
 
-docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T db pg_dump -U logs logs_manager > $BACKUP_DIR/logs_$DATE.sql
+docker compose -p lms_vm -f docker-compose.vm.yml exec -T db pg_dump -U logs logs_manager > $BACKUP_DIR/logs_$DATE.sql
 gzip $BACKUP_DIR/logs_$DATE.sql
 
 # Keep last 7 days
@@ -296,10 +285,10 @@ Caddy handles automatic renewal. Verify:
 
 ```bash
 # Check certificate expiration
-docker exec caddy caddy cert-info --domains logs.example.com
+docker compose -p lms_vm -f docker-compose.vm.yml exec caddy caddy cert-info --domains logs.example.com
 
 # Force renewal (if needed)
-docker exec caddy caddy reload
+docker compose -p lms_vm -f docker-compose.vm.yml exec caddy caddy reload
 ```
 
 ## API Access
@@ -367,13 +356,13 @@ curl -X POST https://logs.example.com/api/ingest \
 ### Certificate Issues
 ```bash
 # Check Caddy logs
-docker logs caddy
+docker compose -p lms_vm -f docker-compose.vm.yml logs caddy
 
 # Test HTTP challenge manually
 curl -I http://logs.example.com/.well-known/acme-challenge/
 
 # Force certificate renewal
-docker restart caddy
+docker compose -p lms_vm -f docker-compose.vm.yml restart caddy
 ```
 
 ### CORS Errors
@@ -386,7 +375,7 @@ docker restart caddy
 ### Database Connection
  ```bash
  # Test connection
- docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T backend python -c "from app.core.database import engine; print(engine.url)"
+ docker compose -p lms_vm -f docker-compose.vm.yml exec -T backend python -c "from app.core.database import engine; print(engine.url)"
  ```
 
 ### Email Not Working
@@ -408,16 +397,13 @@ For higher load:
 
  ```bash
  # Restart services
- docker compose -f docker-compose.yml -f docker-compose.saas.yml restart
- 
+ docker compose -p lms_vm -f docker-compose.vm.yml restart
+
  # Pull latest images
- docker compose -f docker-compose.yml -f docker-compose.saas.yml pull
- docker compose -f docker-compose.yml -f docker-compose.saas.yml down
- docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d
- 
+ docker compose -p lms_vm -f docker-compose.vm.yml pull
+ docker compose -p lms_vm -f docker-compose.vm.yml down
+ docker compose -p lms_vm -f docker-compose.vm.yml up -d
+
  # Check resource usage
  docker stats
- 
- # Database maintenance (backup first)
- docker compose -f docker-compose.yml -f docker-compose.saas.yml exec -T db pg_dump -U logs logs_manager > backup.sql
  ```

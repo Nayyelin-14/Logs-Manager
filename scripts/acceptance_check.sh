@@ -13,8 +13,8 @@ VIEWER_A_EMAIL="${VIEWER_A_EMAIL:-viewerA@demo.local}"
 VIEWER_A_PASSWORD="${VIEWER_A_PASSWORD:-$SEED_VIEWER_A_PASSWORD}"
 SYSLOG_HOST="${SYSLOG_HOST:-127.0.0.1}"
 SYSLOG_PORT="${SYSLOG_PORT:-514}"
-WEBHOOK_URL="${WEBHOOK_URL:-http://localhost:${WEBHOOK_PORT:-8000}}"
-HTTP_URL="${HTTP_URL:-http://localhost:${HTTP_PORT:-80}/}"
+WEBHOOK_URL="${WEBHOOK_URL:-http://localhost:${WEBHOOK_PORT:-8008}}"
+HTTP_URL="${HTTP_URL:-http://localhost:${HTTP_PORT:-8088}/}"
 HTTPS_URL="${HTTPS_URL:-https://localhost:${HTTPS_PORT:-443}/}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-logs_verify}"
 
@@ -31,7 +31,7 @@ VIEWER_JAR=/tmp/ac_viewer_cookie
 rm -f "$ADMIN_JAR" "$VIEWER_JAR"
 
 compose() {
-  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME}" docker compose -f docker-compose.yml -f docker-compose.appliance.yml "$@"
+  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME}" docker compose -f docker-compose.yml "$@"
 }
 
 admin_login() {

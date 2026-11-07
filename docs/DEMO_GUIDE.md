@@ -52,7 +52,7 @@ echo '<190>Aug 20 13:01:02 r1 if=ge-0/0/1 event=link-down \
 mac=aa:bb:cc:dd:ee:ff reason=carrier-loss' | nc 127.0.0.1 514
 ```
 
-Wait ~10 seconds, then open the UI at `http://localhost:8081` and verify the
+Wait ~10 seconds, then open the UI at `https://localhost:443/` and verify the
 firewall/network events appear in the logs table.
 
 ### 1b. HTTP POST /ingest (sample 4.3)
@@ -167,7 +167,7 @@ Observe:
 
 Check the webhook receiver:
 ```bash
-curl -s http://localhost:8000/alerts
+curl -s http://localhost:8008/alerts
 ```
 
 Demonstrate cooldown: run the simulator again immediately — no duplicate alert
@@ -213,8 +213,8 @@ For a SaaS deployment with a public domain:
 DOMAIN=logs.example.com
 CADDY_EMAIL=admin@example.com
 
-# Start with SaaS override
-docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d
+# Start with VM Compose file
+docker compose -p lms_vm -f docker-compose.vm.yml up -d
 ```
 
 Caddy obtains a Let's Encrypt certificate automatically. Verify:
@@ -228,7 +228,7 @@ For IP-based or local deployment (self-signed):
 ```bash
 # No DOMAIN set → tls internal (self-signed)
 make up
-curl -vk https://localhost/
+curl -vk https://localhost:443/
 ```
 
 Browser will show a self-signed certificate warning — document this as expected.

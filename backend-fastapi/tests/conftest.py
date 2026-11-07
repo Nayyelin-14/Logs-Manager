@@ -4,7 +4,7 @@ Forces every test run onto a dedicated test database (never Neon/production)
 and prepares schema + demo seed before the first test executes.
 
 Run inside the backend container:
-    COMPOSE_PROJECT_NAME=logs_verify docker compose -f docker-compose.yml -f docker-compose.appliance.yml exec -T backend pytest -v
+    COMPOSE_PROJECT_NAME=logs_verify docker compose -f docker-compose.yml exec -T backend pytest -v
 
 Or on the host with configurable ports:
     TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 backend-fastapi/.venv/bin/python -m pytest -v

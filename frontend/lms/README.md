@@ -72,7 +72,7 @@ make up
 make seed
 ```
 
-The UI is served at `http://localhost:8080`. See the root
+The UI is served at `https://localhost`. See the root
 [`README.md`](../../README.md) for prerequisites and shutdown commands.
 
 For frontend-only development:

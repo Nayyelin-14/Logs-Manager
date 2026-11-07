@@ -3,15 +3,14 @@ SHELL := /bin/bash
 # Repo root (this Makefile lives at repo root)
 REPO_ROOT := $(shell pwd)
 BACKEND_DIR := $(REPO_ROOT)/backend-fastapi
-COMPOSE_BASE := docker compose -f docker-compose.yml
-COMPOSE := $(COMPOSE_BASE) -f docker-compose.appliance.yml
-COMPOSE_SAAS := $(COMPOSE_BASE) -f docker-compose.saas.yml
+COMPOSE_LOCAL := docker compose -p lms_local -f docker-compose.yml
+COMPOSE_VM := docker compose -p lms_vm -f docker-compose.vm.yml
 
 # Test configuration - can be overridden via environment
 TEST_DB_PORT ?= 55432
 TEST_REDIS_PORT ?= 56379
 
-.PHONY: help up down up-saas down-saas restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate
+.PHONY: help up down restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate
 
 # -----------------------
 # Help
@@ -20,11 +19,9 @@ TEST_REDIS_PORT ?= 56379
 help:
 	@echo "Logs Manager - Fullstack assignment targets:"
 	@echo ""
-	@echo "  make up              Start Docker Compose stack (appliance mode)"
-	@echo "  make up-saas         Start Docker Compose stack (SaaS mode, requires env vars)"
-	@echo "  make down            Stop and remove Docker Compose stack"
-	@echo "  make down-saas       Stop and remove SaaS Docker Compose stack"
-	@echo "  make restart         Restart Docker Compose stack"
+	@echo "  make up              Start local Docker Compose stack (docker-compose.yml, project: lms_local)"
+	@echo "  make down            Stop and remove local Docker Compose stack"
+	@echo "  make restart         Restart local Docker Compose stack"
 	@echo "  make logs            Follow container logs"
 	@echo "  make ps              Show container status"
 	@echo "  make env             Create .env from .env.example if missing"
@@ -49,30 +46,20 @@ help:
 # Docker Compose - Appliance mode
 # -----------------------
 
-up: env ## Start Docker Compose stack (appliance mode)
-	$(COMPOSE) up -d --build
+up: env ## Start local Docker Compose stack (docker-compose.yml, project: lms_local)
+	$(COMPOSE_LOCAL) up -d --build
 
-down: ## Stop and remove Docker Compose stack
-	$(COMPOSE) down
+down: ## Stop and remove local Docker Compose stack
+	$(COMPOSE_LOCAL) down
 
-restart: ## Restart Docker Compose stack
-	$(COMPOSE) restart
+restart: ## Restart local Docker Compose stack
+	$(COMPOSE_LOCAL) restart
 
 logs: ## Follow container logs
-	$(COMPOSE) logs -f
+	$(COMPOSE_LOCAL) logs -f
 
 ps: ## Show container status
-	$(COMPOSE) ps
-
-# -----------------------
-# Docker Compose - SaaS mode
-# -----------------------
-
-up-saas: env ## Start Docker Compose stack (SaaS mode)
-	$(COMPOSE_SAAS) up -d --build
-
-down-saas: ## Stop and remove SaaS Docker Compose stack
-	$(COMPOSE_SAAS) down
+	$(COMPOSE_LOCAL) ps
 
 # -----------------------
 # Configuration
@@ -87,7 +74,7 @@ env: ## Create .env from .env.example if missing
 # -----------------------
 
 seed: env ## Seed demo tenants, users, logs, alert rules
-	$(COMPOSE) exec -T backend python scripts/seed_demo_data.py
+	$(COMPOSE_LOCAL) exec -T backend python scripts/seed_demo_data.py
 
 seeds: seed ## Alias for seed
 
@@ -111,7 +98,7 @@ backend-up: up
 backend-down: down
 backend-ps: ps
 backend-shell: ## Shell into backend container
-	$(COMPOSE) exec backend sh
+	$(COMPOSE_LOCAL) exec backend sh
 
 backend-test: ## Run backend pytest tests (requires running stack or container exec)
 	@cd $(BACKEND_DIR) && TEST_DATABASE_URL="postgresql+asyncpg://logs:postgres_pass@localhost:$(TEST_DB_PORT)/logs_manager_test?sslmode=disable" TEST_REDIS_PORT=$(TEST_REDIS_PORT) ./.venv/bin/python -m pytest -q
@@ -133,11 +120,11 @@ check-files: ## File size and configuration validation
 check: check-env check-files frontend-check ## Run safe acceptance checks (no local .env.local read)
 
 compose-check: ## Validate Docker Compose files parse
-	docker compose -f docker-compose.yml -f docker-compose.appliance.yml config -q
-	docker compose -f docker-compose.yml -f docker-compose.saas.yml config -q
+	docker compose -p lms_local -f docker-compose.yml config -q
+	DOMAIN=example.com docker compose -p lms_vm -f docker-compose.vm.yml config -q
 
 test-deps: env ## Start only db + redis for backend tests
-	$(COMPOSE) up -d db redis
+	$(COMPOSE_LOCAL) up -d db redis
 
 backend-migrate: ## Apply Alembic migrations
 	@cd $(BACKEND_DIR) && .venv/bin/python -m alembic upgrade head
@@ -147,7 +134,7 @@ backend-migrate: ## Apply Alembic migrations
 # -----------------------
 
 maintenance: env ## Run retention maintenance once
-	$(COMPOSE) exec -T backend python -m app.services.retention --days $${RETENTION_DAYS:-7}
+	$(COMPOSE_LOCAL) exec -T backend python -m app.services.retention --days $${RETENTION_DAYS:-7}
 
 # -----------------------
 # Reset (dev only)
@@ -159,11 +146,11 @@ reset: env ## Dev data reset (confirmation required; refuses Neon)
 		case "$$(grep DATABASE_URL .env 2>/dev/null | cut -d= -f2)" in \
 			*neon*|*Neon*) echo "Refusing to reset Neon database."; exit 1 ;; \
 		esac; \
-		$(COMPOSE) down -v 2>/dev/null || true; \
-		$(COMPOSE) up -d --build; \
+		$(COMPOSE_LOCAL) down -v 2>/dev/null || true; \
+		$(COMPOSE_LOCAL) up -d --build; \
 		echo "Waiting for services..."; \
 		sleep 10; \
-		$(COMPOSE) exec -T backend python scripts/seed_demo_data.py; \
+		$(COMPOSE_LOCAL) exec -T backend python scripts/seed_demo_data.py; \
 	else \
 		echo "Reset cancelled."; \
 	fi
@@ -174,9 +161,8 @@ reset: env ## Dev data reset (confirmation required; refuses Neon)
 
 validate: ## Validate configuration and code
 	@echo "Validating configuration..."
-	@test -f docker-compose.yml && echo "Compose: OK" || (echo "Compose: MISSING"; exit 1)
-	@test -f docker-compose.appliance.yml && echo "Compose (appliance): OK" || (echo "Compose appliance: MISSING"; exit 1)
-	@test -f docker-compose.saas.yml && echo "Compose (saas): OK" || (echo "Compose saas: MISSING"; exit 1)
+	@test -f docker-compose.yml && echo "Compose (local): OK" || (echo "Compose (local): MISSING"; exit 1)
+	@test -f docker-compose.vm.yml && echo "Compose (VM): OK" || (echo "Compose (VM): MISSING"; exit 1)
 	@test -f .env.example && echo ".env.example: OK" || (echo ".env.example: MISSING"; exit 1)
 	@test -f $(BACKEND_DIR)/app/main.py && echo "FastAPI app: OK" || (echo "FastAPI app: MISSING"; exit 1)
 	@test -f $(BACKEND_DIR)/scripts/seed_demo_data.py && echo "Seed script: OK" || (echo "Seed script: MISSING"; exit 1)
@@ -190,9 +176,8 @@ validate: ## Validate configuration and code
 
 lint: ## File size check + basic validation
 	@bash $(REPO_ROOT)/scripts/check_file_sizes.sh
-	@test -f docker-compose.yml && echo "Compose: OK" || (echo "Compose: MISSING"; exit 1)
-	@test -f docker-compose.appliance.yml && echo "Compose (appliance): OK" || (echo "Compose appliance: MISSING"; exit 1)
-	@test -f docker-compose.saas.yml && echo "Compose (saas): OK" || (echo "Compose saas: MISSING"; exit 1)
+	@test -f docker-compose.yml && echo "Compose (local): OK" || (echo "Compose (local): MISSING"; exit 1)
+	@test -f docker-compose.vm.yml && echo "Compose (VM): OK" || (echo "Compose (VM): MISSING"; exit 1)
 	@test -f Caddyfile && echo "Caddyfile: OK" || (echo "Caddyfile: MISSING"; exit 1)
 
 # -----------------------
