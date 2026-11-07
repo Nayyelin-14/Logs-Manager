@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.schema.json",
+  "changelog-path": "CHANGELOG.md",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "target-branch": "dev",
+  "packages": {
+    ".": {
+      "extra-files": [
+        "backend/pyproject.toml",
+        "frontend/package.json"
+      ]
+    }
+  }
+}

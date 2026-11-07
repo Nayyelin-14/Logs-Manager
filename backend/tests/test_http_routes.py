@@ -114,3 +114,33 @@ def test_firewall_events_have_expected_fields(client):
         assert event.get("eventType") or event.get("event_type")
         assert event.get("severity") is not None
         assert isinstance(event.get("raw"), dict)
+
+
+def test_feature_flag_off_returns_404(client):
+    """A flagged route returns 404 when its flag is disabled."""
+    res = client.get("/api/features/test-flagged")
+    assert res.status_code == 404, f"Expected 404, got {res.status_code}"
+
+
+def test_feature_flag_on_returns_200(client):
+    """A flagged route returns 200 when its flag is enabled."""
+    import os
+    os.environ["FEATURE_TEST_FLAG_ENABLED"] = "true"
+    try:
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.api.routes.health import require_feature
+        from fastapi import Depends, FastAPI
+
+        test_app = FastAPI()
+        test_app.include_router(app.router)
+
+        @test_app.get("/features/test-flagged")
+        async def test_flagged_route(_=Depends(require_feature("test_flag"))):
+            return {"status": "ok", "feature": "test_flag"}
+
+        with TestClient(test_app) as flagged_client:
+            res = flagged_client.get("/api/features/test-flagged")
+            assert res.status_code == 200, f"Expected 200, got {res.status_code}"
+    finally:
+        os.environ.pop("FEATURE_TEST_FLAG_ENABLED", None)
