@@ -41,6 +41,13 @@ make seed
 #   Syslog:    UDP/TCP 127.0.0.1:514
 #   API docs:  http://localhost:4500/docs
 ```
+
+> **Port conflicts:** If ports 80 or 443 are already in use on your host, override them in `.env`:
+> ```
+> HTTP_PORT=8088
+> HTTPS_PORT=8443
+> ```
+> Then access the UI at `https://localhost:8443/` and the HTTP redirect at `http://localhost:8088/`.
  
  ## Manual Deployment
  
@@ -73,7 +80,7 @@ docker compose -p lms_local -f docker-compose.yml ps
 curl -sk https://localhost:443/healthz
 
 # Or HTTP redirect to check Caddy
-curl -sI http://localhost:8088/
+curl -sI http://localhost:80/
 ```
  
  ## Seed Demo Data

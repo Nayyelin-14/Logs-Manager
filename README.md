@@ -122,7 +122,7 @@ cd backend-fastapi && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
 
 | Service | Host Port | Internal Port |
 |---|---|---|
-| Caddy HTTP | 127.0.0.1:8088 | 80 |
+| Caddy HTTP | 127.0.0.1:80 | 80 |
 | Caddy HTTPS | 127.0.0.1:443 | 443 |
 | Backend API | 127.0.0.1:4500 | 4500 |
 | PostgreSQL | 127.0.0.1:55432 | 5432 |
