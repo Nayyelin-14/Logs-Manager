@@ -5,6 +5,7 @@ Verified against Neon PostgreSQL database.
 import pytest
 from app.models.enums import Source
 from app.parsers.canonical import resolve_canonical_event_type
+from app.parsers.cloud import normalize_crowdstrike
 
 
 class TestCanonicalResolution:
@@ -72,19 +73,6 @@ class TestModelTests:
         assert True
 
 
-class TestDatabaseIntegration:
-    """Database integration tests - verified against Neon PostgreSQL."""
-
-    def test_demoA_tenant_has_events(self):
-        """demoA tenant has security events in the database."""
-        # Verified: SELECT count(*) FROM security_logs WHERE tenant='demoA' = 5
-        assert True  # Placeholder - verified offline
-
-    def test_demoB_tenant_has_events(self):
-        """demoB tenant has security events in the database."""
-        # Verified: SELECT count(*) FROM security_logs WHERE tenant='demoB' = 2
-        assert True  # Placeholder - verified offline
-
     def test_security_event_model_has_ingested_at(self):
         """SecurityEvent model has ingested_at column."""
         from sqlalchemy import inspect
@@ -92,3 +80,73 @@ class TestDatabaseIntegration:
 
         cols = {c.name for c in SecurityEvent.__table__.columns}
         assert "ingested_at" in cols
+
+
+class TestCrowdStrikeActionMapping:
+    """CrowdStrike action values must map to the allowed Action enum."""
+
+    @pytest.mark.parametrize(
+        "vendor_action, expected_action",
+        [
+            ("quarantine", "alert"),
+            ("Quarantine", "alert"),
+            ("QUARANTINE", "alert"),
+            ("blocked", "deny"),
+            ("BLOCKED", "deny"),
+            ("detected", "alert"),
+            ("allowed", "allow"),
+            ("unknown_action", "alert"),
+            ("", "alert"),
+            (None, "alert"),
+        ],
+    )
+    def test_action_mapped_to_allowed_enum(self, vendor_action, expected_action):
+        """Vendor actions map case-insensitively to allowed enum values."""
+        event = {
+            "tenant": "demoA",
+            "source": "crowdstrike",
+            "event_type": "malware_detected",
+            "host": "WIN10-01",
+            "process": "powershell.exe",
+            "severity": 8,
+            "action": vendor_action,
+            "@timestamp": "2026-11-07T08:00:00Z",
+        }
+        result = normalize_crowdstrike(event)
+        assert result["action"] == expected_action, f"{vendor_action} -> {result['action']}, expected {expected_action}"
+
+    def test_quarantine_preserved_in_event_subtype(self):
+        """Original vendor action preserved in event_subtype; raw keeps full payload."""
+        event = {
+            "tenant": "demoA",
+            "source": "crowdstrike",
+            "event_type": "malware_detected",
+            "host": "WIN10-01",
+            "process": "powershell.exe",
+            "severity": 8,
+            "action": "quarantine",
+            "@timestamp": "2026-11-07T08:00:00Z",
+        }
+        result = normalize_crowdstrike(event)
+        assert result["event_subtype"] == "quarantine"
+        assert result["action"] == "alert"
+        assert result["raw"]["action"] == "quarantine"
+        assert result["severity"] == 8
+        assert result["host"] == "WIN10-01"
+        assert result["process"] == "powershell.exe"
+
+    def test_unknown_action_gets_unmapped_tag(self):
+        """Unknown vendor action falls back to alert and gets action_unmapped tag."""
+        event = {
+            "tenant": "demoA",
+            "source": "crowdstrike",
+            "event_type": "malware_detected",
+            "host": "WIN10-01",
+            "process": "powershell.exe",
+            "severity": 5,
+            "action": "weird_vendor_action",
+            "@timestamp": "2026-11-07T08:00:00Z",
+        }
+        result = normalize_crowdstrike(event)
+        assert result["action"] == "alert"
+        assert "action_unmapped" in result["tags"]

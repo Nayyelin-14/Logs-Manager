@@ -13,6 +13,23 @@ from app.parsers.helpers import (
 )
 from app.parsers.canonical import resolve_canonical_event_type
 
+# CrowdStrike vendor actions -> normalized Action enum values.
+# The DB ActionEnum only allows: allow, deny, create, delete, login, logout, alert, other.
+# CrowdStrike "quarantine" is a detection/containment action -> map to "alert".
+# Preserve the vendor's original value in event_subtype so it is not lost.
+CROWDSTRIKE_ACTION_MAP: Dict[str, str] = {
+    "quarantine": "alert",
+    "blocked": "deny",
+    "block": "deny",
+    "detected": "alert",
+    "detection": "alert",
+    "prevented": "deny",
+    "allowed": "allow",
+    "notify": "alert",
+    "": "alert",
+    None: "alert",
+}
+
 
 def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize AWS CloudTrail events."""
@@ -100,17 +117,22 @@ def normalize_crowdstrike(event: Dict[str, Any]) -> Dict[str, Any]:
     
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.CROWDSTRIKE)
     
-    action = (
+    raw_action = (
         safe_string(pick(event, ["action", "Action"])) or
-        safe_string(pick(payload, ["action", "Action"])) or "ALERT"
-    ).upper()
-
+        safe_string(pick(payload, ["action", "Action"]))
+    )
+    
+    action_key = raw_action.lower() if raw_action else ""
+    mapped_action = CROWDSTRIKE_ACTION_MAP.get(action_key, "alert")
+    unmapped = raw_action is not None and action_key not in CROWDSTRIKE_ACTION_MAP
+    
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
         "source": Source.CROWDSTRIKE,
         "event_type": original_event_type,
         "canonical_event_type": canonical_event_type,
         "original_event_type": original_event_type,
+        "event_subtype": raw_action if raw_action else None,
         "user": (
             safe_string(pick(event, ["user", "username"])) or
             safe_string(pick(payload, ["UserName", "user_name", "UserNameString"]))
@@ -133,7 +155,7 @@ def normalize_crowdstrike(event: Dict[str, Any]) -> Dict[str, Any]:
                 "CommandLine", "command_line", "process_name"
             ]))
         ),
-        "action": action,
+        "action": mapped_action,
         "severity": safe_severity(pick(event, ["severity"])) or safe_severity(
             pick(payload, ["Severity", "severity", "SeverityName"])
         ) or 0,
@@ -155,5 +177,5 @@ def normalize_crowdstrike(event: Dict[str, Any]) -> Dict[str, Any]:
                 "UtcTime", "utc_time", "CreationTime", "creation_time"
             ])
         ),
-        "tags": safe_tags(event.get("tags")),
+        "tags": safe_tags(event.get("tags")) + (["action_unmapped"] if unmapped else []),
     }
