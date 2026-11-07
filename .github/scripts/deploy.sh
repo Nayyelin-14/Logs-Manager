@@ -21,6 +21,7 @@
 #   VM_HOST, VM_USER, VM_COMPOSE_DIR
 #   SSH_PRIVATE_KEY, VM_SSH_HOST_KEY
 #   GITHUB_TOKEN          packages: read, passed to VM over stdin for docker login
+#   GITHUB_ACTOR          GitHub actor name for docker login
 #   RUN_MIGRATIONS        "true" only after alembic stamp head has been run on prod
 
 set -euo pipefail
@@ -36,6 +37,7 @@ VM_COMPOSE_DIR="${VM_COMPOSE_DIR:?VM_COMPOSE_DIR must be set}"
 SSH_PRIVATE_KEY="${SSH_PRIVATE_KEY:?SSH_PRIVATE_KEY must be set}"
 VM_SSH_HOST_KEY="${VM_SSH_HOST_KEY:?VM_SSH_HOST_KEY must be set}"
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN must be set}"
+GITHUB_ACTOR="${GITHUB_ACTOR:?GITHUB_ACTOR must be set}"
 RUN_MIGRATIONS="${RUN_MIGRATIONS:-false}"
 
 IMAGE_REGISTRY="ghcr.io"
@@ -68,25 +70,26 @@ SSH_OPTS=(-i "${SSH_KEY}" \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=10)
 
-# Build the remote deploy script (no secrets embedded — token comes via stdin later)
+# Build the remote deploy script. Values arrive as positional args; no secrets
+# or tokens are embedded in the script text.
 REMOTE_SCRIPT=$(cat <<'REMOTE_EOF'
 set -euo pipefail
 
-cd '__VM_COMPOSE_DIR__'
+cd "$1"
+MODE="$2"
+SHA="$3"
+BACKEND_REF="$4"
+INGEST_REF="$5"
+FRONTEND_REF="$6"
+RUN_MIGRATIONS="$7"
+GITHUB_TOKEN="$8"
+GITHUB_ACTOR="$9"
 
 DEPLOY_DIR='.deploy'
 BACKUP_DIR="${DEPLOY_DIR}/backups"
 CURRENT_ENV="${DEPLOY_DIR}/current.env"
 PREVIOUS_ENV="${DEPLOY_DIR}/previous.env"
 NEXT_ENV="${DEPLOY_DIR}/next.env"
-FLAGS_ENV="${DEPLOY_DIR}/flags.env"
-
-MODE='__MODE__'
-SHA='__SHA__'
-BACKEND_REF='__BACKEND_REF__'
-INGEST_REF='__INGEST_REF__'
-FRONTEND_REF='__FRONTEND_REF__'
-RUN_MIGRATIONS='__RUN_MIGRATIONS__'
 
 mkdir -p "${DEPLOY_DIR}" "${BACKUP_DIR}"
 
@@ -96,14 +99,10 @@ echo "Backend: ${BACKEND_REF}"
 echo "Ingest:  ${INGEST_REF}"
 echo "Frontend: ${FRONTEND_REF}"
 
-# ------------------------------------------------------------
-# 1. Login to GHCR via stdin (token never in command args)
-# ------------------------------------------------------------
-echo '${GITHUB_TOKEN}' | docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin
+# Login to GHCR via stdin (token passed from the runner over ssh stdin)
+echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
-# ------------------------------------------------------------
-# 2. Record current running image refs (if any)
-# ------------------------------------------------------------
+# Record current running image refs
 if [ -f "${CURRENT_ENV}" ]; then
   cp "${CURRENT_ENV}" "${PREVIOUS_ENV}"
   echo "Recorded previous.env from current.env."
@@ -111,9 +110,7 @@ else
   echo "No current.env found — first deploy. No rollback target yet."
 fi
 
-# ------------------------------------------------------------
-# 3. Write next.env with new image refs
-# ------------------------------------------------------------
+# Write next.env
 cat > "${NEXT_ENV}" <<NEXT_ENV_EOF
 BACKEND_IMAGE=${BACKEND_REF}
 INGEST_IMAGE=${INGEST_REF}
@@ -122,10 +119,8 @@ NEXT_ENV_EOF
 
 echo "Wrote ${NEXT_ENV}."
 
-# ------------------------------------------------------------
-# 4. pg_dump backup (abort on failure, check free disk, keep last N)
-# ------------------------------------------------------------
-AVAILABLE_KB=$(df --output=avail / | tail -1)
+# pg_dump backup
+AVAILABLE_KB=$(df --output=avail "${DEPLOY_DIR}" | tail -1)
 REQUIRED_KB=1048576  # 1 GB minimum free
 if [ "${AVAILABLE_KB}" -lt "${REQUIRED_KB}" ]; then
   echo "Insufficient disk space: ${AVAILABLE_KB} KB available, ${REQUIRED_KB} KB required." >&2
@@ -133,12 +128,16 @@ if [ "${AVAILABLE_KB}" -lt "${REQUIRED_KB}" ]; then
 fi
 
 BACKUP_FILE="${BACKUP_DIR}/pre_deploy_$(date -u +%Y%m%d-%H%M%S).sql"
-docker compose -f docker-compose.vm.yml --env-file "${CURRENT_ENV}" \
-  exec -T db pg_dump -U "${POSTGRES_USER:-logs}" -d "${POSTGRES_DB:-logs_manager}" > "${BACKUP_FILE}" 2>/dev/null || {
-  echo "pg_dump failed. Aborting deploy." >&2
-  exit 1
-}
-echo "Database backup written to ${BACKUP_FILE}."
+if [ -f "${CURRENT_ENV}" ]; then
+  docker compose -f docker-compose.vm.yml --env-file "${CURRENT_ENV}" \
+    exec -T db pg_dump -U "${POSTGRES_USER:-logs}" -d "${POSTGRES_DB:-logs_manager}" > "${BACKUP_FILE}" 2>/dev/null || {
+    echo "pg_dump failed. Aborting deploy." >&2
+    exit 1
+  }
+  echo "Database backup written to ${BACKUP_FILE}."
+else
+  echo "No current.env — first deploy, skipping backup."
+fi
 
 # Keep last N backups
 BACKUP_COUNT=$(ls -1 "${BACKUP_DIR}"/*.sql 2>/dev/null | wc -l)
@@ -148,44 +147,45 @@ if [ "${BACKUP_COUNT}" -gt "${KEEP_N}" ]; then
   echo "Retained last ${KEEP_N} backups."
 fi
 
-# ------------------------------------------------------------
-# 5. Run migrations with NEW backend image BEFORE switching
-#    (forward/redeploy mode only, gated by RUN_MIGRATIONS=true)
-# ------------------------------------------------------------
-if [ "${MODE}" = "forward" ] || [ "${MODE}" = "redeploy" ]; then
-  if [ "${RUN_MIGRATIONS}" = "true" ]; then
-    echo "Running migrations with new backend image..."
-    docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" run --rm --no-deps backend \
-      alembic upgrade head
-    echo "Migrations completed."
-  else
-    echo "RUN_MIGRATIONS is not 'true'. Skipping migrations."
-  fi
+# Run migrations with NEW backend image BEFORE switching
+# (forward/redeploy mode only, gated by RUN_MIGRATIONS=true)
+if [ "${MODE}" != "rollback" ] && [ "${RUN_MIGRATIONS}" = "true" ]; then
+  echo "Running migrations with new backend image..."
+  docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" run --rm --no-deps backend \
+    alembic upgrade head
+  echo "Migrations completed."
 elif [ "${MODE}" = "rollback" ]; then
   echo "Rollback mode: skipping migrations."
+else
+  echo "RUN_MIGRATIONS is not 'true'. Skipping migrations."
 fi
 
-# ------------------------------------------------------------
-# 6. Switch containers with new image refs
-# ------------------------------------------------------------
+# Switch containers
 echo "Switching containers to new images..."
-docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" up -d --wait
+if ! docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" up -d --wait; then
+  echo "Container start or health check failed." >&2
+  docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" ps >&2 || true
+  echo "=== Rolling back to current.env ==="
+  if [ -f "${CURRENT_ENV}" ]; then
+    docker compose -f docker-compose.vm.yml --env-file "${CURRENT_ENV}" up -d --force-recreate || echo "Rollback also failed." >&2
+  else
+    echo "No current.env — cannot roll back." >&2
+  fi
+  exit 1
+fi
 
-# ------------------------------------------------------------
-# 7. Health check /ready
-# ------------------------------------------------------------
+# Health check /ready
 echo "Waiting for /ready health check..."
 ATTEMPTS=0
 until docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" exec -T backend \
       curl -sf http://localhost:4500/ready >/dev/null 2>&1; do
   ATTEMPTS=$((ATTEMPTS + 1))
   if [ "${ATTEMPTS}" -ge 30 ]; then
-    echo "Health check failed after ~150s." >&2
-    docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" ps >&2
+    echo "/ready failed after ~150s." >&2
+    docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" ps >&2 || true
     echo "=== Rolling back to current.env ==="
     if [ -f "${CURRENT_ENV}" ]; then
-      docker compose -f docker-compose.vm.yml --env-file "${CURRENT_ENV}" up -d --force-recreate
-      echo "Rollback complete."
+      docker compose -f docker-compose.vm.yml --env-file "${CURRENT_ENV}" up -d --force-recreate || echo "Rollback also failed." >&2
     else
       echo "No current.env — cannot roll back." >&2
     fi
@@ -195,39 +195,27 @@ until docker compose -f docker-compose.vm.yml --env-file "${NEXT_ENV}" exec -T b
 done
 echo "All services healthy."
 
-# ------------------------------------------------------------
-# 8. Promote env files on success
-# ------------------------------------------------------------
-mv "${CURRENT_ENV}" "${PREVIOUS_ENV}" 2>/dev/null || true
+# Promote env files
+if [ -f "${CURRENT_ENV}" ] && ! cmp -s "${CURRENT_ENV}" "${NEXT_ENV}"; then
+  cp "${CURRENT_ENV}" "${PREVIOUS_ENV}"
+fi
 mv "${NEXT_ENV}" "${CURRENT_ENV}"
 echo "Promoted next.env -> current.env."
 echo "Deploy succeeded for SHA ${SHA}."
 
-# ------------------------------------------------------------
-# 9. Logout from GHCR
-# ------------------------------------------------------------
+# Logout from GHCR
 docker logout ghcr.io
 REMOTE_EOF
 )
 
-# Substitute placeholders
-REMOTE_SCRIPT=$(printf '%s' "${REMOTE_SCRIPT}" \
-  | sed -e "s|__VM_COMPOSE_DIR__|${VM_COMPOSE_DIR}|g" \
-        -e "s|__MODE__|${MODE}|g" \
-        -e "s|__SHA__|${SHA}|g" \
-        -e "s|__BACKEND_REF__|${BACKEND_REF}|g" \
-        -e "s|__INGEST_REF__|${INGEST_REF}|g" \
-        -e "s|__FRONTEND_REF__|${FRONTEND_REF}|g" \
-        -e "s|__RUN_MIGRATIONS__|${RUN_MIGRATIONS}|g")
-
-# Write the script to the VM
+# Write script to VM
 SCRIPT_PATH="/tmp/deploy_lms_${SHA}.sh"
 printf '%s\n' "${REMOTE_SCRIPT}" | ssh "${SSH_OPTS[@]}" "${VM_USER}@${VM_HOST}" "cat > '${SCRIPT_PATH}' && chmod +x '${SCRIPT_PATH}'"
 
 echo "Deploy script written to VM."
 
-# Step 2: Login to GHCR via stdin, then run the deploy script
+# Login to GHCR via stdin, then run deploy script with positional args
 echo "${GITHUB_TOKEN}" | ssh "${SSH_OPTS[@]}" "${VM_USER}@${VM_HOST}" \
-  "docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin && bash '${SCRIPT_PATH}'"
+  "docker login ghcr.io -u '${GITHUB_ACTOR}' --password-stdin && bash '${SCRIPT_PATH}' '${VM_COMPOSE_DIR}' '${MODE}' '${SHA}' '${BACKEND_REF}' '${INGEST_REF}' '${FRONTEND_REF}' '${RUN_MIGRATIONS}' '${GITHUB_TOKEN}' '${GITHUB_ACTOR}'"
 
 echo "Deploy script completed."
