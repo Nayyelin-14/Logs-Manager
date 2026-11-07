@@ -3,7 +3,6 @@ from sqlalchemy import inspect
 from app.models.user import User
 from app.models.alert import AlertRule, Alert, EmailNotification
 from app.models.security_event import SecurityEvent
-from app.models.otp import Otp
 
 
 def test_user_model_columns():
@@ -68,16 +67,6 @@ def test_security_event_ingested_at_column():
     assert "ingested_at" in cols
 
 
-def test_otp_model_columns():
-    """Verify Otp model has all required columns."""
-    cols = {c.name for c in Otp.__table__.columns}
-    expected = {
-        "id", "email", "optCode", "rememberToken", "verifyToken",
-        "count", "error", "createAt", "updatedAt",
-    }
-    assert expected.issubset(cols)
-
-
 def test_email_notification_model_columns():
     """Verify EmailNotification model has all required columns."""
     cols = {c.name for c in EmailNotification.__table__.columns}
@@ -101,5 +90,4 @@ def test_table_names_match_prisma():
     assert AlertRule.__tablename__ == "alert_rules"
     assert Alert.__tablename__ == "alerts"
     assert SecurityEvent.__tablename__ == "security_logs"
-    assert Otp.__tablename__ == "Otp"
     assert EmailNotification.__tablename__ == "email_notifications"

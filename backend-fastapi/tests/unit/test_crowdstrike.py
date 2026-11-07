@@ -165,25 +165,25 @@ class TestCrowdStrikeAction:
     """Test action extraction from CrowdStrike events."""
 
     def test_action_extraction(self):
-        """Action should be extracted from event."""
+        """Action should be mapped to allowed enum value (lowercase)."""
         raw = {"event": {"action": "ALERT"}}
 
         result = normalize_crowdstrike(raw)
 
-        assert result["action"] == "ALERT"
+        assert result["action"] == "alert"
 
     def test_default_alert_action(self):
-        """Event without action should default to ALERT."""
+        """Event without action should default to alert."""
         raw = {"event": {}}
 
         result = normalize_crowdstrike(raw)
 
-        assert result["action"] == "ALERT"
+        assert result["action"] == "alert"
 
-    def test_action_uppercased(self):
-        """Action should be uppercased."""
+    def test_action_uppercased_normalized(self):
+        """Action should be normalized to lowercase enum value regardless of input case."""
         raw = {"event": {"action": "alert"}}
 
         result = normalize_crowdstrike(raw)
 
-        assert result["action"] == "ALERT"
+        assert result["action"] == "alert"
