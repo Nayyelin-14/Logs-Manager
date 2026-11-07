@@ -238,3 +238,13 @@ def api_key_demob(test_database):
 @pytest.fixture()
 def api_key(api_key_demoa):
     return api_key_demoa
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset the login rate limiter before each test so tests don't
+    interfere with each other via the shared testclient IP bucket."""
+    from app.api.routes.auth import login_limiter
+    login_limiter.reset()
+    yield
+    login_limiter.reset()
