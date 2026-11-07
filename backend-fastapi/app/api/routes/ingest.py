@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.orm import selectinload
@@ -49,6 +50,40 @@ def resolve_tenant(api_user: TokenPayload, requested: Optional[str]) -> str:
     return effective
 
 
+_MEANINGFUL_FIELDS = {
+    "event_type", "eventname", "event", "type", "user", "username", "user_name",
+    "userid", "user_id", "ip", "src_ip", "srcip", "sourceip", "source_ip",
+    "dst_ip", "dstip", "destinationip", "destination_ip", "host", "hostname",
+    "process", "action", "severity", "source", "vendor", "product",
+    "rule_name", "rule", "policy", "url", "http_method", "method",
+    "status_code", "status", "event_id", "eventid", "logon_type", "logontype",
+    "cloud", "sha256", "reason", "description", "msg", "message",
+}
+
+
+def _is_meaningless_event(event_data: dict) -> bool:
+    """Return True if the event has no meaningful fields (only source/tenant/metadata)."""
+    data_keys = {k.lower() for k in event_data.keys()}
+    # Remove known non-event fields
+    data_keys -= {"source", "tenant", "@timestamp", "timestamp", "tags", "raw"}
+    return not bool(data_keys & _MEANINGFUL_FIELDS)
+
+
+def _validate_timestamp(value: Any, field_name: str = "@timestamp") -> None:
+    """Raise HTTPException if the timestamp is present but unparseable."""
+    if value is None or value == "":
+        return
+    if isinstance(value, (int, float)):
+        return
+    try:
+        datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field_name}: '{value}'. Must be RFC3339 ISO-8601 (e.g. 2025-08-20T07:20:00Z).",
+        )
+
+
 def as_validation_http_error(exc: ValidationError) -> HTTPException:
     return HTTPException(status_code=400, detail=exc.message)
 
@@ -89,15 +124,46 @@ class IngestResponse(BaseModel):
 @router.post("/ingest", response_model=IngestResponse)
 @public_router.post("/ingest", response_model=IngestResponse)
 async def ingest_single_event(
-    request: IngestEventRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
     """Ingest a single log event."""
-    tenant = resolve_tenant(api_user, request.tenant)
-    event_data = request.model_dump()
-    source = event_data.pop("source", None)
-    event_data.pop("tenant", None)
+    # Read raw body to handle non-JSON / empty payloads
+    body = await request.body()
+    if not body:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty request body. Send a JSON object with at least one event field.",
+        )
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON or non-UTF8 encoding in request body.",
+        )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Request body must be a JSON object.",
+        )
+
+    tenant = resolve_tenant(api_user, payload.get("tenant"))
+    event_data = {k: v for k, v in payload.items() if k not in ("source", "tenant")}
+    source = payload.get("source")
+
+    # Reject events with no meaningful fields
+    if _is_meaningless_event(event_data):
+        raise HTTPException(
+            status_code=422,
+            detail="Event has no meaningful fields. Provide at least one of: "
+                   "event_type, user, ip, src_ip, host, action, severity, source, etc.",
+        )
+
+    # Validate timestamp if present
+    ts_value = payload.get("@timestamp") or payload.get("timestamp")
+    _validate_timestamp(ts_value, "@timestamp")
 
     service = IngestionService(session)
     try:
@@ -132,6 +198,16 @@ async def ingest_batch_events(
         )
     if not request.events:
         raise HTTPException(status_code=400, detail="Batch must contain at least one event.")
+
+    # Validate timestamps per event before ingestion
+    for idx, event in enumerate(request.events):
+        if not isinstance(event, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch event at index {idx} must be a JSON object.",
+            )
+        ts_value = event.get("@timestamp") or event.get("timestamp")
+        _validate_timestamp(ts_value, f"events[{idx}].@timestamp")
 
     service = IngestionService(session)
     try:
