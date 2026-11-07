@@ -136,9 +136,14 @@ After startup:
  SYSLOG_UDP_PORT=5514
  SYSLOG_TCP_PORT=5514
  
- # Retention
- RETENTION_DAYS=7
- ```
+# Retention
+RETENTION_DAYS=7
+
+# Rate limiting (login brute-force protection)
+LOGIN_RATE_LIMIT=5/minute
+LOGIN_LOCKOUT_ATTEMPTS=5
+LOGIN_LOCKOUT_MINUTES=15
+```
  
  ## Ingestion Methods
  
@@ -200,10 +205,22 @@ docker compose -p lms_local -f docker-compose.yml down -v
  # Follow specific service
  docker compose -p lms_local -f docker-compose.yml logs -f backend
 
- # Recent logs only
- docker compose -p lms_local -f docker-compose.yml logs --tail=100
- ```
-  
+# Recent logs only
+docker compose -p lms_local -f docker-compose.yml logs --tail=100
+```
+
+## Retention Demo
+
+The 7-day retention policy can be demonstrated without touching seed data:
+
+```bash
+make demo-retention
+```
+
+This inserts an 8-day-old event (purged) and a 6-day-old event (kept) into a
+dedicated `retention_test` tenant, runs the retention purge, and prints
+before/after counts.
+
 ## Data Persistence
 
 PostgreSQL data is persisted in Docker volumes:

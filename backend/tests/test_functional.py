@@ -1,20 +1,36 @@
-"""Functional tests verified against the Neon database."""
+"""Functional end-to-end tests against the real FastAPI app + test database."""
 import pytest
+from fastapi.testclient import TestClient
+from app.main import app
+from conftest import ADMIN_EMAIL, ADMIN_PASSWORD, VIEWER_A_EMAIL, VIEWER_A_PASSWORD
+
+
+def _login(client, email: str, password: str):
+    res = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert res.status_code == 200, f"login failed: {res.status_code} {res.text}"
+    return res
 
 
 class TestFunctional:
-    """Functional tests verified against the Neon database."""
+    """End-to-end functional verification."""
 
-    def test_demoA_has_5_events(self):
-        """demoA tenant has 5 security events - verified against DB."""
-        assert 5 == 5  # Verified: SELECT count(*) FROM security_logs WHERE tenant='demoA' = 5
+    def test_admin_login_and_sees_all_tenants(self):
+        client = TestClient(app)
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        res = client.get("/api/get-logs?tenant=all&limit=5")
+        assert res.status_code == 200
+        assert "logs" in res.json()
 
-    def test_demoB_has_2_events(self):
-        """demoB tenant has 2 security events - verified against DB."""
-        assert 2 == 2  # Verified: SELECT count(*) FROM security_logs WHERE tenant='demoB' = 2
+    def test_viewer_login_and_sees_own_tenant_only(self):
+        client = TestClient(app)
+        _login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
+        res = client.get("/api/get-logs?limit=100")
+        assert res.status_code == 200
+        logs = res.json()["logs"]
+        for log in logs:
+            assert log["tenant"] == "demoa"
 
-    def test_alert_rule_model(self):
-        """AlertRule model has all required columns."""
+    def test_alert_rule_model_has_required_columns(self):
         from sqlalchemy import inspect
         from app.models.alert import AlertRule
         cols = {c.name for c in AlertRule.__table__.columns}
@@ -23,24 +39,20 @@ class TestFunctional:
         assert expected.issubset(cols)
 
     def test_alert_model_has_dedupe_key(self):
-        """Alert model has dedupe_key column."""
         from sqlalchemy import inspect
         from app.models.alert import Alert
         cols = {c.name for c in Alert.__table__.columns}
         assert "dedupe_key" in cols
 
-    def test_security_event_matches_live_schema(self):
-        """SecurityEvent model must match the fresh-baseline DB schema.
-
-        The Docker baseline (a1b2c3d4e5f6_fresh_baseline) includes `ingested_at`,
-        so the model must declare it. Neon-only deployments must rerun
-        `alembic upgrade head` after this change.
-        """
+    def test_security_event_matches_schema(self):
         from app.models.security_event import SecurityEvent
         cols = {c.name for c in SecurityEvent.__table__.columns}
         assert "ingested_at" in cols
 
-    def test_firewall_event_fields(self):
-        """Firewall events have expected fields from the DB."""
-        # Verified: DB query returns events with source, event_type, severity, action
-        assert True  # Verified offline
+    def test_firewall_event_fields_searchable(self):
+        client = TestClient(app)
+        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        res = client.get("/api/get-logs?source=firewall&limit=5")
+        assert res.status_code == 200
+        data = res.json()
+        assert "logs" in data

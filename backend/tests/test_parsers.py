@@ -64,24 +64,6 @@ class TestAlertRuleModel:
         assert "ingested_at" in cols
 
 
-class TestModelTests:
-    """Run the existing model tests from the assignment."""
-
-    def test_existing_model_tests_pass(self):
-        """All 10 existing model tests pass."""
-        # Verified by running: pytest tests/test_models.py -v
-        assert True
-
-
-    def test_security_event_model_has_ingested_at(self):
-        """SecurityEvent model has ingested_at column."""
-        from sqlalchemy import inspect
-        from app.models.security_event import SecurityEvent
-
-        cols = {c.name for c in SecurityEvent.__table__.columns}
-        assert "ingested_at" in cols
-
-
 class TestCrowdStrikeActionMapping:
     """CrowdStrike action values must map to the allowed Action enum."""
 

@@ -26,12 +26,3 @@ class TestAlertRuleModel:
             "event_ids", "severity", "status", "title", "dedupe_key",
         }
         assert expected.issubset(cols)
-
-
-class TestModelTests:
-    """Run the existing model tests from the assignment."""
-
-    def test_existing_model_tests_pass(self):
-        """All 10 existing model tests pass."""
-        # Verified by running: pytest tests/test_models.py -v
-        assert True

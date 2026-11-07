@@ -27,3 +27,7 @@ htmlcov/
 .coverage
 *.egg-info/
 .vite/
+
+_review/REPORT.md
+_fixes
+_review

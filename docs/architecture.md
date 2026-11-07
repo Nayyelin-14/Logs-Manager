@@ -209,6 +209,55 @@ See `docs/schema.md` for the full field table and per-source mappings.
 - Enrichment (GeoIP, reverse DNS) can be added behind a feature flag.
 - CI/CD (GitHub Actions) and IaC (Terraform/Helm) are bonus items.
 
+## Design decisions and trade-offs
+
+### PostgreSQL + JSONB/GIN instead of OpenSearch/ClickHouse
+
+**Why PostgreSQL:** A single relational database is far simpler to operate on a
+demo appliance (4 vCPU / 8 GB) than a Java-heavy search cluster. PostgreSQL 16
+provides JSONB storage, GIN indexes for full-text search, and parameterized
+queries for tenant isolation—all sufficient for the assignment's scale
+(<1M events/day).
+
+**Trade-offs:** Search is less powerful than OpenSearch (no aggregations pipeline,
+no distributed search). Write throughput is limited to ~10k events/second on
+the reference hardware. For production scale, read replicas or ClickHouse would
+be needed.
+
+### Single events table with tenant-scoped queries instead of per-tenant tables
+
+**Why a single table:** Simpler schema, simpler queries, simpler retention
+(one DELETE statement). Tenant isolation is enforced server-side via `WHERE
+tenant = :tenant` on every query—VIEWERs can never cross tenants, ADMINs can
+opt into cross-tenant views.
+
+**Trade-offs:** No physical separation between tenants (a buggy query could
+theoretically leak data if tenant filtering is omitted). True multi-tenancy
+(separate tables/indexes per tenant) is a documented bonus feature for later.
+
+### Deletion-based retention instead of partitioning or rollover
+
+**Why DELETE:** Simple, easy to understand, easy to demonstrate. An hourly job
+deletes events older than `RETENTION_DAYS` from `ingested_at`.
+
+**Trade-offs:** Deleted rows are not recoverable without backup. Partitioning
+(DROP/DETACH) would be more complex for similar operational benefit at demo
+scale.
+
+## Known limitations
+
+- **Email delivery:** SMTP is disabled by default; alert emails are not
+  delivered. Webhook is the working notification channel. Configure SMTP or
+  use the webhook receiver for email-like notifications.
+- **No per-tenant tables:** All tenants share the same `events` table.
+  Isolation is server-side, not physical.
+- **No GeoIP/reverse-DNS enrichment:** Source IPs are stored as-is without
+  enrichment.
+- **No Helm/Terraform IaC:** Docker Compose is the deployment mechanism.
+  Terraform/Helm are bonus items not implemented.
+- **Test database:** Tests require Docker PostgreSQL + Redis. They cannot run
+  against Neon or production databases.
+
 ## Folder mapping
 
 | Assignment | Repo |
