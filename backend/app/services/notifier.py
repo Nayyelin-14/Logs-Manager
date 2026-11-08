@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -13,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 WEBHOOK_TIMEOUT = 5.0
+
+
+def _resolve_retry_delays(retry_delays: tuple[float, ...] | None) -> tuple[float, ...]:
+    if retry_delays is not None:
+        return retry_delays
+    raw = os.environ.get("WEBHOOK_RETRY_DELAYS")
+    if not raw:
+        return DEFAULT_RETRY_DELAYS
+    try:
+        parsed = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    except ValueError:
+        return DEFAULT_RETRY_DELAYS
+    return parsed or DEFAULT_RETRY_DELAYS
 
 
 def _now_iso() -> str:
@@ -52,12 +66,13 @@ async def send_webhook(
     webhook_url: str,
     payload: dict[str, Any],
     retries: int = 3,
-    retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
+    retry_delays: tuple[float, ...] | None = None,
     timeout: float = WEBHOOK_TIMEOUT,
 ) -> list[dict[str, Any]]:
     attempts: list[dict[str, Any]] = []
     last_error: Optional[str] = None
     http_code: Optional[int] = None
+    delays = _resolve_retry_delays(retry_delays)
 
     for attempt in range(1, retries + 1):
         record: dict[str, Any] = {
@@ -94,7 +109,7 @@ async def send_webhook(
 
 
         if attempt < retries:
-            delay = retry_delays[attempt - 1] if attempt - 1 < len(retry_delays) else (2.0 ** attempt)
+            delay = delays[attempt - 1] if attempt - 1 < len(delays) else (2.0 ** attempt)
             import asyncio as _asyncio
             await _asyncio.sleep(delay)
 

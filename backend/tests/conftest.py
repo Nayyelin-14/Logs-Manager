@@ -56,6 +56,8 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["REDIS_URL"] = f"redis://{_REDIS_HOST}:{_REDIS_PORT}"
 os.environ["SYSLOG_ENABLED"] = "false"
 os.environ["DATABASE_POOL"] = "null"
+os.environ["ALERT_WEBHOOK_URL"] = "http://127.0.0.1:9/webhook"
+os.environ["WEBHOOK_RETRY_DELAYS"] = "0,0,0"
 
 
 ADMIN_EMAIL = _ADMIN_EMAIL
@@ -71,6 +73,26 @@ DEMOA_API_KEY = "demoa-api-key-0123456789abcdef0123456789abcdef"
 DEMOB_API_KEY = "demob-api-key-0123456789abcdef0123456789abcdef"
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_alert_delivery(monkeypatch):
+    async def fake_send_webhook(*args, **kwargs):
+        return [
+            {
+                "attempt": 1,
+                "timestamp": "stubbed",
+                "status": "sent",
+                "http_code": 200,
+                "error": None,
+            }
+        ]
+
+    async def fake_send_email(*args, **kwargs):
+        return {"status": "sent", "error": None}
+
+    monkeypatch.setattr("app.services.alerting.alerter.send_webhook", fake_send_webhook)
+    monkeypatch.setattr("app.services.alerting.alerter.send_email", fake_send_email)
 
 
 def _connection_kwargs(database: str) -> dict:
@@ -110,6 +132,9 @@ def _ensure_database_exists() -> None:
 def _run(args: list, *, check: bool = True) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["DATABASE_URL"] = TEST_DATABASE_URL
+    env["REDIS_URL"] = f"redis://{_REDIS_HOST}:{_REDIS_PORT}"
+    env["SYSLOG_ENABLED"] = "false"
+    env["DATABASE_POOL"] = "null"
     return subprocess.run(
         args,
         cwd=str(BACKEND_DIR),
