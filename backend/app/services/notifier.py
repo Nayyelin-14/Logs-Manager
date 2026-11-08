@@ -26,7 +26,9 @@ def _resolve_retry_delays(retry_delays: tuple[float, ...] | None) -> tuple[float
         parsed = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
     except ValueError:
         return DEFAULT_RETRY_DELAYS
-    return parsed or DEFAULT_RETRY_DELAYS
+    if not parsed or any(delay < 0 for delay in parsed):
+        return DEFAULT_RETRY_DELAYS
+    return parsed
 
 
 def _now_iso() -> str:

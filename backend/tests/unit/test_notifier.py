@@ -7,6 +7,7 @@ from app.services.notifier import (
     send_webhook,
     append_notification,
     DEFAULT_RETRY_DELAYS,
+    _resolve_retry_delays,
 )
 
 
@@ -119,6 +120,43 @@ class TestSendWebhook:
                 assert attempts[1]["status"] == "sent"
 
         asyncio.run(run_test())
+
+
+class TestResolveRetryDelays:
+
+    def test_explicit_delays_override_env(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "1.0,2.0,3.0")
+        assert _resolve_retry_delays((0.1, 0.2)) == (0.1, 0.2)
+
+    def test_env_valid(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "0,0,0")
+        assert _resolve_retry_delays(None) == (0.0, 0.0, 0.0)
+
+    def test_env_empty_falls_back(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "")
+        assert _resolve_retry_delays(None) == DEFAULT_RETRY_DELAYS
+
+    def test_env_whitespace_only_falls_back(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "   ")
+        assert _resolve_retry_delays(None) == DEFAULT_RETRY_DELAYS
+
+    def test_env_non_numeric_falls_back(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "a,b,c")
+        assert _resolve_retry_delays(None) == DEFAULT_RETRY_DELAYS
+
+    def test_env_negative_falls_back(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "-1.0,2.0,3.0")
+        assert _resolve_retry_delays(None) == DEFAULT_RETRY_DELAYS
+
+    def test_env_unset_falls_back(self, monkeypatch):
+        monkeypatch.delenv("WEBHOOK_RETRY_DELAYS", raising=False)
+        assert _resolve_retry_delays(None) == DEFAULT_RETRY_DELAYS
+
+    def test_env_read_at_call_time(self, monkeypatch):
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "1.0,1.0,1.0")
+        assert _resolve_retry_delays(None) == (1.0, 1.0, 1.0)
+        monkeypatch.setenv("WEBHOOK_RETRY_DELAYS", "2.0,2.0,2.0")
+        assert _resolve_retry_delays(None) == (2.0, 2.0, 2.0)
 
 
 class TestAppendNotification:
