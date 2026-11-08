@@ -12,10 +12,27 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-test:
+  repo-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install check dependencies
+        run: python3 -m pip install --quiet pyyaml
+      - name: Environment sync check
+        run: python3 scripts/check_env_sync.py
+      - name: SaaS deployment config check
+        run: python3 scripts/check_saas_config.py
+      - name: File size check
+        run: bash scripts/check_file_sizes.sh
+
+  backend-test:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -52,38 +69,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Set up Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         run: |
           cd backend
           python -m venv .venv
           . .venv/bin/activate
           pip install -r requirements.txt
-      - name: Install frontend dependencies
-        run: cd frontend && npm ci
-      - name: Environment sync check
-        run: python3 scripts/check_env_sync.py
-      - name: SaaS deployment config check
-        run: |
-          cd backend
-          . .venv/bin/activate
-          cd ..
-          python3 scripts/check_saas_config.py
-      - name: File size check
-        run: bash scripts/check_file_sizes.sh
-      - name: Frontend typecheck
-        run: cd frontend && npx tsc -b
-      - name: Frontend lint
-        run: cd frontend && npm run lint
-      - name: Frontend build
-        env:
-          VITE_API_URL: /api
-        run: cd frontend && npm run build
       - name: Backend tests
         run: |
           cd backend
@@ -126,6 +119,27 @@ jobs:
           fi
           echo "Single alembic head confirmed"
 
+  frontend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: cd frontend && npm ci
+      - name: Frontend typecheck
+        run: cd frontend && npx tsc -b
+      - name: Frontend lint
+        run: cd frontend && npm run lint
+      - name: Frontend build
+        env:
+          VITE_API_URL: /api
+        run: cd frontend && npm run build
+
   pr-title-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -149,11 +163,55 @@ jobs:
             style
             revert
 
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.detect.outputs.docker }}
+      release: ${{ steps.detect.outputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect Docker and release changes
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          DOCKER=false
+          if [ "$EVENT" = "pull_request" ] || [ "$EVENT" = "workflow_dispatch" ]; then
+            DOCKER=true
+          else
+            BASE="$BEFORE"
+            if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+              BASE=$(git rev-parse HEAD^ 2>/dev/null || true)
+            fi
+            if [ -z "$BASE" ]; then
+              DOCKER=true
+            elif git diff --name-only "$BASE" "$SHA" | grep -Eq '^(backend/Dockerfile|backend/requirements.txt|backend/pyproject.toml|backend/alembic.ini|backend/migrations/|backend/wait-for-db.sh|frontend/Dockerfile|frontend/package.json|frontend/package-lock.json|frontend/vite.config.|frontend/tsconfig|frontend/index.html|frontend/public/|ingest/|docker-compose|scripts/smoke_saas.sh|.github/workflows/ci.yml)'; then
+              DOCKER=true
+            fi
+          fi
+          RELEASE=false
+          if git log -1 --format=%s "$SHA" | grep -Eq '^chore(\(.+\))?: release '; then
+            RELEASE=true
+          fi
+          echo "docker=$DOCKER" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "docker=$DOCKER release=$RELEASE"
+
   build-smoke-push:
-    needs: [lint-and-test, pr-title-check]
+    needs: [repo-checks, backend-test, frontend-check, pr-title-check, changes]
     if: |
-      always() && needs.lint-and-test.result == 'success' &&
-      (needs.pr-title-check.result == 'success' || needs.pr-title-check.result == 'skipped')
+      always() &&
+      needs.repo-checks.result == 'success' &&
+      needs.backend-test.result == 'success' &&
+      needs.frontend-check.result == 'success' &&
+      needs.changes.result == 'success' &&
+      (needs.pr-title-check.result == 'success' || needs.pr-title-check.result == 'skipped') &&
+      (needs.changes.outputs.docker == 'true' || needs.changes.outputs.release == 'true')
     runs-on: ubuntu-latest
     permissions:
       packages: write

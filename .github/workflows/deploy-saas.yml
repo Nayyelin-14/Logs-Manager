@@ -1,22 +1,21 @@
 name: Deploy SaaS
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [dev]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: deploy-saas
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease != true }}
     runs-on: ubuntu-latest
     env:
       RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
@@ -25,33 +24,100 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       SAAS_BACKEND_URL: ${{ vars.SAAS_BACKEND_URL || 'https://nayyelin-logs-api.onrender.com' }}
       SAAS_FRONTEND_URL: ${{ vars.SAAS_FRONTEND_URL }}
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out the release commit
+        uses: actions/checkout@v5
         with:
-          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
-      - name: Check the tested commit is still the branch head
-        id: head
+      - name: Resolve target commit
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "TARGET_SHA=$SHA" >> "$GITHUB_ENV"
+          echo "target=$SHA"
+
+      - name: Check deploy configuration
+        id: config
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_DEPLOY_HOOK_URL}" ] && [ -z "${VERCEL_TOKEN}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No deploy secrets configured; skipping deployment."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check the target commit is still the branch head
+        if: steps.config.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           HEAD_SHA=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/dev | cut -f1)
-          echo "tested=$TARGET_SHA head=$HEAD_SHA"
-          if [ "$HEAD_SHA" = "$TARGET_SHA" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "A newer commit is on dev; its CI run will deploy instead."
+          echo "target=$TARGET_SHA head=$HEAD_SHA"
+          if [ "$HEAD_SHA" != "$TARGET_SHA" ]; then
+            echo "dev has moved past this release. Deploy the current dev head manually instead." >&2
+            exit 1
           fi
 
-      - name: Trigger Render deploy
-        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
+      - name: Wait for CI on the target commit
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ env.TARGET_SHA }}
         run: |
           set -euo pipefail
-          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" >/dev/null
+          for i in $(seq 1 90); do
+            LINE=$(gh run list --workflow ci.yml --commit "$SHA" --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] | "\(.status) \(.conclusion // "-")"' 2>/dev/null || true)
+            STATUS=${LINE%% *}
+            CONCLUSION=${LINE#* }
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "CI for $SHA succeeded"
+                exit 0
+              fi
+              echo "CI for $SHA concluded $CONCLUSION" >&2
+              exit 1
+            fi
+            echo "waiting for CI ($i/90): ${LINE:-not found}"
+            sleep 10
+          done
+          echo "CI did not complete for $SHA within 15 minutes" >&2
+          exit 1
 
-      - name: Wait for Render to serve the tested commit
-        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
+      - name: Deploy Render and Vercel in parallel
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          RENDER_PID=""
+          VERCEL_PID=""
+          if [ -n "${RENDER_DEPLOY_HOOK_URL}" ]; then
+            curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" >/tmp/render-trigger.log &
+            RENDER_PID=$!
+          fi
+          if [ -n "${VERCEL_TOKEN}" ]; then
+            (
+              npm install --global vercel@latest
+              vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+              vercel build --prod --token "$VERCEL_TOKEN"
+              vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+            ) >/tmp/vercel-deploy.log 2>&1 &
+            VERCEL_PID=$!
+          fi
+          FAIL=0
+          if [ -n "$RENDER_PID" ]; then wait "$RENDER_PID" || FAIL=1; fi
+          if [ -n "$VERCEL_PID" ]; then wait "$VERCEL_PID" || FAIL=1; fi
+          if [ "$FAIL" -ne 0 ]; then
+            echo "One or more deploy triggers failed." >&2
+            [ -f /tmp/render-trigger.log ] && cat /tmp/render-trigger.log >&2 || true
+            [ -f /tmp/vercel-deploy.log ] && tail -80 /tmp/vercel-deploy.log >&2 || true
+            exit 1
+          fi
+
+      - name: Wait for Render to serve the target commit
+        if: steps.config.outputs.enabled == 'true' && env.RENDER_DEPLOY_HOOK_URL != ''
         run: |
           set -euo pipefail
           for i in $(seq 1 90); do
@@ -67,17 +133,8 @@ jobs:
           echo "Render did not serve $TARGET_SHA within 15 minutes" >&2
           exit 1
 
-      - name: Deploy frontend to Vercel
-        if: env.VERCEL_TOKEN != '' && steps.head.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          npm install --global vercel@latest
-          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
-          vercel build --prod --token "$VERCEL_TOKEN"
-          vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
-
       - name: Smoke test SaaS endpoints
-        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
+        if: steps.config.outputs.enabled == 'true' && env.RENDER_DEPLOY_HOOK_URL != ''
         run: |
           set -euo pipefail
           EXPECTED_SHA="$TARGET_SHA" bash scripts/smoke_saas.sh "$SAAS_BACKEND_URL" "${SAAS_FRONTEND_URL:-}"

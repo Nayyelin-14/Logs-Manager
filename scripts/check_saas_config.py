@@ -108,8 +108,12 @@ def check_deploy_workflow() -> bool:
         fail(".github/workflows/deploy-saas.yml is missing")
         return False
     text = DEPLOY_WORKFLOW.read_text()
+    if "workflow_run" in text:
+        fail(".github/workflows/deploy-saas.yml must be release-gated, not workflow_run")
+        return False
     required = [
-        "workflow_run",
+        "release:",
+        "workflow_dispatch:",
         "RENDER_DEPLOY_HOOK_URL",
         "VERCEL_TOKEN",
         "smoke_saas.sh",

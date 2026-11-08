@@ -281,18 +281,30 @@ documented path.
 ## 8. CI/CD
 
 `.github/workflows/ci.yml` runs on every push to `dev` and on pull requests.
-It does not deploy anything. When a CI run for `dev` finishes successfully,
-`.github/workflows/deploy-saas.yml` is triggered by the `workflow_run` event:
+Repository checks, backend tests, and frontend checks run as parallel jobs. The
+Docker build and smoke test only run when container, dependency, or CI files
+change, and always on pull requests. A typical `dev` push gives feedback in
+about 4 minutes.
 
-1. Checks out the exact commit that CI tested.
-2. Triggers the Render deploy hook.
-3. Polls `/version` until `git_sha` equals that commit (up to 15 minutes).
-4. Deploys the frontend with the Vercel CLI.
-5. Runs `scripts/smoke_saas.sh` against the public URLs.
+Production deployment is release-gated. `.github/workflows/deploy-saas.yml`
+runs when a GitHub release is published or when you start it manually:
 
-You can also run **Actions → Deploy SaaS → Run workflow** manually. If the
-Render or Vercel secrets are absent, those steps are skipped and the workflow
-still passes. This keeps forks and pull requests safe.
+1. Checks out the release tag, or the selected commit for a manual run.
+2. Verifies the commit is still the head of `dev`.
+3. Waits for the CI run for that commit to succeed.
+4. Triggers the Render deploy hook and the Vercel build/deploy in parallel.
+5. Polls `/version` until `git_sha` equals that commit (up to 15 minutes).
+6. Runs `scripts/smoke_saas.sh` against the public URLs.
+
+Release-please opens the release pull request. Merging it creates the GitHub
+release and tag, which triggers this workflow. You can also run
+**Actions → Deploy SaaS → Run workflow** from `dev` for an on-demand deploy.
+Render's deploy hook deploys the service's configured branch, so the release
+commit must still be the `dev` head. If `dev` has moved ahead, deploy the new
+head manually or publish a new release.
+
+If the Render or Vercel secrets are absent, those steps are skipped and the
+workflow still passes. This keeps forks and pull requests safe.
 
 ### GitHub repository secrets
 
