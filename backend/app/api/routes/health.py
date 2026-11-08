@@ -62,11 +62,20 @@ async def health_liveness(request: Request, session: AsyncSession = Depends(get_
     return await health_check(request, session)
 
 
+def _deployed_value(name: str) -> str:
+    value = (os.getenv(name) or "").strip()
+    if value.lower() in ("", "unknown"):
+        return ""
+    return value
+
+
 @router.get("/version")
 async def version_info():
     return {
-        "app_version": os.getenv("APP_VERSION", "unknown"),
-        "git_sha": os.getenv("GIT_SHA") or os.getenv("RENDER_GIT_COMMIT", "unknown"),
+        "app_version": _deployed_value("APP_VERSION") or "unknown",
+        "git_sha": _deployed_value("GIT_SHA")
+        or _deployed_value("RENDER_GIT_COMMIT")
+        or "unknown",
     }
 
 
