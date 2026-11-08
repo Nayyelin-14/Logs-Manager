@@ -1,7 +1,3 @@
-"""
-Parser and database integration tests.
-Verified against Neon PostgreSQL database.
-"""
 import pytest
 from app.models.enums import Source
 from app.parsers.canonical import resolve_canonical_event_type
@@ -9,7 +5,6 @@ from app.parsers.cloud import normalize_crowdstrike
 
 
 class TestCanonicalResolution:
-    """Canonical event type resolution - verified through database queries."""
 
     @pytest.mark.parametrize(
         "event_type, source, expected",
@@ -29,10 +24,8 @@ class TestCanonicalResolution:
 
 
 class TestAlertRuleModel:
-    """Alert rule model verification."""
 
     def test_alert_rule_model_has_required_columns(self):
-        """AlertRule model has all required columns."""
         from sqlalchemy import inspect
         from app.models.alert import AlertRule
 
@@ -44,7 +37,6 @@ class TestAlertRuleModel:
         assert expected.issubset(cols)
 
     def test_alert_model_has_required_columns(self):
-        """Alert model has all required columns."""
         from sqlalchemy import inspect
         from app.models.alert import Alert
 
@@ -56,7 +48,6 @@ class TestAlertRuleModel:
         assert expected.issubset(cols)
 
     def test_security_event_model_has_ingested_at(self):
-        """SecurityEvent model has ingested_at column."""
         from sqlalchemy import inspect
         from app.models.security_event import SecurityEvent
 
@@ -65,7 +56,6 @@ class TestAlertRuleModel:
 
 
 class TestCrowdStrikeActionMapping:
-    """CrowdStrike action values must map to the allowed Action enum."""
 
     @pytest.mark.parametrize(
         "vendor_action, expected_action",
@@ -83,7 +73,6 @@ class TestCrowdStrikeActionMapping:
         ],
     )
     def test_action_mapped_to_allowed_enum(self, vendor_action, expected_action):
-        """Vendor actions map case-insensitively to allowed enum values."""
         event = {
             "tenant": "demoA",
             "source": "crowdstrike",
@@ -98,7 +87,6 @@ class TestCrowdStrikeActionMapping:
         assert result["action"] == expected_action, f"{vendor_action} -> {result['action']}, expected {expected_action}"
 
     def test_quarantine_preserved_in_event_subtype(self):
-        """Original vendor action preserved in event_subtype; raw keeps full payload."""
         event = {
             "tenant": "demoA",
             "source": "crowdstrike",
@@ -118,7 +106,6 @@ class TestCrowdStrikeActionMapping:
         assert result["process"] == "powershell.exe"
 
     def test_unknown_action_gets_unmapped_tag(self):
-        """Unknown vendor action falls back to alert and gets action_unmapped tag."""
         event = {
             "tenant": "demoA",
             "source": "crowdstrike",

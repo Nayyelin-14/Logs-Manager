@@ -1,13 +1,3 @@
-"""
-Firewall Event Normalizer
-
-Normalizes firewall log events into the common NormalizedEvent schema.
-
-SECURITY NOTE: The tenant field is NOT trusted from incoming log data.
-Tenant must be provided by the caller or derived from trusted metadata
-(source IP mapping, API key, etc.).
-"""
-
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -58,32 +48,19 @@ def normalize_firewall(
     raw_event: dict[str, Any],
     tenant: Optional[str] = None,
 ) -> Any:
-    """
-    Normalize a firewall syslog event to NormalizedEvent.
-
-    SECURITY NOTE: Tenant is NEVER taken from raw_event. It must be provided
-    by the trusted caller.
-
-    Args:
-        raw_event: Raw event dict from syslog parser
-        tenant: Tenant identifier (MUST be provided by trusted source)
-
-    Returns:
-        NormalizedEvent instance with firewall event data
-    """
     from app.schemas.normalized_event import NormalizedEvent, Source, Action
 
     priority = raw_event.get("priority", raw_event.get("pri", raw_event.get("PRI", 0)))
-    
+
     is_valid_pri = (
-        isinstance(priority, int) and 
+        isinstance(priority, int) and
         0 <= priority <= 191
     ) or (
-        isinstance(priority, str) and 
-        priority.isdigit() and 
+        isinstance(priority, str) and
+        priority.isdigit() and
         0 <= int(priority) <= 191
     )
-    
+
     if is_valid_pri:
         pri_int = int(priority)
     else:

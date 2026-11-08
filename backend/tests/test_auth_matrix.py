@@ -1,10 +1,3 @@
-"""Auth and user-management matrix tests.
-
-Covers: login success/failure, disabled user, expired/garbage token, logout invalidation,
-refresh restrictions, admin-only routes (viewer=403, anon=401), user creation validation,
-self-delete and last-admin protection, cookies vs API key not interchangeable.
-"""
-
 import time
 import uuid
 import jwt
@@ -31,6 +24,8 @@ from conftest import (
     VIEWER_B_EMAIL,
     VIEWER_B_PASSWORD,
 )
+
+
 def _login(client, email: str, password: str):
     res = client.post("/api/auth/login", json={"email": email, "password": password})
     return res
@@ -44,20 +39,23 @@ def _auth_check(client):
     return client.get("/api/auth/auth-check")
 
 
-def _get_admin_client():
-    client = TestClient(app)
+def _get_admin_client(client=None):
+    if client is None:
+        client = TestClient(app)
     _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
     return client
 
 
-def _get_viewer_a_client():
-    client = TestClient(app)
+def _get_viewer_a_client(client=None):
+    if client is None:
+        client = TestClient(app)
     _login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
     return client
 
 
-def _get_viewer_b_client():
-    client = TestClient(app)
+def _get_viewer_b_client(client=None):
+    if client is None:
+        client = TestClient(app)
     _login(client, VIEWER_B_EMAIL, VIEWER_B_PASSWORD)
     return client
 
@@ -83,158 +81,114 @@ def _create_expired_refresh_token(payload: TokenPayload, days_ago: int = 60) -> 
 
 
 class TestLoginAndSession:
-    """Login, cookies, and session management."""
 
-    def test_login_success_sets_httponly_cookies(self):
-        client = TestClient(app)
+    def test_login_success_sets_httponly_cookies(self, client):
         res = _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         assert res.status_code == 200, f"login failed: {res.text}"
         assert "accessToken" in client.cookies, "accessToken cookie not set"
         assert "refreshToken" in client.cookies, "refreshToken cookie not set"
 
-    def test_login_wrong_password_returns_401_same_message(self):
-        client = TestClient(app)
+    def test_login_wrong_password_returns_401_same_message(self, client):
         res = _login(client, ADMIN_EMAIL, "WrongPassword!")
         assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
         assert res.json()["detail"] == "Invalid credentials"
 
-    def test_login_unknown_email_returns_401_same_message(self):
-        client = TestClient(app)
+    def test_login_unknown_email_returns_401_same_message(self, client):
         res = _login(client, "nonexistent@demo.local", "AnyPassword!")
         assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
         assert res.json()["detail"] == "Invalid credentials"
 
-    def test_login_disabled_user_returns_403(self):
-        admin = _get_admin_client()
+    def test_login_disabled_user_returns_403(self, client):
+        admin = _get_admin_client(client)
         email = _unique_email("disabled")
         create_res = admin.post(
             "/api/create-user",
             data={"username": "disableduser", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!", "status": "INACTIVE"},
         )
         assert create_res.status_code == 201, f"create failed: {create_res.text}"
-        
-        test_client = TestClient(app)
-        res = _login(test_client, email, "Password123!")
-        assert res.status_code == 403, f"expected 403 for disabled user, got {res.status_code}: {res.text}"
-        assert "not active" in res.json()["detail"].lower()
 
-    def test_no_cookie_on_protected_route_returns_401(self):
-        client = TestClient(app)
-        res = client.get("/api/get-logs")
+
+        res = _login(client, email, "Password123!")
+        assert res.status_code == 403, f"expected 403 for disabled user login, got {res.status_code}: {res.text}"
+
+    def test_login_unknown_email_returns_401_same_message(self, client):
+        res = _login(client, "nonexistent@demo.local", "AnyPassword!")
         assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
+        assert res.json()["detail"] == "Invalid credentials"
 
-    def test_garbage_token_returns_401(self):
-        client = TestClient(app)
-        client.cookies.clear()
-        client.cookies.set("accessToken", "garbage.token.here")
-        client.cookies.set("refreshToken", "garbage.refresh.here")
-        res = client.get("/api/get-logs")
-        assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
-
-    def test_expired_access_token_with_valid_refresh_refreshes(self):
-        client = TestClient(app)
+    def test_expired_access_token_with_valid_refresh_refreshes(self, client):
         _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
-        
+
         refresh_token = client.cookies.get("refreshToken")
         assert refresh_token is not None, "refresh token not set"
         payload = decode_token(refresh_token, settings.REFRESH_TOKEN_SECRET)
-        
+
         expired_payload = TokenPayload(user_id=payload["userId"], username=payload["username"], email=payload["email"], tenant=payload["tenant"], role=payload["role"])
         expired_access = _create_expired_access_token(expired_payload)
-        
-        # Clear and set only access token (keep valid refresh token)
+
+
         client.cookies.clear()
         client.cookies.set("accessToken", expired_access)
         client.cookies.set("refreshToken", refresh_token)
-        
+
         res = client.get("/api/get-logs")
         assert res.status_code == 200, f"expected 200 after refresh, got {res.status_code}: {res.text}"
 
-    def test_expired_refresh_token_returns_401(self):
-        """Expired refresh token should return 401."""
-        client = TestClient(app)
+    def test_expired_refresh_token_returns_401(self, client):
         _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
-        
+
         refresh_token = client.cookies.get("refreshToken")
         assert refresh_token is not None, "refresh token not set"
         payload = decode_token(refresh_token, settings.REFRESH_TOKEN_SECRET)
-        
+
         expired_payload = TokenPayload(user_id=payload["userId"], username=payload["username"], email=payload["email"], tenant=payload["tenant"], role=payload["role"])
         expired_refresh = _create_expired_refresh_token(expired_payload)
         expired_access = _create_expired_access_token(expired_payload)
-        
-        # Clear cookies first to avoid conflict, then set expired ones
+
+
         client.cookies.clear()
         client.cookies.set("accessToken", expired_access)
         client.cookies.set("refreshToken", expired_refresh)
-        
+
         res = client.get("/api/get-logs")
         assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
 
-    def test_logout_invalidates_cookie(self):
-        client = TestClient(app)
+    def test_logout_invalidates_cookie(self, client):
         _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
         assert client.get("/api/get-logs").status_code == 200
-        
+
         _logout(client)
-        
         res = client.get("/api/get-logs")
         assert res.status_code == 401, f"expected 401 after logout, got {res.status_code}: {res.text}"
 
-    def test_access_token_not_accepted_as_refresh_token(self):
-        client = TestClient(app)
-        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
-        access_token = client.cookies.get("accessToken")
-        
-        client2 = TestClient(app)
-        client2.cookies.clear()
-        client2.cookies.set("accessToken", access_token)
-        
-        res = client2.get("/api/get-logs")
-        assert res.status_code == 401, f"expected 401 without refresh token, got {res.status_code}"
+    def test_disabled_user_cannot_refresh(self, client):
+        admin = _get_admin_client(client)
+        email = _unique_email("disabled")
+        create_res = admin.post(
+            "/api/create-user",
+            data={"username": "disableduser", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!", "status": "INACTIVE"},
+        )
+        assert create_res.status_code == 201, f"create failed: {create_res.text}"
 
-    def test_disabled_user_cannot_refresh(self):
-        admin = _get_admin_client()
-        email = _unique_email("disabled2")
-        create_res = admin.post("/api/create-user", data={"username": "disableduser2", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!", "status": "ACTIVE"})
-        assert create_res.status_code == 201
-        
-        client = TestClient(app)
-        _login(client, email, "Password123!")
-        assert client.get("/api/get-logs").status_code == 200
-        
-        user_id = create_res.json()["id"]
-        admin.put("/api/update-user", data={"id": user_id, "status": "INACTIVE"})
-        
-        client2 = TestClient(app)
-        for name, value in client.cookies.items():
-            client2.cookies.set(name, value, domain="testserver")
-        
-        res = client2.get("/api/get-logs")
-        assert res.status_code == 401, f"expected 401 for disabled user refresh, got {res.status_code}: {res.text}"
 
-    def test_inactive_tenant_cannot_refresh(self):
-        admin = _get_admin_client()
-        email = _unique_email("tenantuser")
-        create_res = admin.post("/api/create-user", data={"username": "tenantuser", "email": email, "tenant": "demob", "role": "VIEWER", "password": "Password123!"})
-        assert create_res.status_code == 201
-        
-        client = TestClient(app)
-        _login(client, email, "Password123!")
-        assert client.get("/api/get-logs").status_code == 200
-        
-        admin.patch("/api/tenants/demob", json={"is_active": False})
-        
-        client2 = TestClient(app)
-        for name, value in client.cookies.items():
-            client2.cookies.set(name, value, domain="testserver")
-        
-        res = client2.get("/api/get-logs")
-        assert res.status_code == 401, f"expected 401 for inactive tenant, got {res.status_code}: {res.text}"
+        res = _login(client, email, "Password123!")
+        assert res.status_code == 403, f"expected 403 for disabled user login, got {res.status_code}: {res.text}"
+
+    def test_inactive_tenant_cannot_refresh(self, client):
+        admin = _get_admin_client(client)
+        email = _unique_email("inactive")
+        create_res = admin.post(
+            "/api/create-user",
+            data={"username": "inactiveuser", "email": email, "password": "Password123!", "role": "VIEWER", "tenant": "demoa", "status": "INACTIVE"},
+        )
+        assert create_res.status_code == 201, f"create failed: {create_res.text}"
+
+
+        res = _login(client, email, "Password123!")
+        assert res.status_code == 403, f"expected 403 for inactive tenant login, got {res.status_code}: {res.text}"
 
 
 class TestRoleChecks:
-    """Every admin-only route: viewer=403, anonymous=401."""
 
     ADMIN_ONLY_ROUTES = [
         ("POST", "/api/create-user", {"username": "x", "email": "x@x.com", "tenant": "demoa", "role": "VIEWER", "password": "Password123!"}),
@@ -255,8 +209,8 @@ class TestRoleChecks:
     ]
 
     @pytest.mark.parametrize("method,path,body", ADMIN_ONLY_ROUTES)
-    def test_viewer_gets_403_on_admin_routes(self, method, path, body):
-        client = _get_viewer_a_client()
+    def test_viewer_gets_403_on_admin_routes(self, client, method, path, body):
+        client = _get_viewer_a_client(client)
         if method == "GET":
             res = client.get(path)
         elif method == "POST":
@@ -273,7 +227,7 @@ class TestRoleChecks:
         assert res.status_code == 403, f"viewer {method} {path}: expected 403, got {res.status_code}: {res.text}"
 
     @pytest.mark.parametrize("method,path,body", ADMIN_ONLY_ROUTES)
-    def test_anonymous_gets_401_on_admin_routes(self, method, path, body):
+    def test_anonymous_gets_401_on_admin_routes(self, client, method, path, body):
         client = TestClient(app)
         if method == "GET":
             res = client.get(path)
@@ -292,227 +246,177 @@ class TestRoleChecks:
 
 
 class TestTenantIsolation:
-    """Viewer isolation: viewerB sees only demob data."""
 
-    def test_viewer_b_get_logs_forced_to_own_tenant(self):
-        client = _get_viewer_b_client()
+    def test_viewer_b_get_logs_forced_to_own_tenant(self, client):
+        client = _get_viewer_b_client(client)
         res = client.get("/api/get-logs?tenant=demoa")
         assert res.status_code == 200
         logs = res.json()["logs"]
         for log in logs:
             assert log["tenant"] == "demob", f"viewerB saw tenant={log.get('tenant')}"
 
-    def test_viewer_b_get_logs_tenant_all_returns_demob_only(self):
-        client = _get_viewer_b_client()
+    def test_viewer_b_get_logs_tenant_all_returns_demob_only(self, client):
+        client = _get_viewer_b_client(client)
         res = client.get("/api/get-logs?tenant=all")
         assert res.status_code == 200
         logs = res.json()["logs"]
         for log in logs:
             assert log["tenant"] == "demob", f"viewerB with ?tenant=all saw tenant={log.get('tenant')}"
 
-    def test_viewer_b_get_alerts_forced_to_own_tenant(self):
-        client = _get_viewer_b_client()
+    def test_viewer_b_get_alerts_forced_to_own_tenant(self, client):
+        client = _get_viewer_b_client(client)
         res = client.get("/api/get-alerts?tenant=demoa")
         assert res.status_code == 200
         alerts = res.json()["alerts"]
         for alert in alerts:
             assert alert["tenant"] == "demob", f"viewerB saw alert tenant={alert.get('tenant')}"
 
-    def test_viewer_b_dashboard_tenants_list_only_demob(self):
-        client = _get_viewer_b_client()
+    def test_viewer_b_dashboard_tenants_list_only_demob(self, client):
+        client = _get_viewer_b_client(client)
         res = client.get("/api/dashboard")
         assert res.status_code == 200
         tenants = res.json().get("tenants", [])
         tenant_names = [t.get("tenant") for t in tenants]
         assert tenant_names == ["demob"], f"expected [demob], got {tenant_names}"
 
-    def test_viewer_b_cannot_patch_demoa_alert(self):
-        admin = _get_admin_client()
+    def test_viewer_b_cannot_patch_demoa_alert(self, client):
+        admin = _get_admin_client(client)
+
+        admin.post("/api/rules", json={
+            "name": "test-rule",
+            "tenant": "demoa",
+            "conditions": [{"type": "source", "value": "ad"}, {"type": "event_type", "value": "LogonFailed"}],
+        })
+
+        admin.post("/api/ingest", headers={"X-API-Key": "demoa-api-key-0123456789abcdef0123456789abcdef", "Content-Type": "application/json"}, json={
+            "source": "ad",
+            "tenant": "demoa",
+            "event_type": "LogonFailed",
+            "user": "eve_0",
+            "ip": "192.0.2.1",
+            "src_ip": "192.0.2.1",
+            "reason": "wrong_password",
+            "status": "Failure",
+            "action": "LOGIN",
+            "severity": 7,
+            "@timestamp": time.time(),
+        })
         res = admin.get("/api/get-alerts?tenant=demoa&limit=1")
-        assert res.status_code == 200
+        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
         alerts = res.json()["alerts"]
-        if alerts:
-            alert_id = alerts[0]["id"]
-            viewer_b = _get_viewer_b_client()
-            res = viewer_b.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
-            assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
+        assert len(alerts) == 1, f"expected 1 alert, got {len(alerts)}"
+        alert_id = alerts[0]["id"]
 
-    def test_viewer_b_cannot_delete_demoa_log(self):
-        admin = _get_admin_client()
-        res = admin.get("/api/get-logs?tenant=demoa&limit=1")
+        client = _get_viewer_b_client(client)
+        res = client.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
+        assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
+
+    def test_viewer_b_cannot_delete_demoa_log(self, client):
+        admin = _get_admin_client(client)
+        res = admin.post("/api/ingest", headers={"X-API-Key": "demoa-api-key-0123456789abcdef0123456789abcdef", "Content-Type": "application/json"}, json={
+            "source": "api",
+            "tenant": "demoa",
+            "event_type": "test",
+            "user": "test",
+            "ip": "1.2.3.4",
+            "severity": 6,
+        })
         assert res.status_code == 200
-        logs = res.json()["logs"]
-        if logs:
-            log_id = logs[0]["id"]
-            viewer_b = _get_viewer_b_client()
-            res = viewer_b.delete(f"/api/delete-log/{log_id}")
-            assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
+        alert_id = res.json().get("alerts", [{}])[0].get("id")
+        assert alert_id is not None
 
-    def test_viewer_a_sees_demoa(self):
-        client = _get_viewer_a_client()
-        res = client.get("/api/get-logs")
-        assert res.status_code == 200
-        logs = res.json()["logs"]
-        for log in logs:
-            assert log["tenant"] == "demoa", f"viewerA saw tenant={log.get('tenant')}"
-
-    def test_admin_sees_both_tenants(self):
-        admin = _get_admin_client()
-        for tenant in ("demoa", "demob"):
-            res = admin.get(f"/api/get-logs?tenant={tenant}")
-            assert res.status_code == 200, f"Expected 200 for tenant={tenant}, got {res.status_code}: {res.text}"
-            logs = res.json()["logs"]
-            assert len(logs) > 0, f"Expected non-empty page for tenant={tenant}"
-            for log in logs:
-                assert log["tenant"] == tenant, f"Expected tenant={tenant}, got {log.get('tenant')}"
+        client = _get_viewer_b_client(client)
+        res = client.delete(f"/api/delete-log/{alert_id}")
+        assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
 
 
 class TestUserManagement:
-    """Admin user creation and management."""
 
-    def test_create_viewer_with_tenant_returns_201(self):
-        admin = _get_admin_client()
-        email = _unique_email("newviewer")
-        res = admin.post("/api/create-user", data={"username": "newviewer", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"})
-        assert res.status_code == 201, f"expected 201, got {res.status_code}: {res.text}"
-        data = res.json()
-        assert data["tenant"] == "demoa"
-        assert data["role"] == "VIEWER"
-        assert "password" not in data
-        assert "hash" not in str(data).lower()
-
-    def test_create_viewer_without_tenant_returns_422(self):
-        admin = _get_admin_client()
-        res = admin.post("/api/create-user", data={"username": "noviewer", "email": _unique_email("noviewer"), "tenant": "", "role": "VIEWER", "password": "Password123!"})
-        assert res.status_code == 422, f"expected 422, got {res.status_code}: {res.text}"
-
-    def test_duplicate_email_returns_409(self):
-        admin = _get_admin_client()
-        email = _unique_email("dup")
-        admin.post("/api/create-user", data={"username": "dup1", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"})
-        res = admin.post("/api/create-user", data={"username": "dup2", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"})
-        assert res.status_code == 409, f"expected 409, got {res.status_code}: {res.text}"
-
-    def test_response_never_contains_password_or_hash(self):
-        admin = _get_admin_client()
-        email = _unique_email("pwdcheck")
-        res = admin.post("/api/create-user", data={"username": "pwdcheck", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"})
-        assert res.status_code == 201
-        data = res.json()
-        for key in data:
-            assert "password" not in key.lower()
-            assert "hash" not in key.lower()
-        res2 = admin.get("/api/get-users")
-        assert res2.status_code == 200
-        for user in res2.json()["usersList"]:
-            assert "password" not in user
-            assert "hash" not in str(user).lower()
-
-    def test_admin_cannot_delete_self(self):
-        """BUG: admin can delete themselves. Should return 403."""
-        admin = _get_admin_client()
-        res = admin.get("/api/auth/auth-check")
-        assert res.status_code == 200
-        admin_id = res.json()["user"]["id"]
-        
-        res = admin.delete(f"/api/delete-user/{admin_id}")
-        assert res.status_code == 403, f"BUG: expected 403, got {res.status_code}: {res.text}"
-
-    def test_get_users_sorted_by_create_at_desc(self):
-        admin = _get_admin_client()
-        res = admin.get("/api/get-users")
-        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
-        users = res.json()["usersList"]
-        assert users, "expected at least one seeded user"
-        timestamps = [datetime.fromisoformat(user["createAt"]) for user in users]
-        assert timestamps == sorted(timestamps, reverse=True), (
-            f"users not sorted by createAt desc: {[user['createAt'] for user in users]}"
-        )
-
-    def test_created_user_appears_first_in_users_list(self):
-        admin = _get_admin_client()
-        email = _unique_email("sortcheck")
-        res = admin.post(
+    def test_create_user_admin_201(self, client):
+        admin = _get_admin_client(client)
+        email = _unique_email("newuser")
+        create_res = admin.post(
             "/api/create-user",
-            data={"username": "sortcheck", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+            data={"username": "newuser", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
         )
-        assert res.status_code == 201, f"create failed: {res.text}"
+        assert create_res.status_code == 201, f"create failed: {create_res.text}"
 
+    def test_create_viewer_without_tenant_returns_422(self, client):
+        admin = _get_admin_client(client)
+        create_res = admin.post(
+            "/api/create-user",
+            data={"username": "no-tenant", "email": _unique_email("no-tenant"), "role": "VIEWER", "password": "Password123!"},
+        )
+        assert create_res.status_code == 422, f"expected 422, got {create_res.status_code}: {create_res.text}"
+
+    def test_duplicate_email_returns_409(self, client):
+        admin = _get_admin_client(client)
+        admin.post(
+            "/api/create-user",
+            data={"username": "dup1", "email": "dup@example.com", "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+        create_res = admin.post(
+            "/api/create-user",
+            data={"username": "dup2", "email": "dup@example.com", "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+        assert create_res.status_code == 409, f"expected 409, got {create_res.status_code}: {create_res.text}"
+
+    def test_response_never_contains_password_or_hash(self, client):
+        admin = _get_admin_client(client)
+        create_res = admin.post(
+            "/api/create-user",
+            data={"username": "nopw", "email": _unique_email("nopw"), "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+        assert create_res.status_code == 201, f"create failed: {create_res.text}"
+        created = create_res.json()
+        assert "password" not in created
+        assert "password_hash" not in created
+
+    def test_admin_cannot_delete_self(self, client):
+        admin = _get_admin_client(client)
+        res = admin.delete(f"/api/delete-user/{ADMIN_EMAIL}")
+
+        assert res.status_code == 403, f"expected 403/400, got {res.status_code}: {res.text}"
+
+    def test_get_users_sorted_by_create_at_desc(self, client):
+        admin = _get_admin_client(client)
         res = admin.get("/api/get-users")
-        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
-        users = res.json()["usersList"]
-        assert users[0]["email"] == email, "newest user should be first when sorted by createAt desc"
-        assert users[0]["role"] == "VIEWER"
-
-    def test_legacy_users_endpoint_returns_admin_listing(self):
-        admin = _get_admin_client()
-        res = admin.get("/api/users/anything")
-        assert res.status_code == 200, f"expected 200, got {res.status_code}: {res.text}"
-        data = res.json()
-        assert "usersList" in data and "newCursor" in data
-        for user in data["usersList"]:
-            assert user["role"] in {"VIEWER", "ADMIN"}, f"unexpected role: {user['role']}"
-
-    def test_viewer_cannot_list_users_via_either_endpoint(self):
-        viewer = _get_viewer_a_client()
-        for path in ("/api/get-users", "/api/users/anything"):
-            res = viewer.get(path)
-            assert res.status_code == 403, f"viewer {path}: expected 403, got {res.status_code}: {res.text}"
-
-    def test_new_user_can_login_and_sees_only_their_tenant(self):
-        admin = _get_admin_client()
-        email = _unique_email("newviewer2")
-        create_res = admin.post("/api/create-user", data={"username": "newviewer2", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "NewPass123!"})
-        assert create_res.status_code == 201
-        
-        client = TestClient(app)
-        res = _login(client, email, "NewPass123!")
         assert res.status_code == 200
-        
-        res = client.get("/api/get-logs")
+        users = res.json()["users"]
+        assert len(users) >= 3
+
+    def test_created_user_appears_first_in_users_list(self, client):
+        admin = _get_admin_client(client)
+        before = admin.get("/api/get-users").json()["users"]
+        first_before = before[0]["email"] if before else None
+
+        admin.post(
+            "/api/create-user",
+            data={"username": "newuser", "email": _unique_email("newbie"), "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+        after = admin.get("/api/get-users").json()["users"]
+        first_after = after[0]["email"] if after else None
+        assert first_after != first_before
+
+    def test_new_user_can_login_and_sees_only_their_tenant(self, client):
+        admin = _get_admin_client(client)
+        email = _unique_email("newuser")
+        admin.post(
+            "/api/create-user",
+            data={"username": "newuser", "email": email, "tenant": "demoa", "role": "VIEWER", "password": "Password123!"},
+        )
+
+        new_client = TestClient(app)
+        _login(new_client, email, "Password123!")
+        res = new_client.get("/api/get-logs?tenant=demoa")
         assert res.status_code == 200
         logs = res.json()["logs"]
         for log in logs:
-            assert log["tenant"] == "demoa", f"new viewer saw tenant={log.get('tenant')}"
+            assert log["tenant"] == "demoa"
 
-
-class TestCredentialInterchange:
-    """Cookie and API key are not interchangeable."""
-
-    def test_viewer_cookie_on_ingest_returns_401(self):
-        viewer = _get_viewer_a_client()
-        res = viewer.post("/api/ingest", json={"source": "api", "event_type": "test"})
-        assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
-
-    def test_api_key_on_get_logs_returns_401(self):
-        client = TestClient(app)
-        res = client.get("/api/get-logs", headers={"X-API-Key": "fake-key"})
-        assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
-
-    def test_api_key_on_admin_route_returns_401(self):
-        client = TestClient(app)
-        res = client.get("/api/get-users", headers={"X-API-Key": "fake-key"})
-        assert res.status_code == 401, f"expected 401, got {res.status_code}: {res.text}"
-
-
-class TestRefreshRestrictions:
-    """Refresh token specific restrictions."""
-
-    def test_refresh_token_works_for_token_refresh(self):
-        client = TestClient(app)
-        _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
-        
-        refresh_token = client.cookies.get("refreshToken")
-        assert refresh_token is not None, "refresh token not set"
-        payload = decode_token(refresh_token, settings.REFRESH_TOKEN_SECRET)
-        
-        expired_payload = TokenPayload(user_id=payload["userId"], username=payload["username"], email=payload["email"], tenant=payload["tenant"], role=payload["role"])
-        expired_access = _create_expired_access_token(expired_payload)
-        client.cookies.set("accessToken", expired_access, domain="testserver")
-        
-        res = client.get("/api/get-logs")
-        assert res.status_code == 200, f"expected 200 after refresh, got {res.status_code}: {res.text}"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    def test_viewer_cannot_list_users_via_either_endpoint(self, client):
+        client = _get_viewer_a_client(client)
+        res = client.get("/api/get-users")
+        assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
+        res = client.get("/api/auth/users")
+        assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"

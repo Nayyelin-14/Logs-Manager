@@ -19,8 +19,8 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old GHCR image versions
-        id: cleanup
+      - uses: actions/checkout@v4
+      - name: Clean up old GHCR image versions
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RETENTION_DAYS: '30'
@@ -30,6 +30,4 @@ jobs:
           PKG_BACKEND: logs-manager-backend
           PKG_INGEST: logs-manager-ingest
           PKG_FRONTEND: logs-manager-frontend
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/cleanup-ghcr.py
+        run: python3 .github/scripts/cleanup-ghcr.py

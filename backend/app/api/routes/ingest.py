@@ -24,13 +24,12 @@ import hashlib
 import uuid
 
 router = APIRouter()
-# Unprefixed aliases for the assignment's exact paths: POST /ingest, /ingest/batch, /ingest/file.
+
 public_router = APIRouter(include_in_schema=False)
 settings = get_settings()
 
 
 def resolve_tenant(api_user: TokenPayload, requested: Optional[str]) -> str:
-    """Return the effective tenant, rejecting cross-tenant ingestion attempts."""
     effective = (api_user.tenant or "").strip()
     if not effective:
         raise HTTPException(
@@ -62,15 +61,13 @@ _MEANINGFUL_FIELDS = {
 
 
 def _is_meaningless_event(event_data: dict) -> bool:
-    """Return True if the event has no meaningful fields (only source/tenant/metadata)."""
     data_keys = {k.lower() for k in event_data.keys()}
-    # Remove known non-event fields
+
     data_keys -= {"source", "tenant", "@timestamp", "timestamp", "tags", "raw"}
     return not bool(data_keys & _MEANINGFUL_FIELDS)
 
 
 def _validate_timestamp(value: Any, field_name: str = "@timestamp") -> None:
-    """Raise HTTPException if the timestamp is present but unparseable."""
     if value is None or value == "":
         return
     if isinstance(value, (int, float)):
@@ -89,15 +86,14 @@ def as_validation_http_error(exc: ValidationError) -> HTTPException:
 
 
 def owns_tenant(current_user: TokenPayload, tenant: Optional[str]) -> bool:
-    """Admins may act on any tenant; other users only on their own."""
     if current_user.role == "ADMIN":
         return True
     return (current_user.tenant or "") == (tenant or "")
 
 
-# =============================================================================
-# Ingestion Endpoints
-# =============================================================================
+
+
+
 
 class IngestEventRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -128,8 +124,7 @@ async def ingest_single_event(
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
-    """Ingest a single log event."""
-    # Read raw body to handle non-JSON / empty payloads
+
     body = await request.body()
     if not body:
         raise HTTPException(
@@ -153,7 +148,7 @@ async def ingest_single_event(
     event_data = {k: v for k, v in payload.items() if k not in ("source", "tenant")}
     source = payload.get("source")
 
-    # Reject events with no meaningful fields
+
     if _is_meaningless_event(event_data):
         raise HTTPException(
             status_code=422,
@@ -161,7 +156,7 @@ async def ingest_single_event(
                    "event_type, user, ip, src_ip, host, action, severity, source, etc.",
         )
 
-    # Validate timestamp if present
+
     ts_value = payload.get("@timestamp") or payload.get("timestamp")
     _validate_timestamp(ts_value, "@timestamp")
 
@@ -189,7 +184,6 @@ async def ingest_batch_events(
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
-    """Ingest multiple log events in batch."""
     tenant = resolve_tenant(api_user, request.tenant)
     if len(request.events) > settings.INGEST_BATCH_MAX_EVENTS:
         raise HTTPException(
@@ -199,7 +193,7 @@ async def ingest_batch_events(
     if not request.events:
         raise HTTPException(status_code=400, detail="Batch must contain at least one event.")
 
-    # Validate timestamps per event before ingestion
+
     for idx, event in enumerate(request.events):
         if not isinstance(event, dict):
             raise HTTPException(
@@ -237,7 +231,6 @@ async def ingest_file(
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
-    """Ingest events from a file (JSON, JSONL, CSV, syslog text)."""
     effective_tenant = resolve_tenant(api_user, tenant)
 
     content = await file.read(settings.INGEST_MAX_FILE_BYTES + 1)
@@ -276,9 +269,9 @@ async def ingest_file(
     )
 
 
-# =============================================================================
-# Alert Endpoints
-# =============================================================================
+
+
+
 
 class AlertStatusUpdate(BaseModel):
     status: str
@@ -294,7 +287,6 @@ async def list_alerts(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(get_current_user),
 ):
-    """List alerts with filtering and pagination."""
     requested_tenant = (tenant or "").strip()
     if current_user.role == "ADMIN":
         effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
@@ -304,7 +296,7 @@ async def list_alerts(
     query = select(Alert).options(selectinload(Alert.rule))
     if effective_tenant:
         query = query.where(Alert.tenant == effective_tenant)
-    
+
     if status:
         query = query.where(Alert.status == status)
     if severity:
@@ -318,20 +310,20 @@ async def list_alerts(
                 func.array_to_string(Alert.tags, ',').ilike(f"%{search}%")
             )
         )
-    
+
     query = query.order_by(desc(Alert.triggered_at), desc(Alert.id)).limit(limit + 1)
     if cursor:
         query = query.where(Alert.id > cursor)
-    
+
     result = await session.execute(query)
     alerts = result.scalars().all()
-    
+
     has_next = len(alerts) > limit
     if has_next:
         alerts = alerts[:limit]
-    
+
     next_cursor = alerts[-1].id if has_next else None
-    
+
     return {
         "alerts": [{
             "id": a.id,
@@ -359,24 +351,23 @@ async def update_alert_status(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Update alert status (Admin only)."""
     if update.status not in ["open", "resolved"]:
         raise HTTPException(status_code=400, detail="Invalid status")
-    
+
     result = await session.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
     alert.status = update.status
     await session.commit()
-    
+
     return {"message": "Alert status updated", "alert": {"id": alert.id, "status": alert.status}}
 
 
-# =============================================================================
-# Alert Rules Endpoints
-# =============================================================================
+
+
+
 
 class AlertRuleCreate(BaseModel):
     name: str
@@ -385,37 +376,37 @@ class AlertRuleCreate(BaseModel):
     conditions: List[dict]
     enabled: bool = True
     severity: str = "medium"
-    
+
     @field_validator("conditions")
     @classmethod
     def validate_conditions(cls, v: List[dict]) -> List[dict]:
         if not v or len(v) != 1:
             raise ValueError("Exactly one condition required")
-        
+
         condition = v[0]
         cond_type = condition.get("type")
         valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
         if cond_type not in valid_types:
             raise ValueError(f"Unknown condition type: {cond_type}")
-        
-        # Validate threshold if present
+
+
         threshold = condition.get("threshold")
         if threshold is not None and threshold < 1:
             raise ValueError("threshold must be at least 1")
-        
-        # Validate windowSeconds
+
+
         window = condition.get("windowSeconds")
         if window is not None:
             if window < 1:
                 raise ValueError("windowSeconds must be at least 1")
             if window > 86400:
                 raise ValueError("windowSeconds must be at most 86400")
-        
-        # Validate groupBy
+
+
         group_by = condition.get("groupBy")
         if group_by is not None and group_by not in ("src_ip", "user", "host"):
             raise ValueError(f"Invalid groupBy field: {group_by}")
-        
+
         return v
 
 
@@ -425,35 +416,35 @@ class AlertRuleUpdate(BaseModel):
     conditions: Optional[List[dict]] = None
     enabled: Optional[bool] = None
     severity: Optional[str] = None
-    
+
     @field_validator("conditions", mode="before")
     @classmethod
     def validate_conditions(cls, v: Optional[List[dict]]) -> Optional[List[dict]]:
         if v is not None:
             if not v or len(v) != 1:
                 raise ValueError("Exactly one condition required")
-            
+
             condition = v[0]
             cond_type = condition.get("type")
             valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
             if cond_type not in valid_types:
                 raise ValueError(f"Unknown condition type: {cond_type}")
-            
+
             threshold = condition.get("threshold")
             if threshold is not None and threshold < 1:
                 raise ValueError("threshold must be at least 1")
-            
+
             window = condition.get("windowSeconds")
             if window is not None:
                 if window < 1:
                     raise ValueError("windowSeconds must be at least 1")
                 if window > 86400:
                     raise ValueError("windowSeconds must be at most 86400")
-            
+
             group_by = condition.get("groupBy")
             if group_by is not None and group_by not in ("src_ip", "user", "host"):
                 raise ValueError(f"Invalid groupBy field: {group_by}")
-        
+
         return v
 
 class AlertRuleResponse(BaseModel):
@@ -476,7 +467,6 @@ async def list_alert_rules(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """List alert rules."""
     requested_tenant = (tenant or "").strip()
     if current_user.role == "ADMIN":
         effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
@@ -486,27 +476,27 @@ async def list_alert_rules(
     query = select(AlertRule)
     if effective_tenant:
         query = query.where(AlertRule.tenant == effective_tenant)
-    
+
     if search:
         search_term = f"%{search}%"
         query = query.where(
             (AlertRule.name.ilike(f"%{search}%")) |
             (AlertRule.description.ilike(f"%{search}%"))
         )
-    
+
     query = query.order_by(desc(AlertRule.created_at)).limit(limit + 1)
     if cursor:
         query = query.where(AlertRule.id > cursor)
-    
+
     result = await session.execute(query)
     rules = result.scalars().all()
-    
+
     has_next = len(rules) > limit
     if has_next:
         rules = rules[:limit]
-    
+
     next_cursor = rules[-1].id if has_next else None
-    
+
     return {
         "rules": [{
             "id": r.id,
@@ -529,10 +519,9 @@ async def create_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Create a new alert rule."""
     if not owns_tenant(current_user, rule.tenant):
         raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
-    
+
     new_rule = AlertRule(
         id=uuid.uuid4().hex[:25],
         name=rule.name,
@@ -542,11 +531,11 @@ async def create_alert_rule(
         severity=rule.severity,
         conditions=rule.conditions,
     )
-    
+
     session.add(new_rule)
     await session.commit()
     await session.refresh(new_rule)
-    
+
     return {"message": "Alert rule created", "createdRule": {
         "id": new_rule.id,
         "name": new_rule.name,
@@ -563,15 +552,14 @@ async def update_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Update an alert rule."""
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id)
     )
     existing = result.scalar_one_or_none()
     if not existing or not owns_tenant(current_user, existing.tenant):
         raise HTTPException(status_code=404, detail="Rule not found")
-    
-    # Check for duplicate name
+
+
     if rule.name and rule.name != existing.name:
         result = await session.execute(
             select(AlertRule).where(
@@ -582,14 +570,14 @@ async def update_alert_rule(
         )
         if result.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Rule with this name already exists")
-    
+
     update_data = rule.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(existing, key, value)
-    
+
     await session.commit()
     await session.refresh(existing)
-    
+
     return {"message": "Alert rule updated", "rule": {
         "id": existing.id,
         "name": existing.name,
@@ -606,17 +594,16 @@ async def toggle_rule_enabled(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Enable or disable an alert rule."""
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id)
     )
     rule = result.scalar_one_or_none()
     if not rule or not owns_tenant(current_user, rule.tenant):
         raise HTTPException(status_code=404, detail="Rule not found")
-    
+
     rule.enabled = enabled
     await session.commit()
-    
+
     return {"message": f"Rule {'enabled' if enabled else 'disabled'}", "rule": {
         "id": rule.id,
         "enabled": rule.enabled,
@@ -628,24 +615,23 @@ async def delete_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Delete an alert rule."""
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id)
     )
     rule = result.scalar_one_or_none()
     if not rule or not owns_tenant(current_user, rule.tenant):
         raise HTTPException(status_code=404, detail="Rule not found")
-    
-    # Check if rule has triggered alerts
+
+
     alert_count = await session.execute(
         select(func.count()).select_from(Alert).where(Alert.rule_id == rule_id)
     )
     if alert_count.scalar() > 0:
         raise HTTPException(status_code=409, detail="Cannot delete rule with existing alerts")
-    
+
     await session.delete(rule)
     await session.commit()
-    
+
     return {"message": "Alert rule deleted"}
 
 
@@ -655,9 +641,6 @@ async def test_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Dry-run: returns what WOULD trigger for this rule right now.
-    Creates nothing, sends nothing. Admin only.
-    """
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id)
     )
@@ -673,7 +656,7 @@ async def test_alert_rule(
     now = datetime.now(timezone.utc)
     try:
         triggered = await evaluate_rule(session, rule, now)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Rule evaluation failed: {exc}")
 
     return {
@@ -686,9 +669,9 @@ async def test_alert_rule(
     }
 
 
-# =============================================================================
-# User Management Endpoints (Admin only)
-# =============================================================================
+
+
+
 
 class UserResponse(BaseModel):
     id: int
@@ -709,7 +692,6 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """List all users (Admin only)."""
     requested_tenant = (tenant or "").strip()
     effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
 
@@ -722,31 +704,36 @@ async def list_users(
             (User.username.ilike(f"%{search}%")) |
             (User.email.ilike(f"%{search}%"))
         )
-    
-    query = query.order_by(desc(User.create_at)).limit(limit + 1)
+
+    query = query.order_by(desc(User.id)).limit(limit + 1)
     if cursor:
         query = query.where(User.id > cursor)
-    
+
     result = await session.execute(query)
     users = result.scalars().all()
-    
+
     has_next = len(users) > limit
     if has_next:
         users = users[:limit]
-    
+
     next_cursor = users[-1].id if has_next else None
-    
+
+    users_payload = [{
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "role": u.role,
+        "tenant": u.tenant,
+        "status": u.status,
+        "createAt": u.create_at.isoformat() if u.create_at else None,
+        "updatedAt": u.updated_at.isoformat() if u.updated_at else None,
+    } for u in users]
+
     return {
-        "usersList": [{
-            "id": u.id,
-            "username": u.username,
-            "email": u.email,
-            "role": u.role,
-            "tenant": u.tenant,
-            "status": u.status,
-            "createAt": u.create_at.isoformat() if u.create_at else None,
-            "updatedAt": u.updated_at.isoformat() if u.updated_at else None,
-        } for u in users],
+        "usersList": users_payload,
+
+
+        "users": users_payload,
         "newCursor": next_cursor,
     }
 
@@ -761,16 +748,15 @@ async def create_user(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Create a new user (Admin only)."""
     if not owns_tenant(current_user, tenant):
         raise HTTPException(status_code=403, detail="Cannot create user for different tenant")
-    
+
     from app.core.security import hash_password
-    
+
     existing = await session.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
-    
+
     hashed = hash_password(password)
     user = User(
         username=username,
@@ -780,11 +766,11 @@ async def create_user(
         status=status,
         password=hashed,
     )
-    
+
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    
+
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -807,20 +793,19 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Update a user (Admin only)."""
     result = await session.execute(select(User).where(User.id == id))
     user = result.scalar_one_or_none()
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Prevent self-demotion or self-disabling
+
+
     if user.id == current_user.user_id:
         if role is not None and role != "ADMIN":
             raise HTTPException(status_code=403, detail="Cannot change your own role from ADMIN")
         if status is not None and status != "ACTIVE":
             raise HTTPException(status_code=403, detail="Cannot deactivate yourself")
-    
-    # Prevent demoting/disabling the last admin
+
+
     if role is not None and user.role == "ADMIN" and role != "ADMIN":
         admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
         if admin_count.scalar() <= 1:
@@ -829,7 +814,7 @@ async def update_user(
         admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
         if admin_count.scalar() <= 1:
             raise HTTPException(status_code=403, detail="Cannot deactivate the last active admin")
-    
+
     if username is not None:
         user.username = username
     if email is not None:
@@ -840,10 +825,10 @@ async def update_user(
         user.role = role
     if status is not None:
         user.status = status
-    
+
     await session.commit()
     await session.refresh(user)
-    
+
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -857,29 +842,33 @@ async def update_user(
 
 @router.delete("/delete-user/{user_id}", response_model=dict)
 async def delete_user(
-    user_id: int,
+    user_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Delete a user (Admin only)."""
-    result = await session.execute(select(User).where(User.id == user_id))
+    query = select(User)
+    if user_id.isdigit():
+        query = query.where(User.id == int(user_id))
+    else:
+        query = query.where(User.email == user_id)
+    result = await session.execute(query)
     user = result.scalar_one_or_none()
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Prevent self-deletion
+
+
     if user.id == current_user.user_id:
         raise HTTPException(status_code=403, detail="Cannot delete yourself")
-    
-    # Prevent deleting the last active admin
+
+
     if user.role == "ADMIN" and user.status == "ACTIVE":
         admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
         if admin_count.scalar() <= 1:
             raise HTTPException(status_code=403, detail="Cannot delete the last active admin")
-    
+
     await session.delete(user)
     await session.commit()
-    
+
     return {"message": "User deleted successfully"}
 
 @router.get("/get-all-data", response_model=dict)
@@ -888,7 +877,6 @@ async def get_all_data(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Get aggregated data counts for dashboard (admin cross-tenant view)."""
     requested = (tenant or "").strip()
     if current_user.role != "ADMIN":
         requested = current_user.tenant or ""
@@ -922,14 +910,14 @@ async def get_all_data(
         by_tenant = await session.execute(
             select(Event.tenant, func.count()).group_by(Event.tenant)
         )
-        # Frontend expects "tenants" as array of objects with "tenant" property
+
         result["data"]["tenants"] = [{"tenant": row[0]} for row in by_tenant if row[0]]
     return result
 
 
-# =============================================================================
-# Tenant Management Endpoints (Admin Only)
-# =============================================================================
+
+
+
 
 class TenantCreateRequest(BaseModel):
     name: str
@@ -939,7 +927,7 @@ class TenantCreateRequest(BaseModel):
 class TenantCreateResponse(BaseModel):
     id: str
     name: str
-    api_key: str  # Returned ONLY once
+    api_key: str
     is_active: bool
     created_at: str
 
@@ -963,10 +951,9 @@ async def create_tenant(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Create a new tenant. Returns the API key ONCE - store it securely."""
     from app.models.enums import Role
 
-    # Validate tenant name using normalize_tenant logic
+
     name = (request.name or "").strip().lower()
     if not name:
         raise HTTPException(status_code=422, detail="Tenant name is required")
@@ -982,12 +969,12 @@ async def create_tenant(
             ),
         )
 
-    # Check for duplicate
+
     existing = await session.execute(select(Tenant).where(Tenant.name == name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Tenant '{name}' already exists")
 
-    # Generate a 32-byte url-safe API key
+
     api_key = secrets.token_urlsafe(32)
     api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     tenant_id = hashlib.sha256(name.encode()).hexdigest()[:25]
@@ -1005,7 +992,7 @@ async def create_tenant(
     return TenantCreateResponse(
         id=tenant.id,
         name=tenant.name,
-        api_key=api_key,  # Returned ONLY once
+        api_key=api_key,
         is_active=tenant.is_active,
         created_at=tenant.created_at.isoformat() if tenant.created_at else "",
     )
@@ -1016,7 +1003,6 @@ async def list_tenants(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """List all tenants. API keys and hashes are NOT exposed."""
     result = await session.execute(select(Tenant).order_by(Tenant.name))
     tenants = result.scalars().all()
     return [
@@ -1039,7 +1025,6 @@ async def update_tenant(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Activate or deactivate a tenant. Deactivating blocks all its users' logins."""
     result = await session.execute(select(Tenant).where(Tenant.name == name))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -1066,13 +1051,12 @@ async def rotate_tenant_key(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    """Rotate a tenant's API key. The old key is invalidated immediately."""
     result = await session.execute(select(Tenant).where(Tenant.name == name))
     tenant = result.scalar_one_or_none()
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Tenant '{name}' not found")
 
-    # Generate a new 32-byte url-safe API key
+
     new_api_key = secrets.token_urlsafe(32)
     new_key_hash = hashlib.sha256(new_api_key.encode()).hexdigest()
 
@@ -1083,7 +1067,7 @@ async def rotate_tenant_key(
     return TenantCreateResponse(
         id=tenant.id,
         name=tenant.name,
-        api_key=new_api_key,  # Returned ONLY once
+        api_key=new_api_key,
         is_active=tenant.is_active,
         created_at=tenant.created_at.isoformat() if tenant.created_at else "",
     )

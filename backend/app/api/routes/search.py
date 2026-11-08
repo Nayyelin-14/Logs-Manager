@@ -1,9 +1,3 @@
-"""
-Search API Routes
-
-Event search and filtering endpoints.
-"""
-
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,20 +66,19 @@ async def search_logs(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
-    """Search and filter security events with cursor pagination."""
     requested_tenant = (filters.tenant or "").strip()
     if current_user.role == "ADMIN":
         tenant = None if requested_tenant in ("", "all") else requested_tenant
     else:
-        # Viewers are always scoped to their own tenant; a cross-tenant
-        # ?tenant= parameter is ignored (not rejected) per the tenancy policy.
+
+
         tenant = current_user.tenant
 
     query = select(Event)
     if tenant:
         query = query.where(Event.tenant == tenant)
-    
-    # Apply filters
+
+
     if filters.source:
         query = query.where(Event.source == filters.source)
     event_type = filters.event_type or filters.eventType
@@ -127,29 +120,29 @@ async def search_logs(
                 Event.event_type.ilike(search_term),
             )
         )
-    
-    # Sorting
+
+
     sort_column = getattr(Event, filters.sort_by, Event.ts)
     if filters.sort_order == "asc":
         query = query.order_by(asc(sort_column))
     else:
         query = query.order_by(desc(sort_column))
-    
-    # Cursor-based pagination
+
+
     if filters.cursor:
         query = query.where(Event.id > filters.cursor)
-    
+
     query = query.limit(filters.limit + 1)
     result = await session.execute(query)
     logs = result.scalars().all()
-    
+
     has_next = len(logs) > filters.limit
     if has_next:
         logs = logs[:filters.limit]
-    
+
     next_cursor = logs[-1].id if has_next else None
-    
-    # Convert to dict (camelCase contract expected by the frontend)
+
+
     log_dicts = []
     for log in logs:
         log_dicts.append({
@@ -174,7 +167,7 @@ async def search_logs(
             "raw": log.raw,
             "createdAt": _iso_utc(log.ingested_at),
         })
-    
+
     return {
         "logs": log_dicts,
         "newCursor": next_cursor,
@@ -189,21 +182,20 @@ async def delete_log(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
-    """Delete a log entry (Admin only)."""
     from app.core.dependencies import require_admin
     await require_admin(current_user)
-    
+
     from app.models.events import Event as EventModel
     from sqlalchemy import select
-    
+
     result = await session.execute(
         select(EventModel).where(EventModel.id == log_id)
     )
     log = result.scalar_one_or_none()
     if not log:
         return {"success": False, "message": "Log not found"}
-    
-    # Capture log data before deletion for response
+
+
     log_data = {
         "id": str(log.id),
         "source": log.source,
@@ -212,8 +204,8 @@ async def delete_log(
         "severity": log.severity,
         "raw": log.raw
     }
-    
+
     await session.delete(log)
     await session.commit()
-    
+
     return {"success": True, "message": "Log deleted", "deleted_log": log_data}

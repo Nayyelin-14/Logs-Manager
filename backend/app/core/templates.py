@@ -1,11 +1,4 @@
-"""
-Email Templates
-
-HTML and text email templates for OTP and alert notifications.
-"""
-
 def render_otp_email(email: str, otp_code: int) -> str:
-    """Render OTP verification email HTML."""
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -33,7 +26,6 @@ def render_otp_email(email: str, otp_code: int) -> str:
 
 
 def render_alert_email(username: str, title: str, description: str, severity: str, tenant: str) -> str:
-    """Render alert notification email HTML."""
     severity_colors = {
         "low": "#28a745",
         "medium": "#ffc107",
@@ -41,7 +33,7 @@ def render_alert_email(username: str, title: str, description: str, severity: st
         "critical": "#8B0000",
     }
     color = severity_colors.get(severity.lower(), "#007bff")
-    
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -72,7 +64,6 @@ def render_alert_email(username: str, title: str, description: str, severity: st
 
 
 def render_alert_email_text(username: str, title: str, description: str, severity: str, tenant: str) -> str:
-    """Render alert notification email plain text."""
     return f"""
 Hello {username},
 

@@ -1,5 +1,3 @@
-"""Phase 2 ingestion API tests: single, batch, file upload, tenant enforcement."""
-
 import json
 
 from app.core.config import get_settings
@@ -88,17 +86,12 @@ def test_cross_tenant_ingest_is_denied(client, api_key):
 
 
 def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_key_demob):
-    """Sending 'demoB' (capitalised) in body with demob key is accepted and stored as 'demob'.
-    
-    Before fix: returns 403 because body tenant 'demoB' != key tenant 'demob' (case-sensitive).
-    After fix: returns 200, stored as 'demob', visible to viewerB and admin, not viewerA.
-    """
     res = client.post(
         "/api/ingest",
         json={"source": "api", "event_type": "case_test", "tenant": "demoB"},
         headers=_headers(api_key_demob),
     )
-    # Before fix: 403; After fix: 200
+
     print(f"Response status: {res.status_code}, body: {res.text}")
     assert res.status_code == 200, res.text
     body = res.json()
@@ -106,7 +99,7 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
     assert body["ingested"] == 1
     event_id = body["eventId"]
 
-    # Verify stored as lowercase
+
     login = client.post(
         "/api/auth/login",
         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
@@ -117,10 +110,10 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
     assert len(found) == 1
     assert found[0]["tenant"] == "demob"
 
-    # Verify viewerB can see it
+
     viewer_b = client.post("/api/auth/login", json={"email": VIEWER_B_EMAIL, "password": VIEWER_B_PASSWORD})
     assert viewer_b.status_code == 200
-    # Need new client for viewerB session
+
     from fastapi.testclient import TestClient
     from app.main import app
     viewer_b_client = TestClient(app)
@@ -130,7 +123,7 @@ def test_ingest_accepts_capitalised_tenant_in_body_with_correct_key(client, api_
     found = [l for l in logs if l.get("id") == event_id]
     assert len(found) == 1, "viewerB should see the event"
 
-    # Verify viewerA cannot see it
+
     viewer_a_client = TestClient(app)
     viewer_a_client.post("/api/auth/login", json={"email": VIEWER_A_EMAIL, "password": VIEWER_A_PASSWORD})
     res = viewer_a_client.get("/api/get-logs", params={"limit": 100})
@@ -153,7 +146,7 @@ def test_file_upload_jsonl_with_bad_line(client, api_key):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["format"] == "jsonl"
-    assert body["parsed"] == 3  # 2 valid + 1 rejected line counted by parser
+    assert body["parsed"] == 3
     assert body["ingested"] == 2
     assert body["rejected"] == 1
     assert any("Invalid JSON" in e.get("error", "") for e in body["errors"])

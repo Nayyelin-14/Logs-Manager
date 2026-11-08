@@ -1,10 +1,3 @@
-"""
-Stats API endpoints: /api/stats/top, /api/stats/timeline, /api/stats/summary,
-/api/sources/health.
-
-Delegates SQL queries to app.services.stats_service. Enforces tenant scope.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -18,8 +11,6 @@ from app.core.security import TokenPayload
 from app.services import stats_service
 
 router = APIRouter()
-
-
 class TopItem(BaseModel):
     value: Optional[str]
     count: int
@@ -35,7 +26,6 @@ class TimelineBucket(BaseModel):
     count: int
     by_source: dict[str, int] = {}
 
-
 class TimelineResponse(BaseModel):
     interval: str
     buckets: list[TimelineBucket]
@@ -47,23 +37,17 @@ class SummaryResponse(BaseModel):
     open_alerts: int
     active_sources: int
     tenants: list[str]
-
-
 class SourceHealth(BaseModel):
     source: str
     event_count: int
     last_event_at: Optional[str]
     status: str
-
-
 def _tenant_scope(current_user: TokenPayload, requested: Optional[str]) -> Optional[str]:
     if current_user.role == "ADMIN":
         if requested is None or requested == "" or requested == "all":
             return None
         return requested
     return current_user.tenant
-
-
 def _parse_range(from_str: Optional[str], to_str: Optional[str]) -> tuple[datetime, datetime]:
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=7)
@@ -79,8 +63,6 @@ def _parse_range(from_str: Optional[str], to_str: Optional[str]) -> tuple[dateti
         except ValueError:
             pass
     return start, end
-
-
 @router.get("/stats/top", response_model=TopResponse)
 async def stats_top(
     field: str = Query("src_ip"),
@@ -98,8 +80,6 @@ async def stats_top(
         session, field, n, start, end, effective_tenant, source
     )
     return TopResponse(field=field, items=[TopItem(**i) for i in items])
-
-
 @router.get("/stats/timeline", response_model=TimelineResponse)
 async def stats_timeline(
     from_: Optional[str] = Query(None, alias="from"),
@@ -122,8 +102,6 @@ async def stats_timeline(
         interval=interval,
         buckets=[TimelineBucket(**b) for b in buckets],
     )
-
-
 @router.get("/stats/summary", response_model=SummaryResponse)
 async def stats_summary(
     tenant: Optional[str] = Query(None),
@@ -136,8 +114,6 @@ async def stats_summary(
         session, start, end, effective_tenant
     )
     return SummaryResponse(**data)
-
-
 @router.get("/sources/health", response_model=list[SourceHealth])
 async def sources_health(
     tenant: Optional[str] = Query(None),

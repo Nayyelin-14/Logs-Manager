@@ -1,9 +1,3 @@
-"""
-Structured Log Normalizers
-
-Normalizers for Firewall, Network/Router, and Generic API events.
-"""
-
 from typing import Any, Dict, Optional
 from app.models.enums import Source, Action
 from app.parsers.helpers import (
@@ -12,17 +6,13 @@ from app.parsers.helpers import (
     SecurityEventInput, determine_outcome,
 )
 from app.parsers.canonical import resolve_canonical_event_type, infer_source_from_event
-
-
 def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize Syslog/Firewall events."""
     priority = safe_number(pick(event, ["priority", "pri", "PRI", "Priority"]))
     action = pick(event, ["action", "Action", "act", "disposition"])
     original_event_type = safe_string(
         pick(event, ["eventType", "event_type", "event", "event_name"])
     ) or get_firewall_event_type(action)
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.FIREWALL)
-    
     status = safe_string(pick(event, ["status", "disposition"])) or safe_string(pick(event, ["result"]))
     outcome = determine_outcome(
         event_type=original_event_type,
@@ -33,7 +23,6 @@ def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
         event_id=None,
         source=Source.FIREWALL
     )
-
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
         "source": Source.FIREWALL,
@@ -42,8 +31,8 @@ def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
         "original_event_type": original_event_type,
         "timestamp": safe_timestamp(pick(event, ["timestamp", "@timestamp", "time", "ts", "date"])),
         "priority": priority,
-        "severity": safe_severity(pick(event, ["severity", "Severity"])) 
-            if safe_severity(pick(event, ["severity", "Severity"])) is not None 
+        "severity": safe_severity(pick(event, ["severity", "Severity"]))
+            if safe_severity(pick(event, ["severity", "Severity"])) is not None
             else (priority % 8 if priority is not None else 0),
         "host": safe_string(pick(event, ["host", "hostname", "host_name", "device"])),
         "vendor": safe_string(pick(event, ["vendor", "vendor_name"])) or "generic",
@@ -65,16 +54,12 @@ def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
         "raw": event,
         "tags": safe_tags(event.get("tags")),
     }
-
-
 def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize generic HTTP API events."""
     payload = as_record(event.get("raw")) or event
     original_event_type = safe_string(
         pick(event, ["eventType", "event_type", "eventName", "event_name", "type"])
     ) or safe_string(pick(payload, ["eventType", "event_type"])) or "api_event"
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.API)
-
     status = safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["status_code", "statusCode"]))
     action = safe_string(pick(event, ["action", "Action"])).upper() if safe_string(pick(event, ["action", "Action"])) else None
     outcome = determine_outcome(
@@ -86,7 +71,6 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
         event_id=None,
         source=Source.API
     )
-
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
         "source": Source.API,
@@ -118,26 +102,18 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
         ])),
         "tags": safe_tags(event.get("tags")),
     }
-
-
 def normalize_network(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize Network/Router Syslog events."""
-    # Start with base syslog normalization
-    firewall = normalize_syslog(event)
 
-    # Extract additional network-specific fields from raw message
+    firewall = normalize_syslog(event)
     message = safe_string(pick(event, ["message", "msg", "raw"]))
     regex = r"<(\d+)>(\w+ \d+ \d+:\d+:\d+) (\S+)(?: if=(\S+))?(?: event=(\S+))?(?: mac=(\S+))?(?: reason=(\S+))?"
     match = message and re.match(regex, message)
-
     has_explicit_timestamp = bool(pick(event, ["timestamp", "@timestamp", "time", "ts"]))
-
     original_event_type = (
         firewall["event_type"] if firewall["event_type"] != "network_traffic"
         else (match.group(5) if match else "link_event")
     )
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.NETWORK)
-
     result = {
         **firewall,
         "source": Source.NETWORK,
@@ -153,17 +129,12 @@ def normalize_network(event: Dict[str, Any]) -> Dict[str, Any]:
         "vendor": firewall["vendor"] if firewall["vendor"] != "generic" else "generic",
         "product": firewall["product"] if firewall["product"] != "firewall" else "network",
     }
-    
     return result
-
-
 def normalize_unknown(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize unknown/unclassified events."""
     original_event_type = safe_string(
         pick(event, ["eventType", "event_type", "event", "type"])
     ) or "unknown"
     canonical_event_type = resolve_canonical_event_type(original_event_type)
-
     return {
         "tenant": safe_string(pick(event, ["tenant"])),
         "source": safe_string(pick(event, ["source"])) or Source.API,
@@ -174,6 +145,4 @@ def normalize_unknown(event: Dict[str, Any]) -> Dict[str, Any]:
         "timestamp": safe_timestamp(pick(event, ["timestamp", "@timestamp", "time"])),
         "tags": safe_tags(event.get("tags")),
     }
-
-
 import re

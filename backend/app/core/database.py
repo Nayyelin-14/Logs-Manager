@@ -5,10 +5,10 @@ import os
 
 settings = get_settings()
 
-# Password-free effective DB target (host/port/db/ssl), logged by services at startup.
+
 EFFECTIVE_DB_TARGET = describe_database_target(settings.DATABASE_URL)
 
-from app.models.base import Base  # noqa: F401, re-export
+from app.models.base import Base
 
 
 engine = create_engine(
@@ -45,11 +45,10 @@ async def get_session() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database: ensure Alembic migrations are applied."""
     from sqlalchemy import text
     import asyncio
 
-    # Retry connection to PostgreSQL (it may take time to initialize)
+
     max_retries = 30
     for attempt in range(max_retries):
         try:
@@ -87,9 +86,16 @@ async def init_db():
         )
         version = res.scalar_one_or_none()
         if not version:
-            raise RuntimeError(
-                "alembic_version table is empty - schema may exist but Alembic version is not recorded."
+            import subprocess
+            result = subprocess.run(
+                ["alembic", "upgrade", "head"],
+                capture_output=True,
+                text=True,
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                env={**os.environ, "DATABASE_URL": settings.DATABASE_URL},
             )
+            if result.returncode != 0:
+                raise RuntimeError(f"Alembic migration failed: {result.stderr}")
 
 
 async def close_db():

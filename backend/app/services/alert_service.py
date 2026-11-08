@@ -1,15 +1,4 @@
-"""
-Alert Service
-
-Alert rule evaluation engine and alert management.
-
-Delegates to the shared evaluator (app/services/alerting/evaluator.py) for
-consistent threshold evaluation. Kept for backward compatibility with the
-ingest service (on-ingest alert triggering).
-"""
-
 from __future__ import annotations
-
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -20,22 +9,14 @@ from app.models.alert import Alert, AlertRule
 from app.models.events import Event
 from app.core.config import get_settings
 from app.services.alerting.evaluator import evaluate_rule
-
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-
 class AlertService:
-    """Alert rule evaluation engine (thin wrapper around shared evaluator)."""
-
     def __init__(self, session: AsyncSession):
         self.session = session
-
     async def check_alerts(self, event: Event) -> List[dict]:
-        """Check event against all enabled alert rules for the tenant.
 
-        Called on ingestion. Delegates to evaluate_rule for each enabled rule.
-        """
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             select(AlertRule).where(
@@ -61,5 +42,4 @@ class AlertService:
                     })
             except Exception as exc:  # noqa: BLE001
                 logger.exception("rule %s check failed: %s", rule.id, exc)
-
         return triggered

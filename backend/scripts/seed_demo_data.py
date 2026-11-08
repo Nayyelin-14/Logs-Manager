@@ -1,7 +1,3 @@
-"""
-Seed script for demo data: tenants, users, and logs.
-Runs against the backend PostgreSQL/Redis.
-"""
 import pathlib
 import sys
 
@@ -42,12 +38,6 @@ SEED_PASSWORD_ENV_VARS = {
 
 
 def resolve_seed_passwords() -> dict[str, str]:
-    """Resolve seed user passwords once.
-
-    SaaS mode: every SEED_*_PASSWORD must be set explicitly, otherwise refuse
-    to seed. Appliance mode: unset values are replaced with strong random
-    passwords, printed exactly once by main().
-    """
     import os
 
     saas_mode = os.environ.get("SAAS_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
@@ -76,12 +66,12 @@ def resolve_seed_passwords() -> dict[str, str]:
 async def seed_demo_data():
     async for session in get_session():
         try:
-            # 1. Create tenants table records
+
             print("Creating tenants...")
-            
-            # Create demoa tenant. When INGEST_API_KEY is configured, use it
-            # for demoa so compose/the acceptance script can authenticate
-            # deterministically instead of scraping a random key.
+
+
+
+
             configured_key = os.environ.get("INGEST_API_KEY")
             if configured_key:
                 demoa_key = configured_key
@@ -106,7 +96,7 @@ async def seed_demo_data():
                 demoa_tenant.is_active = True
             print(f"  demoa tenant ready (API key shown once only!)")
 
-            # Create demob tenant
+
             demob_key, demob_hash = generate_api_key()
             demob_result = await session.execute(
                 select(Tenant).where(Tenant.name == "demob")
@@ -125,7 +115,7 @@ async def seed_demo_data():
 
             await session.commit()
 
-            # 2. Create users: admin (Admin, all tenants), viewerA (Viewer, demoa), viewerB (Viewer, demob)
+
             passwords = resolve_seed_passwords()
 
             admin_result = await session.execute(select(User).where(User.username == "admin"))
@@ -136,7 +126,7 @@ async def seed_demo_data():
                     email="admin@demo.local",
                     password=hash_password(passwords["admin"]),
                     role="ADMIN",
-                    tenant=None,  # Admin has access to all tenants
+                    tenant=None,
                     status="ACTIVE",
                 )
                 session.add(admin)
@@ -173,13 +163,13 @@ async def seed_demo_data():
             await session.commit()
             print("Database commit complete.")
 
-            # Store API keys in a way to be displayed (not persisted as plain text)
+
             print("\n=== API KEYS (save these!) ===")
             print(f"demoa: {demoa_key}")
             print(f"demob: {demob_key}")
 
-            # 3. Create alert rules (idempotent): 3 seed rules per assignment §7.4
-            # Rule 1: Failed logins ≥5 in 5 min per src_ip (all tenants, tenant='*')
+
+
             rule_result = await session.execute(
                 select(AlertRule).where(AlertRule.name == "Brute force: repeated failed logins")
             )
@@ -189,7 +179,7 @@ async def seed_demo_data():
                     id=uuid4().hex[:25],
                     name="Brute force: repeated failed logins",
                     description="Triggers when 5+ failed logins from the same src_ip within 5 minutes (all tenants)",
-                    tenant="*",  # all tenants
+                    tenant="*",
                     enabled=True,
                     severity="high",
                     filter={"outcome": "failure", "action": "login"},
@@ -218,7 +208,7 @@ async def seed_demo_data():
             else:
                 print("Brute-force alert rule already exists")
 
-            # Rule 2: CrowdStrike malware_detected severity≥8 (threshold 1, all tenants)
+
             rule_malware_result = await session.execute(
                 select(AlertRule).where(AlertRule.name == "CrowdStrike malware detected")
             )
@@ -252,7 +242,7 @@ async def seed_demo_data():
             else:
                 print("CrowdStrike malware alert rule already exists")
 
-            # Rule 3: AWS CreateUser / AttachUserPolicy sensitive IAM change (all tenants)
+
             rule_iam_result = await session.execute(
                 select(AlertRule).where(AlertRule.name == "AWS sensitive IAM change")
             )
@@ -288,8 +278,8 @@ async def seed_demo_data():
 
             await session.commit()
 
-            # 4. Idempotent marker check: if seeded events already exist, skip ingestion.
-            # Check the events table for the _seed marker in raw column
+
+
             existing_result = await session.execute(
                 text("SELECT id FROM events WHERE raw->>'_seed' = 'true' LIMIT 1")
             )
@@ -299,8 +289,8 @@ async def seed_demo_data():
                 print("\nSeed complete!")
                 return
 
-            # 5. Ingest demo events through the real pipeline (normalization + alert evaluation).
-            # Fixed-window brute-force scenario: 6 failures, same src_ip, within 5 minutes.
+
+
             now = datetime.now(timezone.utc)
             ingest = IngestionService(session)
             for i in range(6):
@@ -326,7 +316,7 @@ async def seed_demo_data():
                     context={"tenant": "demoa"},
                 )
                 print(f"Seeded failed login {i + 1}/6 src_ip=203.0.113.77")
-            # Firewall sample (distinct traffic, no alert by itself)
+
             await ingest.ingest(
                 {
                     "tenant": "demoa",
@@ -350,7 +340,7 @@ async def seed_demo_data():
                 source="FIREWALL",
                 context={"tenant": "demoa"},
             )
-            # demob sample (isolates tenant data)
+
             await ingest.ingest(
                 {
                     "tenant": "demob",

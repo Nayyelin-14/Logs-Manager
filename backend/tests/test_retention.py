@@ -1,5 +1,3 @@
-"""Retention (7-day purge) tests against the test database."""
-
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -38,7 +36,7 @@ async def test_purge_removes_only_expired_events():
     async with async_session_maker() as session:
         old = _event("retention_old", timedelta(days=8))
         fresh = _event("retention_fresh", timedelta(days=1))
-        
+
         session.add_all([old, fresh])
         await session.commit()
 
@@ -53,7 +51,7 @@ async def test_purge_removes_only_expired_events():
         ).scalar_one_or_none()
         assert old_row is None, "event older than 7 days must be purged"
         assert fresh_row is not None, "event inside the retention window must survive"
-        
+
         await session.execute(delete(Event).where(Event.id == fresh.id, Event.ts == fresh.ts))
         await session.commit()
 
@@ -62,7 +60,7 @@ async def test_purge_removes_only_expired_events():
 async def test_count_expired_does_not_delete():
     async with async_session_maker() as session:
         old = _event("retention_count", timedelta(days=9))
-        
+
         session.add(old)
         await session.commit()
 
@@ -72,7 +70,7 @@ async def test_count_expired_does_not_delete():
             await session.execute(select(Event).where(Event.id == old.id, Event.ts == old.ts))
         ).scalar_one_or_none()
         assert still_there is not None, "count must not delete rows"
-        
+
         await session.execute(delete(Event).where(Event.id == old.id, Event.ts == old.ts))
         await session.commit()
 
@@ -81,7 +79,7 @@ async def test_count_expired_does_not_delete():
 async def test_run_retention_once_dry_run():
     async with async_session_maker() as session:
         old = _event("retention_dry", timedelta(days=10))
-        
+
         session.add(old)
         await session.commit()
 
@@ -91,7 +89,7 @@ async def test_run_retention_once_dry_run():
             await session.execute(select(Event).where(Event.id == old.id, Event.ts == old.ts))
         ).scalar_one_or_none()
         assert still_there is not None
-        
+
         await session.execute(delete(Event).where(Event.id == old.id, Event.ts == old.ts))
         await session.commit()
 

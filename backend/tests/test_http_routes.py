@@ -1,9 +1,3 @@
-"""End-to-end HTTP route tests against the test database.
-
-Note: login returns cookies (no access_token in the JSON body), so every
-authenticated call reuses the same TestClient session.
-"""
-
 import time
 import uuid
 
@@ -18,6 +12,8 @@ from conftest import (
     VIEWER_B_EMAIL,
     VIEWER_B_PASSWORD,
 )
+
+
 def _login(client, email: str, password: str):
     res = client.post("/api/auth/login", json={"email": email, "password": password})
     assert res.status_code == 200, f"login failed: {res.status_code} {res.text}"
@@ -25,7 +21,6 @@ def _login(client, email: str, password: str):
 
 
 def test_viewer_cannot_see_other_tenant(client):
-    """ViewerA should never see demob events."""
     _login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
 
     search_res = client.get(
@@ -41,7 +36,7 @@ def test_viewer_cannot_see_other_tenant(client):
     alerts_res = client.get("/api/get-alerts")
     assert alerts_res.status_code == 200, f"alerts failed: {alerts_res.text}"
 
-    # Explicitly requesting another tenant must not leak data
+
     search_res2 = client.get(
         "/api/get-logs", params={"tenant": "demob", "limit": "100"}
     )
@@ -52,14 +47,13 @@ def test_viewer_cannot_see_other_tenant(client):
 
 
 def test_six_ad_4625_failures_create_one_alert(client, api_key_demoa):
-    """6 failed logins from the same IP create exactly one alert."""
     from app.core.database import async_session_maker
     from app.models.tenant import Tenant
     import asyncio
 
     headers = {"X-API-Key": api_key_demoa, "Content-Type": "application/json"}
 
-    # Use TEST-NET-1 (192.0.2.0/24) to avoid collisions with other tests using 198.51.100.x
+
     ip = f"192.0.2.{uuid.uuid4().int % 250 + 1}"
     base_time = time.time()
     alert_ids = set()
@@ -80,12 +74,12 @@ def test_six_ad_4625_failures_create_one_alert(client, api_key_demoa):
         resp = client.post("/api/ingest", headers=headers, json=event)
         assert resp.status_code == 200, f"ingest {i} failed: {resp.status_code} {resp.text}"
         for alert in resp.json().get("alerts", []):
-            # Only count alerts created for this test's source IP;
-            # evaluate_rule may also return pre-existing alerts for other IPs.
+
+
             if ip in (alert.get("dedupe_key") or ""):
                 alert_ids.add(alert["id"])
 
-    # The threshold rule must fire exactly once for this source IP
+
     assert len(alert_ids) == 1, f"expected 1 alert from ingest responses, got {alert_ids}"
 
     _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
@@ -100,7 +94,6 @@ def test_six_ad_4625_failures_create_one_alert(client, api_key_demoa):
 
 
 def test_firewall_events_have_expected_fields(client):
-    """Firewall events returned by search carry normalized fields."""
     _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
 
     search_res = client.get(
@@ -117,30 +110,10 @@ def test_firewall_events_have_expected_fields(client):
 
 
 def test_feature_flag_off_returns_404(client):
-    """A flagged route returns 404 when its flag is disabled."""
-    res = client.get("/api/features/test-flagged")
+    res = client.get("/features/test-flagged")
     assert res.status_code == 404, f"Expected 404, got {res.status_code}"
 
 
-def test_feature_flag_on_returns_200(client):
-    """A flagged route returns 200 when its flag is enabled."""
-    import os
-    os.environ["FEATURE_TEST_FLAG_ENABLED"] = "true"
-    try:
-        from fastapi.testclient import TestClient
-        from app.main import app
-        from app.api.routes.health import require_feature
-        from fastapi import Depends, FastAPI
-
-        test_app = FastAPI()
-        test_app.include_router(app.router)
-
-        @test_app.get("/features/test-flagged")
-        async def test_flagged_route(_=Depends(require_feature("test_flag"))):
-            return {"status": "ok", "feature": "test_flag"}
-
-        with TestClient(test_app) as flagged_client:
-            res = flagged_client.get("/api/features/test-flagged")
-            assert res.status_code == 200, f"Expected 200, got {res.status_code}"
-    finally:
-        os.environ.pop("FEATURE_TEST_FLAG_ENABLED", None)
+def test_feature_flag_on_returns_200(client, feature_test_flag_enabled):
+    res = client.get("/features/test-flagged")
+    assert res.status_code == 200, f"Expected 200, got {res.status_code}"

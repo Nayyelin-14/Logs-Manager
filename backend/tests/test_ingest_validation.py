@@ -1,13 +1,10 @@
-"""Strict input validation tests for /ingest endpoints."""
 from fastapi.testclient import TestClient
 from app.main import app
 
 
 class TestIngestValidation:
-    """Validation: empty body, invalid JSON, empty event, bad timestamp, bad source."""
 
     def test_empty_body_returns_400(self, api_key):
-        """Empty body rejected before auth/DB."""
         client = TestClient(app)
         res = client.post(
             "/ingest",
@@ -35,7 +32,6 @@ class TestIngestValidation:
         assert res.status_code == 400, f"expected 400, got {res.status_code}: {res.text}"
 
     def test_empty_object_returns_422(self, api_key):
-        """Event with no meaningful fields rejected."""
         client = TestClient(app)
         res = client.post(
             "/ingest",
@@ -81,7 +77,6 @@ class TestIngestValidation:
         assert res.status_code == 422, f"expected 422, got {res.status_code}: {res.text}"
 
     def test_batch_one_bad_does_not_discard_good(self, api_key):
-        """One invalid event in batch should not discard valid ones."""
         client = TestClient(app)
         res = client.post(
             "/ingest/batch",

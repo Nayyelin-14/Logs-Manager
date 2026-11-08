@@ -1,9 +1,3 @@
-"""
-Stats service layer: SQL queries for /api/stats/* endpoints.
-
-All queries use parameterized SQL only. Field whitelists prevent injection.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -15,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.events import Event
 from app.models.alert import Alert
 
-# Whitelist for the `field` parameter on /api/stats/top
+
 TOP_FIELD_WHITELIST: dict[str, Any] = {
     "src_ip": Event.src_ip,
     "user": Event.user_name,
@@ -27,7 +21,6 @@ TOP_FIELD_WHITELIST: dict[str, Any] = {
 
 def _tenant_scope(current_user_role: str, current_user_tenant: Optional[str],
                   requested: Optional[str]) -> Optional[str]:
-    """Resolve effective tenant filter. VIEWER forced to own tenant."""
     if current_user_role == "ADMIN":
         if requested is None or requested == "" or requested == "all":
             return None
@@ -75,7 +68,6 @@ async def query_stats_top(
     tenant: Optional[str],
     source: Optional[str],
 ) -> list[dict[str, Any]]:
-    """Top N values for a whitelisted field."""
     if field not in TOP_FIELD_WHITELIST:
         return []
     column = TOP_FIELD_WHITELIST[field]
@@ -107,7 +99,6 @@ async def query_stats_timeline(
     tenant: Optional[str],
     source: Optional[str],
 ) -> list[dict[str, Any]]:
-    """Timeline: event counts per bucket split by source."""
     conditions = [Event.ts >= start, Event.ts <= end]
     if tenant:
         conditions.append(Event.tenant == tenant)
@@ -145,7 +136,6 @@ async def query_stats_summary(
     end: datetime,
     tenant: Optional[str],
 ) -> dict[str, Any]:
-    """Summary KPIs: total events, failed logins, open alerts, active sources."""
     conditions = [Event.ts >= start, Event.ts <= end]
     if tenant:
         conditions.append(Event.tenant == tenant)
@@ -197,7 +187,6 @@ async def query_sources_health(
     end: datetime,
     tenant: Optional[str],
 ) -> list[dict[str, Any]]:
-    """Per-source health: count, last event time, active status."""
     now = datetime.now(timezone.utc)
     active_cutoff = now - timedelta(minutes=15)
 

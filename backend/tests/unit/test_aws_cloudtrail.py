@@ -1,5 +1,3 @@
-"""Unit tests for AWS CloudTrail normalizer."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -9,10 +7,8 @@ from app.models.enums import Source, Action
 
 
 class TestAWSCloudTrailBasic:
-    """Basic AWS CloudTrail normalization tests."""
 
     def test_normalize_create_user(self):
-        """Test normalizing a CloudTrail CreateUser event."""
         raw = {
             "source": "aws",
             "userIdentity": {
@@ -44,7 +40,6 @@ class TestAWSCloudTrailBasic:
         assert result["user"] == "alice"
 
     def test_timestamp_utc_conversion(self):
-        """Test timestamp is parsed and returned as ISO format string."""
         raw = {"eventTime": "2026-10-30T22:17:00Z"}
 
         result = normalize_aws(raw)
@@ -52,7 +47,6 @@ class TestAWSCloudTrailBasic:
         assert result["timestamp"] == "2026-10-30T22:17:00+00:00"
 
     def test_raw_preserved(self):
-        """Test raw event is preserved unchanged."""
         raw = {"eventName": "CreateUser", "extra": "data"}
 
         result = normalize_aws(raw)
@@ -61,10 +55,8 @@ class TestAWSCloudTrailBasic:
 
 
 class TestAWSCloudTrailActionMapping:
-    """Test action mapping for AWS events."""
 
     def test_create_maps_to_create(self):
-        """Create* events map to create action."""
         raw = {"eventName": "CreateUser"}
 
         result = normalize_aws(raw)
@@ -72,7 +64,6 @@ class TestAWSCloudTrailActionMapping:
         assert result["action"] == "CREATE"
 
     def test_delete_maps_to_delete(self):
-        """Delete* events map to delete action."""
         raw = {"eventName": "DeleteUser"}
 
         result = normalize_aws(raw)
@@ -80,7 +71,6 @@ class TestAWSCloudTrailActionMapping:
         assert result["action"] == "DELETE"
 
     def test_login_maps_to_login(self):
-        """Login events map to login action."""
         raw = {"eventName": "ConsoleLogin"}
 
         result = normalize_aws(raw)
@@ -89,10 +79,8 @@ class TestAWSCloudTrailActionMapping:
 
 
 class TestAWSCloudTrailOutcome:
-    """Test outcome determination for AWS events."""
 
     def test_success_without_error(self):
-        """Events without error_code should have unknown outcome (AWS doesn't derive success from absence of error)."""
         raw = {"eventName": "CreateUser"}
 
         result = normalize_aws(raw)
@@ -100,7 +88,6 @@ class TestAWSCloudTrailOutcome:
         assert result["outcome"] == "unknown"
 
     def test_failure_with_error_code(self):
-        """Events with error_code should have failure outcome."""
         raw = {
             "eventName": "CreateUser",
             "errorCode": "AccessDenied",
@@ -111,7 +98,6 @@ class TestAWSCloudTrailOutcome:
         assert result["outcome"] == "failure"
 
     def test_error_code_in_description(self):
-        """Error code should be included in description."""
         raw = {
             "eventName": "CreateUser",
             "errorCode": "AccessDenied",
@@ -123,10 +109,8 @@ class TestAWSCloudTrailOutcome:
 
 
 class TestAWSCloudTrailSeverity:
-    """Test severity mapping for AWS events."""
 
     def test_no_error_default_severity(self):
-        """Events without error should have default severity 3."""
         raw = {"eventName": "CreateUser"}
 
         result = normalize_aws(raw)
@@ -134,7 +118,6 @@ class TestAWSCloudTrailSeverity:
         assert result["severity"] == 3
 
     def test_error_higher_severity(self):
-        """Events with error should have higher severity 7."""
         raw = {
             "eventName": "CreateUser",
             "errorCode": "AccessDenied",
@@ -146,10 +129,8 @@ class TestAWSCloudTrailSeverity:
 
 
 class TestAWSCloudTrailEdgeCases:
-    """Edge cases for AWS CloudTrail normalization."""
 
     def test_empty_event(self):
-        """Empty event should return default values."""
         raw = {}
 
         result = normalize_aws(raw)
@@ -159,7 +140,6 @@ class TestAWSCloudTrailEdgeCases:
         assert result["source"] == Source.AWS
 
     def test_region_extraction(self):
-        """Region should be extracted from multiple possible fields."""
         raw = {"region": "eu-west-1"}
 
         result = normalize_aws(raw)

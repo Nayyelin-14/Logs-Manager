@@ -20,14 +20,6 @@ API.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-export const authAPI = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
-  headers: {
-    "Content-type": "application/json",
-  },
-  withCredentials: true,
-});
-
 export const adminApi = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
   headers: {

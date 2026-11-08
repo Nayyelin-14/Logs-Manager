@@ -21,7 +21,7 @@ export const queryClient = new QueryClient({
 });
 
 const getAllusers = async (q?: string) => {
-  const response = await adminApi.get("/get-users", {
+  const response = await adminApi.get("get-users", {
     params: q ? { search: q } : undefined,
   });
 
@@ -58,7 +58,7 @@ const fetchInfiniteUsersWithFilters = async ({
   }
 
   // call API
-  const response = await adminApi.get(`/get-users${query}`);
+  const response = await adminApi.get(`get-users${query}`);
   return response.data;
 };
 
@@ -84,12 +84,12 @@ export const fetchDashboardStats = async (
   if (tenant) params.append("tenant", tenant);
   if (range) params.append("range", range);
   if (userId) params.append("userId", userId);
-  const url = `/api/stats/summary?${params.toString()}`;
+  const url = `/stats/summary?${params.toString()}`;
   const response = await API.get(url);
   const data = response.data;
   // Also fetch stats/top for charts
   const [topRes] = await Promise.all([
-    API.get(`/api/stats/top?field=src_ip&n=10${tenant ? `&tenant=${tenant}` : ""}`),
+    API.get(`/stats/top?field=src_ip&n=10${tenant ? `&tenant=${tenant}` : ""}`),
   ]);
   return {
     total_events: data.total_events,
@@ -170,7 +170,7 @@ const fetchInfiniteLogsWithFilters = async ({
   }
 
   // call API using new /api/events endpoint
-  const response = await API.get(`/api/events${query}`);
+  const response = await API.get(`/events${query}`);
   return response.data;
 };
 
@@ -193,7 +193,7 @@ export const AlertsInfiniteQuery = (filters: { tenant?: string; status?: string;
     const params = new URLSearchParams({ limit: "25" });
     if (pageParam) params.set("cursor", pageParam);
     Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
-    const response = await API.get(`/get-alerts?${params.toString()}`);
+    const response = await API.get(`get-alerts?${params.toString()}`);
     return response.data as PaginatedAlertsResponse;
   },
   initialPageParam: null as string | null,
@@ -216,7 +216,7 @@ export const invalidateLogQueries = async () => {
 
 const fetchAllDataCount = async (tenant?: string | null) => {
   const query = tenant ? `?tenant=${tenant}` : "";
-  const res = await adminApi.get(`/get-all-data${query}`);
+  const res = await adminApi.get(`get-all-data${query}`);
   return res.data;
 };
 
@@ -256,7 +256,7 @@ const fetchInfiniteRulesWithFilters = async ({
   }
 
   // call API
-  const response = await adminApi.get(`/get-rules${query}`);
+  const response = await adminApi.get(`get-rules${query}`);
   return response.data;
 };
 

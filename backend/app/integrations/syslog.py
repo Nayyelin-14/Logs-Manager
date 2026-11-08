@@ -1,13 +1,3 @@
-"""
-Syslog Integration Module
-
-Async UDP/TCP syslog listeners with RFC3164/RFC5424 parsing.
-
-Listeners never share an ingestion session: every datagram/connection/line is
-processed with a fresh session from the provided session factory so one bad
-record cannot poison another's transaction.
-"""
-
 import asyncio
 import logging
 import re
@@ -20,7 +10,7 @@ from app.core.config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-MAX_TCP_BUFFER = 1_048_576  # 1 MiB per connection
+MAX_TCP_BUFFER = 1_048_576
 MAX_OCTET_LENGTH = 1_048_576
 
 MONTHS: Dict[str, int] = {
@@ -32,7 +22,6 @@ KEY_VALUE_PATTERN = re.compile(r'(?:^|\s)([A-Za-z_][\w.-]*)=(?:"([^"]*)"|\'([^\'
 
 
 def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
-    """Parse Syslog message (RFC3164/RFC5424) and extract key-value pairs."""
     original = input_str.strip()
     if not original:
         return None
@@ -40,7 +29,7 @@ def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
     priority: Optional[int] = None
     rest = original
 
-    # Parse PRI
+
     pri_match = re.match(r"^<(\d{1,3})>", rest)
     if pri_match:
         priority = int(pri_match.group(1))
@@ -50,7 +39,7 @@ def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
     hostname: Optional[str] = None
     message = rest
 
-    # Try RFC5424
+
     rfc5424 = re.match(
         r"^1\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(?:-|\[[^\]]*\])\s*(.*)$",
         rest, re.DOTALL
@@ -60,7 +49,7 @@ def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
         hostname = rfc5424.group(2) if rfc5424.group(2) != "-" else None
         message = rfc5424.group(6)
     else:
-        # Try RFC3164
+
         rfc3164 = re.match(
             r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+(.*)$",
             rest, re.DOTALL
@@ -70,7 +59,7 @@ def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
             hostname = rfc3164.group(2)
             message = rfc3164.group(3)
 
-    # Extract key-value pairs
+
     fields = parse_key_values(message)
     parsed = {
         **fields,
@@ -88,7 +77,6 @@ def parse_syslog_message(input_str: str) -> Optional[Dict[str, Any]]:
 
 
 def parse_key_values(message: str) -> Dict[str, str]:
-    """Extract key=value pairs from message."""
     fields: Dict[str, str] = {}
     for match in KEY_VALUE_PATTERN.finditer(message):
         value = match.group(2) or match.group(3) or match.group(4) or ""
@@ -97,21 +85,6 @@ def parse_key_values(message: str) -> Dict[str, str]:
 
 
 def resolve_syslog_timezone():
-    """Resolve the timezone used for naive RFC3164 syslog timestamps.
-
-    Timezone policy (``SYSLOG_TIMEZONE`` setting):
-
-    * ``UTC`` (default) - naive timestamps are read as UTC. This is the
-      historical behavior of this service and remains the default, so
-      existing deployments see no change.
-    * ``local`` - naive timestamps are read in the host/container's local
-      time (e.g. ``Asia/Bangkok`` when the machine runs in that zone).
-    * Any IANA zone name (e.g. ``Asia/Bangkok``, ``America/New_York``) -
-      naive timestamps are read in that zone.
-
-    Unknown values log a warning and fall back to UTC. RFC5424 messages
-    always carry an explicit offset and are never affected by this policy.
-    """
     name = str(settings.SYSLOG_TIMEZONE or "UTC").strip()
     if name.lower() == "utc":
         return timezone.utc
@@ -119,7 +92,7 @@ def resolve_syslog_timezone():
         return datetime.now(timezone.utc).astimezone().tzinfo
     try:
         return ZoneInfo(name)
-    except Exception as exc:  # ZoneInfoNotFoundError / invalid name
+    except Exception as exc:
         logger.warning(
             "invalid SYSLOG_TIMEZONE=%r (%s); falling back to UTC", name, exc
         )
@@ -127,11 +100,6 @@ def resolve_syslog_timezone():
 
 
 def parse_rfc3164_timestamp(value: str) -> Optional[str]:
-    """Parse RFC3164 timestamp (e.g., 'Oct 11 22:14:15').
-
-    Naive timestamps have no offset; they are interpreted according to the
-    ``SYSLOG_TIMEZONE`` policy (default UTC). See ``resolve_syslog_timezone``.
-    """
     match = re.match(r"^([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})$", value)
     if not match:
         return None
@@ -151,7 +119,7 @@ def parse_rfc3164_timestamp(value: str) -> Optional[str]:
         tzinfo=resolve_syslog_timezone(),
     )
 
-    # Handle year rollover
+
     if dt > datetime.now(timezone.utc) + timedelta(days=1):
         dt = dt.replace(year=dt.year - 1)
 
@@ -159,7 +127,6 @@ def parse_rfc3164_timestamp(value: str) -> Optional[str]:
 
 
 def normalize_timestamp(value: str) -> Optional[str]:
-    """Normalize various timestamp formats to ISO 8601."""
     if not value or value == "-":
         return None
 
@@ -183,7 +150,6 @@ async def ingest_parsed(
     parsed: Dict[str, Any],
     remote: Dict[str, Any],
 ) -> None:
-    """Ingest one parsed syslog message using a dedicated session."""
     from app.services.ingest_service import IngestionService
 
     event = dict(parsed)
@@ -199,7 +165,6 @@ async def ingest_parsed(
 
 
 class SyslogUDPProtocol(asyncio.DatagramProtocol):
-    """UDP Syslog protocol handler: one fresh session per datagram."""
 
     def __init__(self, session_factory: Callable[[], Any]):
         self.session_factory = session_factory
@@ -227,10 +192,6 @@ class SyslogUDPProtocol(asyncio.DatagramProtocol):
 
 
 class SyslogTCPProtocol:
-    """TCP Syslog protocol handler with octet framing and newline fallback.
-
-    One instance per connection: the read buffer is never shared.
-    """
 
     def __init__(self, session_factory: Callable[[], Any]):
         self.session_factory = session_factory
@@ -251,7 +212,7 @@ class SyslogTCPProtocol:
                     break
                 await self._process_buffer(addr)
 
-            # Flush a final newline-less line on orderly close
+
             if self.buffer.strip():
                 line, self.buffer = self.buffer, ""
                 await self._ingest_line(line, addr)
@@ -268,7 +229,7 @@ class SyslogTCPProtocol:
 
     async def _process_buffer(self, addr: tuple) -> None:
         while True:
-            # Try octet framing: <length> <message>
+
             if self.buffer and self.buffer[0].isdigit():
                 space_idx = self.buffer.find(" ")
                 if space_idx > 0:
@@ -277,7 +238,7 @@ class SyslogTCPProtocol:
                     except ValueError:
                         length = -1
                     if length < 0 or length > MAX_OCTET_LENGTH:
-                        # Bogus framing: fall through to newline handling
+
                         pass
                     else:
                         start = space_idx + 1
@@ -288,7 +249,7 @@ class SyslogTCPProtocol:
                                 await self._ingest_line(line, addr)
                             continue
 
-            # Fallback: newline delimited
+
             newline_idx = self.buffer.find("\n")
             if newline_idx >= 0:
                 line = self.buffer[:newline_idx].rstrip("\r")
@@ -312,7 +273,6 @@ class SyslogTCPProtocol:
 
 
 async def start_udp_syslog_listener(session_factory: Callable[[], Any]) -> asyncio.DatagramTransport:
-    """Start UDP syslog listener."""
     loop = asyncio.get_running_loop()
     transport, _protocol = await loop.create_datagram_endpoint(
         lambda: SyslogUDPProtocol(session_factory),
@@ -323,7 +283,6 @@ async def start_udp_syslog_listener(session_factory: Callable[[], Any]) -> async
 
 
 async def start_tcp_syslog_listener(session_factory: Callable[[], Any]) -> asyncio.Server:
-    """Start TCP syslog listener (fresh protocol instance per connection)."""
     server = await asyncio.start_server(
         lambda reader, writer: SyslogTCPProtocol(session_factory).handle_client(reader, writer),
         "0.0.0.0",

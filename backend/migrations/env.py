@@ -9,7 +9,7 @@ from alembic import context
 sys.path.append(".")
 
 from app.models.base import Base
-import app.models  # noqa: F401  ensure all model tables register on Base.metadata
+import app.models
 from app.core.config import get_settings
 from app.core.db_engine import create_engine, describe_database_target
 
@@ -24,7 +24,6 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
     engine_args = create_engine(settings.DATABASE_URL)
     context.configure(
         url=engine_args.url,

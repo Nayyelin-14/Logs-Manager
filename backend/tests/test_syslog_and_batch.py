@@ -1,5 +1,3 @@
-"""Unit tests for syslog parsing, batch parsing, and source resolution."""
-
 import pytest
 
 from app.core.exceptions import ValidationError
@@ -56,7 +54,6 @@ class TestSyslogParsing:
 
     @staticmethod
     def _with_timezone(value):
-        """Context manager: temporarily set SYSLOG_TIMEZONE."""
         from contextlib import contextmanager
 
         from app.core.config import get_settings
@@ -215,7 +212,7 @@ class TestSourceResolution:
             resolve_source("skynet")
 
     def test_infer_from_dict_event(self):
-        # Regression: plain dicts used to raise AttributeError on `.raw`
+
         assert infer_source_from_event({"msg": "blocked", "src_ip": "10.0.0.1"}) == Source.FIREWALL
         assert resolve_source(None, {"src_ip": "10.0.0.1", "msg": "x"}) == Source.FIREWALL
 

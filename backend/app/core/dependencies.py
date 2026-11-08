@@ -38,6 +38,10 @@ async def get_current_user(
     if access_token:
         try:
             payload = decode_token(access_token, settings.ACCESS_TOKEN_SECRET)
+            result = await session.execute(select(User).where(User.id == payload["userId"]))
+            user = result.scalar_one_or_none()
+            if not user or user.status != "ACTIVE":
+                raise HTTPException(status_code=401, detail="Account not active")
             return TokenPayload.from_dict(payload)
         except ExpiredSignatureError:
             pass
@@ -103,10 +107,10 @@ async def verify_api_key(
     if not api_key:
         raise HTTPException(status_code=401, detail="API key required")
 
-    # SHA-256 hash the provided key
+
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
-    # Look up tenant by API key hash where is_active
+
     result = await session.execute(
         select(Tenant).where(Tenant.api_key_hash == key_hash, Tenant.is_active == True)
     )

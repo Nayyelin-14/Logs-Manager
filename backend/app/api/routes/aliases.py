@@ -1,20 +1,14 @@
-"""
-Exact-path aliases for assignment compliance.
-
-The assignment requires POST /ingest (exact path). The main API router uses
-prefix="/api" so routes are /api/ingest etc. This router exposes the same
-handlers at the exact paths /ingest, /ingest/batch, /ingest/file without any
-prefix. Included in main.py with no prefix.
-"""
-
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
+from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.dependencies import verify_api_key, get_current_user
 from app.services.ingest_service import IngestionService
 from app.core.exceptions import ValidationError
 from pydantic import BaseModel, ConfigDict
+
+settings = get_settings()
 from app.api.routes.ingest import (
     IngestEventRequest,
     IngestBatchRequest,
@@ -33,7 +27,6 @@ async def ingest_single_event_exact(
     session: AsyncSession = Depends(get_session),
     api_user=Depends(verify_api_key),
 ):
-    """Exact-path alias: POST /ingest (single event)."""
     tenant = resolve_tenant(api_user, request.tenant)
     event_data = request.model_dump()
     source = event_data.pop("source", None)
@@ -61,10 +54,12 @@ async def ingest_batch_events_exact(
     session: AsyncSession = Depends(get_session),
     api_user=Depends(verify_api_key),
 ):
-    """Exact-path alias: POST /ingest/batch."""
     tenant = resolve_tenant(api_user, request.tenant)
-    if len(request.events) > 1000:
-        raise HTTPException(status_code=413, detail="Batch exceeds the limit of 1000 events.")
+    if len(request.events) > settings.INGEST_BATCH_MAX_EVENTS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Batch exceeds the limit of {settings.INGEST_BATCH_MAX_EVENTS} events.",
+        )
     if not request.events:
         raise HTTPException(status_code=400, detail="Batch must contain at least one event.")
     service = IngestionService(session)
@@ -94,11 +89,13 @@ async def ingest_file_exact(
     session: AsyncSession = Depends(get_session),
     api_user=Depends(verify_api_key),
 ):
-    """Exact-path alias: POST /ingest/file (multipart upload)."""
     effective_tenant = resolve_tenant(api_user, tenant)
-    content = await file.read(10_485_760 + 1)
-    if len(content) > 10_485_760:
-        raise HTTPException(status_code=413, detail="File exceeds the 10485760 byte upload limit.")
+    content = await file.read(settings.INGEST_MAX_FILE_BYTES + 1)
+    if len(content) > settings.INGEST_MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {settings.INGEST_MAX_FILE_BYTES} byte upload limit.",
+        )
     service = IngestionService(session)
     try:
         result = await service.ingest_file(

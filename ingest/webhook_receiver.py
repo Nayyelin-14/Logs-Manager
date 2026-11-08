@@ -1,10 +1,3 @@
-"""
-Webhook receiver service.
-
-Logs incoming alert webhooks and serves recent ones on GET /alerts.
-Used as a demo target for alert notifications.
-"""
-
 from __future__ import annotations
 
 import json

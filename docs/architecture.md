@@ -70,7 +70,7 @@ graph TB
     WEB --> UI
 
     %% Caddy / TLS
-    CADDY[Caddy Reverse Proxy<br/>80/443, TLS<br/>Let's Encrypt or self-signed]
+    CADDY[Caddy Web Server<br/>80/443, TLS, serves SPA<br/>Let's Encrypt or self-signed]
     CADDY --> UI
     CADDY --> SEARCH
     CADDY --> HTTP
@@ -103,8 +103,8 @@ graph TB
 - **HTTP API / file upload**: Tenant derived from the X-API-Key (hashed, mapped to a tenant)
   or JWT claim. Body `tenant` must match the credential's tenant (403 if mismatch, unless
   admin). API keys are created per tenant by admins and shown once.
-- **Syslog**: No tenant field in syslog. Tenant resolved via `TENANT_PORT_MAP` (port → tenant)
-  or `DEFAULT_TENANT` fallback.
+- **Syslog**: No tenant field in syslog. Tenant resolved via `SYSLOG_TENANT` env var
+  (default `demoA`) and `SYSLOG_SOURCE` env var (default `firewall`).
 - **Simulator**: Uses `--tenants` flag and API key per tenant.
 
 **Query-time enforcement:**
@@ -131,7 +131,7 @@ the backend remains the authorization boundary.
 | Database | PostgreSQL 16 | JSONB + GIN indexes, mature, single DB to operate |
 | Syslog collector | Custom Python asyncio | Full control over parsing, easy to explain in interview |
 | Frontend | React 19 + Vite + TypeScript + Recharts | Modern, well-documented, chart library included |
-| Reverse proxy / TLS | Caddy | Automatic HTTPS (Let's Encrypt), self-signed fallback, security headers |
+| Web server / reverse proxy / TLS | Caddy | Serves the built SPA, automatic HTTPS (Let's Encrypt), self-signed fallback, security headers |
 | Packaging | Docker Compose | Same file for appliance and SaaS, one-command start |
 
 **Considered alternatives:**

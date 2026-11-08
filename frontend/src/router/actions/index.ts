@@ -47,7 +47,7 @@ export const loginAction = async ({ request }: ActionFunctionArgs) => {
 
 export const logoutAction = async () => {
   try {
-    const response = await API.post("/auth/logout");
+    const response = await API.post("auth/logout");
     const userStore = useUserStore.getState();
 
     // Clear sessionStorage

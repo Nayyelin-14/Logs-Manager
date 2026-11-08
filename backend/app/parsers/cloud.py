@@ -1,9 +1,3 @@
-"""
-Cloud Provider Normalizers
-
-Normalizers for AWS CloudTrail and CrowdStrike events.
-"""
-
 from typing import Any, Dict, Optional
 from app.models.enums import Source, Action
 from app.parsers.helpers import (
@@ -13,10 +7,10 @@ from app.parsers.helpers import (
 )
 from app.parsers.canonical import resolve_canonical_event_type
 
-# CrowdStrike vendor actions -> normalized Action enum values.
-# The DB ActionEnum only allows: allow, deny, create, delete, login, logout, alert, other.
-# CrowdStrike "quarantine" is a detection/containment action -> map to "alert".
-# Preserve the vendor's original value in event_subtype so it is not lost.
+
+
+
+
 CROWDSTRIKE_ACTION_MAP: Dict[str, str] = {
     "quarantine": "alert",
     "blocked": "deny",
@@ -32,7 +26,6 @@ CROWDSTRIKE_ACTION_MAP: Dict[str, str] = {
 
 
 def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize AWS CloudTrail events."""
     payload = as_record(event.get("raw")) or event
     original_event_type = (
         safe_string(pick(event, ["eventType", "event_type", "eventName", "event_name"])) or
@@ -41,9 +34,9 @@ def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.AWS)
     error_code = safe_string(pick(event, ["errorCode", "error_code"])) or pick(payload, ["errorCode", "error_code"])
     cloud_service = safe_string(pick(event, ["cloudService", "cloud.service"])) or safe_string(pick(payload, ["eventSource", "event_source"]))
-    
+
     status = safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["errorCode"]))
-    
+
     outcome = determine_outcome(
         event_type=original_event_type,
         canonical_event_type=canonical_event_type,
@@ -99,14 +92,13 @@ def normalize_aws(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_crowdstrike(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize CrowdStrike Falcon events."""
     payload = (
         as_record(event.get("raw")) or
         as_record(event.get("event")) or
         as_record(event.get("detect")) or
         event
     )
-    
+
     original_event_type = (
         safe_string(pick(event, ["eventType", "event_type"])) or
         safe_string(pick(payload, [
@@ -114,18 +106,18 @@ def normalize_crowdstrike(event: Dict[str, Any]) -> Dict[str, Any]:
             "event_simpleName", "event_simple_name"
         ])) or "crowdstrike_event"
     )
-    
+
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.CROWDSTRIKE)
-    
+
     raw_action = (
         safe_string(pick(event, ["action", "Action"])) or
         safe_string(pick(payload, ["action", "Action"]))
     )
-    
+
     action_key = raw_action.lower() if raw_action else ""
     mapped_action = CROWDSTRIKE_ACTION_MAP.get(action_key, "alert")
     unmapped = raw_action is not None and action_key not in CROWDSTRIKE_ACTION_MAP
-    
+
     return {
         "tenant": safe_string(pick(event, ["tenant", "Tenant"])),
         "source": Source.CROWDSTRIKE,

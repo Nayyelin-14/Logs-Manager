@@ -1,22 +1,3 @@
-#!/usr/bin/env bash
-# bootstrap-first-deploy.sh — One-time setup for the VM before first pipeline deploy.
-#
-# Prerequisites (run on the VM):
-#   - Docker installed and running
-#   - docker-compose.vm.yml and .env copied to VM_COMPOSE_DIR
-#   - The locally-built images are available in the VM's Docker daemon
-#
-# Usage:
-#   VM_COMPOSE_DIR=/opt/logs-manager ./bootstrap-first-deploy.sh
-#
-# This script:
-#   1. Discovers the locally-built image digests
-#   2. Writes .deploy/current.env with those refs
-#   3. Writes .deploy/flags.env with feature flag defaults
-#   4. Verifies docker-compose.vm.yml uses image: variables (not build:)
-#
-# Run this ONCE, right before the first pipeline deploy.
-
 set -euo pipefail
 
 VM_COMPOSE_DIR="${VM_COMPOSE_DIR:?VM_COMPOSE_DIR must be set}"
@@ -31,9 +12,6 @@ echo "VM_COMPOSE_DIR: ${VM_COMPOSE_DIR}"
 
 mkdir -p "${DEPLOY_DIR}" "${BACKUP_DIR}"
 
-# ------------------------------------------------------------
-# 1. Discover locally-built image digests
-# ------------------------------------------------------------
 echo ""
 echo "Step 1: Discovering locally-built image digests..."
 
@@ -69,15 +47,10 @@ echo "Backend digest: ${BACKEND_DIGEST:-<not detected>}"
 echo "Ingest digest:  ${INGEST_DIGEST:-<not detected>}"
 echo "Frontend digest: ${FRONTEND_DIGEST:-<not detected>}"
 
-# ------------------------------------------------------------
-# 2. Write .deploy/current.env
-# ------------------------------------------------------------
 echo ""
 echo "Step 2: Writing .deploy/current.env..."
 
 cat > "${CURRENT_ENV}" <<CURRENT_ENV_EOF
-# Production image refs — managed by deploy workflow
-# DO NOT EDIT MANUALLY — updated by deploy.yml on successful promotion
 BACKEND_IMAGE=${BACKEND_DIGEST:-}
 INGEST_IMAGE=${INGEST_DIGEST:-}
 FRONTEND_IMAGE=${FRONTEND_DIGEST:-}
@@ -85,15 +58,10 @@ CURRENT_ENV_EOF
 
 echo "Wrote ${CURRENT_ENV}"
 
-# ------------------------------------------------------------
-# 3. Write .deploy/flags.env
-# ------------------------------------------------------------
 echo ""
 echo "Step 3: Writing .deploy/flags.env..."
 
 cat > "${FLAGS_ENV}" <<FLAGS_ENV_EOF
-# Feature flags — persisted across deploys
-# Set to true to enable, false/unset to disable (default off)
 FEATURE_SEARCH_ENABLED=false
 FEATURE_DELETE_POST_ENABLED=false
 FEATURE_TEST_FLAG_ENABLED=false
@@ -101,9 +69,6 @@ FLAGS_ENV_EOF
 
 echo "Wrote ${FLAGS_ENV}"
 
-# ------------------------------------------------------------
-# 4. Verify docker-compose.vm.yml uses image: variables
-# ------------------------------------------------------------
 echo ""
 echo "Step 4: Checking docker-compose.vm.yml..."
 
@@ -122,13 +87,13 @@ else
   echo "docker-compose.vm.yml uses image: variables — ready for pipeline deploy."
 fi
 
-# ------------------------------------------------------------
-# 5. Verify .env has required variables
-# ------------------------------------------------------------
+echo ""
+echo "Step 5: Checking .env..."
+
 ENV_FILE="${VM_COMPOSE_DIR}/.env"
 if [ -f "${ENV_FILE}" ]; then
   echo ""
-  echo "Step 5: Checking .env..."
+  echo "Checking .env..."
   for var in DATABASE_URL ACCESS_TOKEN_SECRET REFRESH_TOKEN_SECRET INGEST_API_KEY; do
     if grep -q "^${var}=" "${ENV_FILE}"; then
       echo "  ${var}: set"
@@ -138,7 +103,7 @@ if [ -f "${ENV_FILE}" ]; then
   done
 else
   echo ""
-  echo "Step 5: .env not found at ${ENV_FILE}" >&2
+  echo ".env not found at ${ENV_FILE}" >&2
   echo "  Copy .env.example to .env and fill in all required values." >&2
 fi
 

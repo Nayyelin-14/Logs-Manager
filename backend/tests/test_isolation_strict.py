@@ -1,14 +1,3 @@
-"""
-STRICT INTEGRATION TESTS for tenant isolation (GATE 0).
-Tests MUST hit real database through real HTTP app.
-Uses exact status codes and exact row counts - no ranges.
-No skips, no mocks, no source-text inspection.
-
-Test types:
-  FINDING-TEST: viewerB attempts cross-tenant access -> expects 403/404
-  POSITIVE-CONTROL: admin/owner accesses same id -> expects 200
-"""
-
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -34,11 +23,10 @@ ISO_ALERT_DEMOB = "iso_alert_demob"
 
 
 async def _seed_isolation_data():
-    """Insert demo data with fixed ids; idempotent so repeated runs are safe."""
     async with async_session_maker() as session:
         demoa_ts = datetime(2025, 8, 20, 7, 20, 0, tzinfo=timezone.utc)
         demob_ts = datetime(2025, 8, 20, 8, 20, 0, tzinfo=timezone.utc)
-        
+
         log_a = await session.execute(select(Event).where(Event.id == ISO_LOG_DEMOA))
         if not log_a.scalar_one_or_none():
             log_a = Event(
@@ -180,21 +168,18 @@ from conftest import (
 
 @pytest.fixture(scope="module", autouse=True)
 def isolation_seed(test_database):
-    """Ensure the demo rows these tests need exist; runs after session seed."""
     asyncio.run(_seed_isolation_data())
     yield
 
 
 @pytest.fixture(scope="session")
 def test_client():
-    """Test client with app loaded."""
     with TestClient(app) as client:
         yield client
 
 
 @pytest.fixture(scope="session")
 def test_data():
-    """Return user credentials."""
     return {
         "admin_email": ADMIN_EMAIL,
         "admin_password": ADMIN_PASSWORD,
@@ -205,10 +190,9 @@ def test_data():
     }
 
 
-# ===== FINDING-TESTS: viewerB cross-tenant access attempts =====
+
 
 def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-logs?tenant=demoa -> status 200, only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -229,7 +213,6 @@ def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
 
 
 def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-alerts?tenant=demoa -> status 200, only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -250,7 +233,6 @@ def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
 
 
 def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/dashboard?tenant=demoa -> demob counts only."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -265,7 +247,6 @@ def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
 
 
 def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
-    """FINDING-TEST: viewerB PATCH /api/alerts/{demoA alert id} -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -277,7 +258,6 @@ def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
 
 
 def test_5_viewer_b_delete_demoA_log_403(test_client, test_data):
-    """FINDING-TEST: viewerB DELETE /api/delete-log/{demoA log id} -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -289,7 +269,6 @@ def test_5_viewer_b_delete_demoA_log_403(test_client, test_data):
 
 
 def test_6_viewer_b_delete_demoB_log_403(test_client, test_data):
-    """FINDING-TEST: viewerB DELETE /api/delete-log/{demoB log id} -> 403 (read-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -301,7 +280,6 @@ def test_6_viewer_b_delete_demoB_log_403(test_client, test_data):
 
 
 def test_7_viewer_b_patch_demoB_alert_403(test_client, test_data):
-    """FINDING-TEST: viewerB PATCH /api/alerts/{demoB alert id} -> 403 (read-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -313,7 +291,6 @@ def test_7_viewer_b_patch_demoB_alert_403(test_client, test_data):
 
 
 def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
-    """FINDING-TEST: viewerB on /api/get-users, /api/create-user, /api/get-rules, /api/create-alertRule -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -346,7 +323,6 @@ def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
 
 
 def test_10_register_returns_404(test_client):
-    """FINDING-TEST: POST /api/auth/register -> 404."""
     response = test_client.post("/api/auth/register", json={
         "username": "testuser",
         "email": "test@example.com",
@@ -355,10 +331,9 @@ def test_10_register_returns_404(test_client):
     assert response.status_code == 404, f"Expected 404, got {response.status_code}"
 
 
-# ===== POSITIVE-CONTROLS: admin/owner accessing same id gets 200 =====
+
 
 def test_9_admin_patch_demoA_alert_200(test_client, test_data):
-    """POSITIVE-CONTROL: admin PATCH /api/alerts/{demoA alert id} -> 200."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -370,7 +345,6 @@ def test_9_admin_patch_demoA_alert_200(test_client, test_data):
 
 
 def test_11_admin_delete_demoA_log_200(test_client, test_data):
-    """POSITIVE-CONTROL: admin DELETE /api/delete-log/{demoA admin-delete log id} -> 200."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -382,7 +356,6 @@ def test_11_admin_delete_demoA_log_200(test_client, test_data):
 
 
 def test_12_admin_get_logs_all_tenants(test_client, test_data):
-    """POSITIVE-CONTROL: admin GET /api/get-logs without tenant -> rows from both tenants."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -397,10 +370,9 @@ def test_12_admin_get_logs_all_tenants(test_client, test_data):
     assert "demoa" in tenants and "demob" in tenants, f"Expected both tenants, got {tenants}"
 
 
-# ===== STEP 4 CREATE-USER TESTS =====
+
 
 def test_22_admin_create_viewer_without_tenant_422(test_client, test_data):
-    """STEP 4: ADMIN creating VIEWER without tenant -> 422."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -417,7 +389,6 @@ def test_22_admin_create_viewer_without_tenant_422(test_client, test_data):
 
 
 def test_23_admin_create_admin_tenant_null(test_client, test_data):
-    """STEP 4: ADMIN users are stored with tenant NULL (verified from existing admin)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -431,10 +402,9 @@ def test_23_admin_create_admin_tenant_null(test_client, test_data):
     assert user_data.get("role") == "ADMIN", f"Expected role ADMIN, got {user_data.get('role')}"
 
 
-# ===== STEP 1 LEAK TESTS =====
+
 
 def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/dashboard -> tenants list contains only demob."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -450,7 +420,6 @@ def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
 
 
 def test_14_admin_dashboard_tenants_both(test_client, test_data):
-    """POSITIVE-CONTROL: admin GET /api/dashboard -> tenants contains demoa and demob."""
     test_client.post("/api/auth/login", json={
         "email": test_data["admin_email"],
         "password": test_data["admin_password"]
@@ -467,7 +436,6 @@ def test_14_admin_dashboard_tenants_both(test_client, test_data):
 
 
 def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-all-data -> 403 (admin-only endpoint)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -478,7 +446,6 @@ def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
 
 
 def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-all-data?tenant=demoA -> 403 (admin-only)."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -489,7 +456,6 @@ def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
 
 
 def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
-    """FINDING-TEST: viewerB GET /api/get-logs?tenant=all and ?tenant=DemoA -> only demob rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -511,7 +477,6 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
 
 
 def test_18_viewer_a_only_sees_demoA(test_client, test_data):
-    """FINDING-TEST: viewerA GET /api/get-logs and /api/get-alerts -> only demoa rows."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_a_email"],
         "password": test_data["viewer_a_password"]
@@ -533,7 +498,6 @@ def test_18_viewer_a_only_sees_demoA(test_client, test_data):
 
 
 def test_19_no_cookie_routes_return_401():
-    """FINDING-TEST: every route except /healthz, /ready, /login called with NO cookie -> exactly 401."""
     from fastapi.testclient import TestClient
     from app.main import app
 
@@ -574,7 +538,6 @@ def test_19_no_cookie_routes_return_401():
 
 
 def test_20_viewer_b_rule_id_routes_403(test_client, test_data):
-    """ROLE-CHECK: viewerB with demoA rule id: PUT update-rule, PATCH rules/enabled, DELETE delete-rule -> 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]
@@ -593,7 +556,6 @@ def test_20_viewer_b_rule_id_routes_403(test_client, test_data):
 
 
 def test_21_viewer_b_user_id_routes_403(test_client, test_data):
-    """ROLE-CHECK: viewerB PUT /api/update-user and DELETE /api/delete-user/{id} -> exactly 403."""
     test_client.post("/api/auth/login", json={
         "email": test_data["viewer_b_email"],
         "password": test_data["viewer_b_password"]

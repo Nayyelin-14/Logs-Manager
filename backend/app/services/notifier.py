@@ -1,10 +1,3 @@
-"""
-Alert notifier: webhook delivery with retries + optional SMTP.
-
-Never raises into the alerting engine. Every attempt (status, http code, error,
-timestamp) is recorded on the alert's `notifications` JSONB column.
-"""
-
 from __future__ import annotations
 
 import json
@@ -17,7 +10,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Delays (seconds) for the 3 retries: 1s, 2s, 4s. Injectable for tests.
+
 DEFAULT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 WEBHOOK_TIMEOUT = 5.0
 
@@ -39,7 +32,6 @@ def build_webhook_payload(
     last_seen: str,
     link: str,
 ) -> dict[str, Any]:
-    """Build the webhook JSON payload."""
     return {
         "alert_id": alert_id,
         "rule": rule,
@@ -63,12 +55,6 @@ async def send_webhook(
     retry_delays: tuple[float, ...] = DEFAULT_RETRY_DELAYS,
     timeout: float = WEBHOOK_TIMEOUT,
 ) -> list[dict[str, Any]]:
-    """POST the payload to webhook_url with exponential backoff retries.
-
-    Returns a list of attempt records, each with:
-      {attempt, status, http_code, error, timestamp}
-    Never raises.
-    """
     attempts: list[dict[str, Any]] = []
     last_error: Optional[str] = None
     http_code: Optional[int] = None
@@ -98,7 +84,7 @@ async def send_webhook(
             last_error = f"timeout: {exc}"
             attempts.append(record)
             logger.warning("webhook timeout: url=%s attempt=%d", webhook_url, attempt)
-        except Exception as exc:  # noqa: BLE001 - never crash the engine
+        except Exception as exc:
             record["status"] = "failed"
             record["http_code"] = None
             record["error"] = f"{type(exc).__name__}: {exc}"
@@ -106,7 +92,7 @@ async def send_webhook(
             attempts.append(record)
             logger.exception("webhook error: url=%s attempt=%d", webhook_url, attempt)
 
-        # Backoff before next retry (skip after the last attempt)
+
         if attempt < retries:
             delay = retry_delays[attempt - 1] if attempt - 1 < len(retry_delays) else (2.0 ** attempt)
             import asyncio as _asyncio
@@ -128,12 +114,8 @@ async def send_email(
     smtp_password: Optional[str],
     use_tls: bool = True,
 ) -> dict[str, Any]:
-    """Send an alert email via SMTP. Returns {status, error}.
-
-    Disabled by default (SMTP_ENABLED=false). Never raises.
-    """
     try:
-        import aiosmtplib  # type: ignore
+        import aiosmtplib
         from email.message import EmailMessage
 
         msg = EmailMessage()
@@ -152,7 +134,7 @@ async def send_email(
             timeout=10.0,
         )
         return {"status": "sent", "error": None}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.exception("email send failed to %s", recipient)
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
@@ -163,11 +145,10 @@ def append_notification(
     attempts: list[dict[str, Any]],
     target: str,
 ) -> list[dict[str, Any]]:
-    """Append a notification record to the alerts.notifications list."""
     notifications = list(existing or [])
     notifications.append({
         "id": uuid.uuid4().hex[:16],
-        "channel": channel,          # "webhook" | "email"
+        "channel": channel,
         "target": target,
         "created_at": _now_iso(),
         "attempts": attempts,

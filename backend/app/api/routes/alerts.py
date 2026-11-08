@@ -1,12 +1,7 @@
-"""
-Alert API Routes
-
-Alert listing, status updates, and alert rule management.
-"""
-
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, or_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
@@ -35,7 +30,6 @@ async def list_alerts(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
-    """List alerts with filtering and pagination."""
     requested_tenant = (tenant or "").strip()
     if current_user.role == "ADMIN":
         effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
@@ -45,14 +39,14 @@ async def list_alerts(
     query = select(Alert).options(selectinload(Alert.rule))
     if effective_tenant:
         query = query.where(Alert.tenant == effective_tenant)
-    
+
     if status:
         query = query.where(Alert.status == status)
     if severity:
         query = query.where(Alert.severity == severity)
     if search:
         search_term = f"%{search}%"
-        # Use func.array_to_string to search within tags array elements
+
         query = query.where(
             or_(
                 Alert.title.ilike(f"%{search}%"),
@@ -60,20 +54,20 @@ async def list_alerts(
                 func.array_to_string(Alert.tags, ',').ilike(f"%{search}%")
             )
         )
-    
+
     query = query.order_by(desc(Alert.triggered_at), desc(Alert.id)).limit(limit + 1)
     if cursor:
         query = query.where(Alert.id > cursor)
-    
+
     result = await session.execute(query)
     alerts = result.scalars().all()
-    
+
     has_next = len(alerts) > limit
     if has_next:
         alerts = alerts[:limit]
-    
+
     next_cursor = alerts[-1].id if has_next else None
-    
+
     return {
         "alerts": [{
             "id": a.id,
@@ -100,16 +94,15 @@ async def update_alert_status(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Update alert status (Admin only)."""
     if update.status not in ["open", "resolved"]:
         raise HTTPException(status_code=400, detail="Invalid status")
-    
+
     result = await session.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
     alert.status = update.status
     await session.commit()
-    
+
     return {"message": "Alert status updated", "alert": {"id": alert.id, "status": alert.status}}

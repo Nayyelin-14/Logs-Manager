@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
@@ -16,16 +17,13 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       sha: ${{ steps.release.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GIT_PUSH_PAT }}
       - name: Run release-please
-        uses: googleapis/release-please-action@v4
         id: release
+        uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GIT_PUSH_PAT }}
           config-file: release-please-config.json
+          target-branch: dev
 
   retag-release-image:
     needs: release-please
@@ -35,10 +33,6 @@ jobs:
       packages: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-          fetch-depth: 0
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -47,58 +41,93 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Wait for release commit's images in GHCR (up to ~15 min)
-        id: wait
+      - name: Wait for the release commit's images (up to 30 min)
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
           SHA: ${{ needs.release-please.outputs.sha }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_OWNER: ${{ github.repository_owner }}
-          PKG_BACKEND: logs-manager-backend
-          PKG_INGEST: logs-manager-ingest
-          PKG_FRONTEND: logs-manager-frontend
         run: |
           set -euo pipefail
+          if ! [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: release-please output 'sha' is not a full commit SHA: '${SHA}'" >&2
+            exit 1
+          fi
           OWNER="${REPO_OWNER,,}"
           ELAPSED=0
-          TIMEOUT=900
-          while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
+          while [ "${ELAPSED}" -lt 1800 ]; do
             ALL_FOUND=1
-            for PKG in "${PKG_BACKEND}" "${PKG_INGEST}" "${PKG_FRONTEND}"; do
-              IMG_TAG="ghcr.io/${OWNER}/${PKG}:${SHA}"
-              if ! docker manifest inspect "${IMG_TAG}" >/dev/null 2>&1; then
+            for PKG in backend ingest frontend; do
+              if ! docker buildx imagetools inspect "ghcr.io/${OWNER}/logs-manager-${PKG}:${SHA}" >/dev/null 2>&1; then
                 ALL_FOUND=0
                 break
               fi
             done
             if [ "${ALL_FOUND}" -eq 1 ]; then
-              echo "All three images found for sha ${SHA}."
-              echo "found=true" >> $GITHUB_OUTPUT
+              echo "All three images found for ${SHA}."
               exit 0
             fi
-            echo "Waiting for images... (${ELAPSED}s elapsed)"
+            echo "Waiting for images (${ELAPSED}s elapsed)"
             sleep 10
             ELAPSED=$((ELAPSED + 10))
           done
-          echo "Timed out waiting for images for sha ${SHA}." >&2
-          echo "found=false" >> $GITHUB_OUTPUT
+          echo "Timed out waiting for images for ${SHA}." >&2
           exit 1
-      - name: Retag images as vX.Y.Z (imagetools create, no rebuild)
-        if: steps.wait.outputs.found == 'true'
+      - name: Verify image revision and retag as vX.Y.Z (no rebuild)
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
           SHA: ${{ needs.release-please.outputs.sha }}
           REPO_OWNER: ${{ github.repository_owner }}
-          PKG_BACKEND: logs-manager-backend
-          PKG_INGEST: logs-manager-ingest
-          PKG_FRONTEND: logs-manager-frontend
         run: |
           set -euo pipefail
+          if ! [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: release-please output 'sha' is not a full commit SHA: '${SHA}'" >&2
+            exit 1
+          fi
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "ERROR: release-please output 'tag_name' is empty" >&2
+            exit 1
+          fi
           OWNER="${REPO_OWNER,,}"
-          for PKG in "${PKG_BACKEND}" "${PKG_INGEST}" "${PKG_FRONTEND}"; do
-            SRC="ghcr.io/${OWNER}/${PKG}:${SHA}"
-            DST="ghcr.io/${OWNER}/${PKG}:${TAG}"
-            echo "Retagging ${SRC} -> ${DST}"
-            docker buildx imagetools create -t "${DST}" "${SRC}"
+          for PKG in backend ingest frontend; do
+            SRC="ghcr.io/${OWNER}/logs-manager-${PKG}:${SHA}"
+            REVISION=$(docker buildx imagetools inspect "$SRC" --format '{{json .Image}}' \
+              | python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          def label(image):
+              config = image.get("config") or {}
+              labels = config.get("Labels") or {}
+              return labels.get("org.opencontainers.image.revision")
+
+          if "config" in data:
+              revision = label(data)
+          elif "linux/amd64" in data:
+              revision = label(data["linux/amd64"])
+          else:
+              revision = label(next(iter(data.values())))
+
+          print(revision or "")
+          ')
+            if [ "$REVISION" != "$SHA" ]; then
+              echo "ERROR: Image $SRC has OCI revision label '$REVISION', expected '$SHA'. Image may not be from the intended release commit." >&2
+              exit 1
+            fi
+            DIGEST=$(docker buildx imagetools inspect "$SRC" --format '{{.Manifest.Digest}}')
+            if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "ERROR: Could not resolve a valid manifest digest for $SRC (got '$DIGEST')." >&2
+              exit 1
+            fi
+            DST="ghcr.io/${OWNER}/logs-manager-${PKG}:${RELEASE_TAG}"
+            SRC_REPO="${SRC%:*}"
+            echo "Retagging $SRC (digest: $DIGEST, revision: $REVISION) -> $DST"
+            docker buildx imagetools create -t "$DST" "${SRC_REPO}@${DIGEST}"
+            RELEASE_DIGEST=$(docker buildx imagetools inspect "$DST" --format '{{.Manifest.Digest}}')
+            if [ "$RELEASE_DIGEST" != "$DIGEST" ]; then
+              echo "ERROR: Release tag $DST resolves to '$RELEASE_DIGEST', expected '$DIGEST'." >&2
+              exit 1
+            fi
+            echo "  verified ${DST} -> ${RELEASE_DIGEST}"
           done
-          echo "All images retagged as ${TAG}."
+          echo "All images retagged as ${RELEASE_TAG}."

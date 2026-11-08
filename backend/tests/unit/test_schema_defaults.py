@@ -1,5 +1,3 @@
-"""Unit tests for NormalizedEvent Pydantic model validation - standalone version."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -8,10 +6,8 @@ from app.schemas.normalized_event import NormalizedEvent, Source, Action, Outcom
 
 
 class TestNormalizedEventDefaults:
-    """Tests for default values."""
 
     def test_empty_tags_default(self):
-        """Test tags default to empty list."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -23,7 +19,6 @@ class TestNormalizedEventDefaults:
         assert event.tags == []
 
     def test_empty_raw_default(self):
-        """Test raw defaults to empty dict."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -34,7 +29,6 @@ class TestNormalizedEventDefaults:
         assert event.raw == {}
 
     def test_none_optional_fields(self):
-        """Test optional fields can be None or omitted."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -51,10 +45,8 @@ class TestNormalizedEventDefaults:
 
 
 class TestNormalizedEventToDict:
-    """Tests for to_db_dict method."""
 
     def test_to_dict_basic(self):
-        """Test basic dict conversion."""
         ts = datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc)
         event = NormalizedEvent(
             id="test123",
@@ -73,7 +65,6 @@ class TestNormalizedEventToDict:
         assert d["raw"] == {"key": "value"}
 
     def test_to_dict_uses_ts_not_timestamp(self):
-        """Test that to_db_dict returns 'ts' column, not '@timestamp'."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -88,7 +79,6 @@ class TestNormalizedEventToDict:
         assert "@timestamp" not in d, "@timestamp alias should not be in output"
 
     def test_to_dict_uses_tags_not_underscore_tags(self):
-        """Test that to_db_dict returns '_tags' column for tags field."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -104,7 +94,6 @@ class TestNormalizedEventToDict:
         assert d["_tags"] == ["tag1", "tag2"]
 
     def test_to_dict_preserves_user(self):
-        """Test that user is correctly included when present."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -120,7 +109,6 @@ class TestNormalizedEventToDict:
         assert d["user_name"] == "alice"
 
     def test_to_dict_enums_as_values(self):
-        """Test that enum fields are converted to their string values."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -138,7 +126,6 @@ class TestNormalizedEventToDict:
         assert d["outcome"] == "failure", "outcome should be string value"
 
     def test_to_dict_all_columns_present(self):
-        """Test that all expected database columns are in to_db_dict output."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -162,10 +149,8 @@ class TestNormalizedEventToDict:
 
 
 class TestNormalizedEventFieldValidation:
-    """Tests for normalized event field validation."""
 
     def test_severity_valid_range(self):
-        """Test severity accepts valid values 0-10."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -187,7 +172,6 @@ class TestNormalizedEventFieldValidation:
         assert event2.severity == 10
 
     def test_severity_invalid_negative(self):
-        """Test severity < 0 raises validation error."""
         with pytest.raises(Exception):
             NormalizedEvent(
                 ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
@@ -199,7 +183,6 @@ class TestNormalizedEventFieldValidation:
             )
 
     def test_severity_invalid_high(self):
-        """Test severity > 10 raises validation error."""
         with pytest.raises(Exception):
             NormalizedEvent(
                 ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
@@ -211,7 +194,6 @@ class TestNormalizedEventFieldValidation:
             )
 
     def test_invalid_src_ip_sanitized(self):
-        """Invalid source IP is sanitized to None."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",

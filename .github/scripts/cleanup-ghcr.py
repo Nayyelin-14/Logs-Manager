@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Cleanup old GHCR image versions.
-
-Protects:
-  - All semver tags (vX.Y.Z)
-  - All prod-current and prod-previous tags
-  - Newest 10 TAGGED versions per package
-
-Deletes:
-  - Versions whose tags ALL match ^(dev-|pr-) or ^[0-9a-f]{40}$, older than RETENTION_DAYS
-
-Defaults to dry_run. Prints KEEP/DELETE for every version.
-Aborts if more than MAX_DELETIONS would be deleted.
-"""
 
 import json
 import os
@@ -26,7 +13,6 @@ API = "https://api.github.com"
 
 
 def api_call(method, url, token):
-    """Make a GitHub API call. Returns (parsed_json, link_header)."""
     req = urllib.request.Request(
         url,
         method=method,
@@ -50,7 +36,6 @@ def api_call(method, url, token):
 
 
 def package_base(owner, pkg, token):
-    """Return /users or /orgs base URL based on owner type."""
     data, _ = api_call("GET", f"{API}/users/{owner}", token)
     owner_type = data.get("type", "User")
     kind = "orgs" if owner_type == "Organization" else "users"
@@ -58,7 +43,6 @@ def package_base(owner, pkg, token):
 
 
 def fetch_all_versions(base, token):
-    """Fetch all package versions by following Link headers."""
     versions = []
     url = f"{base}/versions?per_page=100"
     while url:
@@ -73,7 +57,7 @@ def cleanup_package(pkg, owner, token, retention_seconds, dry_run):
     versions = fetch_all_versions(owner, pkg, token)
     now = datetime.now(timezone.utc)
 
-    # Newest 10 TAGGED versions per package
+
     tagged_versions = sorted(
         (v for v in versions if v.get("metadata", {}).get("container", {}).get("tags")),
         key=lambda v: parse_ts(v.get("created_at", "")),
@@ -97,29 +81,29 @@ def cleanup_package(pkg, owner, token, retention_seconds, dry_run):
         action = None
         reason = ""
 
-        # Never delete untagged versions (may be child manifests)
+
         if not tags:
             action = "KEEP"
             reason = "untagged (may be child manifest)"
 
-        # Keep all semver tags (vX.Y.Z)
+
         semver_tags = [t for t in tags if re.match(r"^v\d+\.\d+\.\d+$", t)]
         if action is None and semver_tags:
             action = "KEEP"
             reason = "semver tag"
 
-        # Keep all prod-* tags
+
         prod_tags = [t for t in tags if t.startswith("prod-")]
         if action is None and prod_tags:
             action = "KEEP"
             reason = "prod tag"
 
-        # Keep newest 10 TAGGED versions per package
+
         if action is None and vid in newest_10_ids:
             action = "KEEP"
             reason = "newest 10 tagged"
 
-        # Delete only versions whose tags ALL match ^(dev-|pr-) or ^[0-9a-f]{40}$ and are older than retention
+
         if action is None:
             all_tags_match = tags and all(re.match(r"^(dev-|pr-)|^[0-9a-f]{40}$", t) for t in tags)
             if all_tags_match and age_seconds > retention_seconds:
@@ -185,7 +169,7 @@ def main():
         versions = fetch_all_versions(base, token)
         now = datetime.now(timezone.utc)
 
-        # Pre-compute the plan
+
         sorted_versions = sorted(
             (v for v in versions if v.get("metadata", {}).get("container", {}).get("tags")),
             key=lambda v: parse_ts(v.get("created_at", "")),

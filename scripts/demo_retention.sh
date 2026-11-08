@@ -1,9 +1,3 @@
-#!/usr/bin/env bash
-# scripts/demo_retention.sh
-# Demonstrates the 7-day retention policy: inserts a test tenant's events
-# aged 8 days (should be purged) and 6 days (should be kept), runs the
-# retention maintenance job, and prints before/after counts.
-# Does not touch real seed data; uses a dedicated `retention_test` tenant.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +9,6 @@ echo "============================================="
 echo " Retention Policy Demo (7-day window)"
 echo "============================================="
 
-# Step 1: Insert test events with known ingested_at ages
 echo "[1] Inserting test events into tenant '$TEST_TENANT'..."
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T "$BACKEND_SERVICE" python3 -c "
 import asyncio, hashlib
@@ -59,13 +52,11 @@ asyncio.run(main())
 
 echo ""
 
-# Step 2: Run retention maintenance
 echo "[2] Running retention maintenance (RETENTION_DAYS=7)..."
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T "$BACKEND_SERVICE" python3 -m app.services.retention --days 7 2>&1
 
 echo ""
 
-# Step 3: Count after and cleanup
 echo "[3] Counting events after retention and cleaning up..."
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T "$BACKEND_SERVICE" python3 -c "
 import asyncio
@@ -88,7 +79,6 @@ async def main():
         else:
             print(f'  FAIL: Expected 1 event, got {count}')
 
-        # Cleanup
         await session.execute(sql_text(\"DELETE FROM events WHERE tenant = '$TEST_TENANT'\"))
         await session.commit()
         print('  Cleaned up test tenant events')

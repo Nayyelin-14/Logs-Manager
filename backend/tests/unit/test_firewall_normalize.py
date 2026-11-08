@@ -1,9 +1,3 @@
-"""Unit tests for Firewall Normalizer.
-
-These tests verify pure Python parsing and normalization logic
-and do not require a database connection.
-"""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -21,7 +15,6 @@ from app.schemas.normalized_event import NormalizedEvent, Source, Action
 
 
 class TestTenantSecurity:
-    """Tests for tenant isolation security."""
 
     def test_tenant_not_trusted_from_raw(self):
         raw = {
@@ -49,7 +42,6 @@ class TestTenantSecurity:
 
 
 class TestNormalizeFirewall:
-    """Tests for firewall event normalization."""
 
     def test_normalize_firewall_deny_sample_41(self):
         raw = {
@@ -127,7 +119,6 @@ class TestNormalizeFirewall:
 
 
 class TestInvalidIpHandling:
-    """Tests for invalid IP handling."""
 
     def test_invalid_src_ip_handled(self):
         event = normalize_firewall(
@@ -151,7 +142,6 @@ class TestInvalidIpHandling:
 
 
 class TestInvalidPortHandling:
-    """Tests for invalid port handling."""
 
     def test_invalid_port_handled(self):
         event = normalize_firewall(
@@ -173,7 +163,6 @@ class TestInvalidPortHandling:
 
 
 class TestMalformedTimestamps:
-    """Tests for malformed timestamp handling."""
 
     def test_missing_timestamp_uses_now(self):
         event = normalize_firewall(
@@ -195,7 +184,6 @@ class TestMalformedTimestamps:
 
 
 class TestActionMapping:
-    """Tests for action mapping."""
 
     def test_deny_mapping(self):
         for action in ["deny", "block", "drop", "reject"]:
@@ -213,7 +201,6 @@ class TestActionMapping:
 
 
 class TestSeverityFallback:
-    """Tests for severity fallback."""
 
     def test_all_syslog_severities(self):
         for syslog_sev, expected_sev in SYSLOG_SEVERITY_MAP.items():

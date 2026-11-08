@@ -1,18 +1,10 @@
-"""
-Batch Ingestion Parser
-
-Parses JSON, JSONL, NDJSON, CSV, and syslog text files for batch log ingestion.
-"""
-
 import json
 import re
 from typing import Any, Dict, List, Tuple
 
 from app.core.config import get_settings
 from app.core.exceptions import ValidationError
-
 settings = get_settings()
-
 ALLOWED_EXTENSIONS = ("json", "jsonl", "ndjson", "csv", "log", "txt")
 MAX_FILE_BYTES = settings.INGEST_MAX_FILE_BYTES
 MAX_RECORDS = settings.INGEST_BATCH_MAX_EVENTS
@@ -21,9 +13,7 @@ _SYSLOG_PRI = re.compile(r"^<\d{1,3}>")
 _RFC3164_HEAD = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s")
 _RFC5424_HEAD = re.compile(r"^1\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s")
 
-
 def validate_upload(filename: str, size: int) -> None:
-    """Validate uploaded file name and size before parsing."""
     if not filename or "." not in filename:
         raise ValidationError("Uploaded file must have a file extension.")
     ext = filename.lower().rsplit(".", 1)[-1]
@@ -37,10 +27,7 @@ def validate_upload(filename: str, size: int) -> None:
         raise ValidationError(
             f"File exceeds the {MAX_FILE_BYTES} byte upload limit (got {size} bytes)."
         )
-
-
 def looks_like_syslog_line(line: str) -> bool:
-    """Return True when a line looks like an RFC3164/RFC5424 syslog message."""
     line = line.strip()
     if not line:
         return False
@@ -51,13 +38,7 @@ def looks_like_syslog_line(line: str) -> bool:
     if _RFC5424_HEAD.match(line):
         return True
     return False
-
-
 def detect_format(text: str, filename: str, mimetype: str) -> str:
-    """Detect file format from extension, MIME type, and content.
-
-    Returns one of: json, jsonl, csv, syslog.
-    """
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
     if ext in ("jsonl", "ndjson"):
@@ -66,8 +47,6 @@ def detect_format(text: str, filename: str, mimetype: str) -> str:
         return "json"
     if ext == "csv":
         return "csv"
-    # .log/.txt (and unknown extensions) fall through to content sniffing:
-    # they may hold syslog text, JSON, JSONL, or CSV.
 
     if "csv" in mimetype and ext not in ("log", "txt"):
         return "csv"
@@ -78,12 +57,9 @@ def detect_format(text: str, filename: str, mimetype: str) -> str:
 
     lines = [ln for ln in text.splitlines() if ln.strip()]
     first_line = lines[0].strip() if lines else ""
-
-    # Syslog text wins when most lines carry a syslog header.
     syslog_hits = sum(1 for ln in lines[:20] if looks_like_syslog_line(ln))
     if lines and syslog_hits >= max(1, len(lines[:20]) // 2):
         return "syslog"
-
     if first_line.startswith(("[", "{")):
         try:
             json.loads(text)
@@ -93,40 +69,25 @@ def detect_format(text: str, filename: str, mimetype: str) -> str:
 
     if "," in first_line:
         return "csv"
-
     if syslog_hits:
         return "syslog"
-
     return "jsonl"
-
-
 def parse_batch_records(
     buffer: bytes,
     original_name: str = "",
     mimetype: str = "",
 ) -> Tuple[List[dict], List[Dict[str, Any]], str]:
-    """Parse a batch buffer into events plus structured per-record errors.
 
-    Returns:
-        (events, rejected, format_type)
-
-    Whole-file problems (empty file, invalid JSON document, missing CSV header)
-    raise ValidationError. Record-level problems (bad JSONL line, unparseable
-    syslog line) are collected in ``rejected`` so no valid record is lost.
-    """
     try:
         text = buffer.decode("utf-8")
     except UnicodeDecodeError as e:
         raise ValidationError(f"File is not valid UTF-8 text: {e}")
     text = text.replace("\ufeff", "").strip()
-
     if not text:
         raise ValidationError("Uploaded file is empty.")
-
     format_type = detect_format(text, original_name, mimetype)
     events: List[dict] = []
     rejected: List[Dict[str, Any]] = []
-
     if format_type == "json":
         events = parse_json(text)
     elif format_type == "jsonl":
@@ -135,55 +96,40 @@ def parse_batch_records(
         events = parse_csv(text)
     elif format_type == "syslog":
         events, rejected = parse_syslog_records(text)
-
     if not events:
         detail = f" First rejection: {rejected[0].get('error')}" if rejected else ""
         raise ValidationError(f"No events found in the uploaded file.{detail}")
-
     if len(events) > MAX_RECORDS:
         rejected.extend(
             {"index": idx, "error": f"Record limit of {MAX_RECORDS} exceeded, record discarded"}
             for idx in range(MAX_RECORDS, len(events))
         )
         events = events[:MAX_RECORDS]
-
     return events, rejected, format_type
-
-
 def parse_batch_buffer(
     buffer: bytes,
     original_name: str = "",
     mimetype: str = "",
 ) -> List[dict]:
-    """Backwards-compatible wrapper: parse and return events only."""
     events, _rejected, _fmt = parse_batch_records(buffer, original_name, mimetype)
     return events
-
-
 def parse_json(text: str) -> List[dict]:
-    """Parse JSON array or object with events array."""
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValidationError(f"Invalid JSON: {e}")
-
     if isinstance(parsed, list):
         return [event for event in parsed if isinstance(event, dict)]
-
     if isinstance(parsed, dict):
         for key in ["events", "logs", "records", "items", "data"]:
             if isinstance(parsed.get(key), list):
                 return [event for event in parsed[key] if isinstance(event, dict)]
         return [parsed]
-
     raise ValidationError("JSON must contain an object or array of objects.")
-
-
 def parse_json_lines(text: str) -> Tuple[List[dict], List[Dict[str, Any]]]:
-    """Parse JSONL/NDJSON (one JSON object per line), tolerating bad lines."""
     events: List[dict] = []
     rejected: List[Dict[str, Any]] = []
-
     for idx, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
         if not line:
@@ -200,17 +146,11 @@ def parse_json_lines(text: str) -> Tuple[List[dict], List[Dict[str, Any]]]:
             })
             continue
         events.append(record)
-
     return events, rejected
-
-
 def parse_syslog_records(text: str) -> Tuple[List[dict], List[Dict[str, Any]]]:
-    """Parse a syslog text file: one RFC3164/RFC5424 message per line."""
     from app.integrations.syslog import parse_syslog_message
-
     events: List[dict] = []
     rejected: List[Dict[str, Any]] = []
-
     for idx, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -220,48 +160,36 @@ def parse_syslog_records(text: str) -> Tuple[List[dict], List[Dict[str, Any]]]:
             continue
         parsed["rawMessage"] = line
         events.append(parsed)
-
     return events, rejected
 
-
 def parse_csv(text: str) -> List[dict]:
-    """Parse CSV with quoted fields."""
+
     events: List[dict] = []
     lines = text.splitlines()
-
     if not lines:
         return events
-
-    # Parse header
     headers = parse_csv_row(lines[0])
     if not headers or all(h == "" for h in headers):
         raise ValidationError("CSV file is missing a header row.")
-
     for row_idx in range(1, len(lines)):
         row = parse_csv_row(lines[row_idx])
         if all(v == "" for v in row):
             continue
-
         event = {}
         for col_idx, header in enumerate(headers):
             if not header:
                 continue
             event[header] = row[col_idx] if col_idx < len(row) else ""
         events.append(event)
-
     return events
 
-
 def parse_csv_row(line: str) -> List[str]:
-    """Parse a single CSV row with quoted field support."""
     fields: List[str] = []
     field = ""
     in_quotes = False
-
     i = 0
     while i < len(line):
         ch = line[i]
-
         if in_quotes:
             if ch == '"':
                 if i + 1 < len(line) and line[i + 1] == '"':
@@ -280,6 +208,5 @@ def parse_csv_row(line: str) -> List[str]:
             else:
                 field += ch
         i += 1
-
     fields.append(field)
     return fields

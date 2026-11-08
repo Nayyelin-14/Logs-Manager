@@ -1,7 +1,3 @@
-"""
-Tenant isolation verification tests.
-Hits the real FastAPI app against a real test database.
-"""
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -15,7 +11,6 @@ def _login(client, email: str, password: str):
 
 
 class TestTenantIsolation:
-    """Viewer of demoA sees only demoA data; demoB data is never returned."""
 
     def test_viewer_a_sees_only_demoa(self):
         client = TestClient(app)
@@ -27,7 +22,6 @@ class TestTenantIsolation:
             assert log["tenant"] == "demoa", f"viewerA saw tenant={log.get('tenant')}"
 
     def test_viewer_a_tenant_param_demob_returns_only_demoa(self):
-        """Even with ?tenant=demob, viewerA is forced to demoa."""
         client = TestClient(app)
         _login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
         res = client.get("/api/get-logs?tenant=demob&limit=100")

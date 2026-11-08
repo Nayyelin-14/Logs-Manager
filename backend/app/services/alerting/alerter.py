@@ -1,10 +1,3 @@
-"""
-Alert alerter: alert creation and notification delivery.
-
-Handles creating Alert records, dedupe/cooldown checks, and sending
-notifications (webhook + email). Used by the shared evaluator.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -47,7 +40,6 @@ async def _deliver_notifications(
     last_seen: datetime,
     notify: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Deliver webhook + email notifications for a (new or re-triggered) alert."""
     notifications: list[dict[str, Any]] = []
 
     webhook_url = (notify or {}).get("webhook_url") if isinstance(notify, dict) else None
@@ -124,32 +116,10 @@ async def create_or_update_alert(
     notify: dict[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    """Create or update an alert atomically via dedupe_key.
-
-    Index ix_alerts_dedupe_key_active (side by side with the lookup):
-
-        CREATE UNIQUE INDEX ix_alerts_dedupe_key_active
-        ON alerts (dedupe_key)
-        WHERE status != 'resolved' AND dedupe_key IS NOT NULL
-
-        select(Alert).where(
-            Alert.dedupe_key == dedupe_key,          -- same dedupe_key
-            Alert.status != AlertStatus.RESOLVED,     -- same status set (non-resolved)
-        )
-
-    The partial unique index guarantees at most one active (non-resolved) alert
-    per dedupe_key. The lookup matches the index exactly so a concurrent insert
-    that would violate it is detected and converted into an UPDATE of the
-    existing alert (count, last_seen, event_ids) instead of an exception.
-
-    Cooldown: active alert within cooldown → update count/last_seen only,
-    no re-notify. Active alert outside cooldown → update and re-notify.
-    No active alert → INSERT (race-safe via savepoint) and notify.
-    """
     dedupe_key = _dedupe_key(rule_id, tenant, str(group_value))
     severity = str(rule_severity or "medium")
 
-    # Cooldown check
+
     cooldown_minutes = int((notify or {}).get("cooldown_minutes", 15) or 15)
     cooldown_start = now - timedelta(minutes=cooldown_minutes)
 
@@ -162,7 +132,7 @@ async def create_or_update_alert(
         )
         return merged[:100]
 
-    # 1. Lookup existing active alert, matching the partial index exactly.
+
     existing = await session.execute(
         select(Alert).where(
             Alert.dedupe_key == dedupe_key,
@@ -175,8 +145,8 @@ async def create_or_update_alert(
         was_within_cooldown = (
             existing_alert.last_seen is not None and existing_alert.last_seen >= cooldown_start
         )
-        # Only count newly-seen event IDs so re-evaluation (e.g. worker sweep)
-        # of the same events does not inflate the count.
+
+
         new_eids = [
             eid for eid in evidence_ids
             if eid not in (existing_alert.event_ids or [])
@@ -188,7 +158,7 @@ async def create_or_update_alert(
 
         notified = False
         if not was_within_cooldown:
-            # Outside cooldown: re-trigger → notify on the existing alert.
+
             await _deliver_notifications(
                 session,
                 existing_alert,
@@ -217,9 +187,9 @@ async def create_or_update_alert(
             "notified": notified,
         }
 
-    # 2. No active alert → create one. Race-safe via savepoint: if a concurrent
-    # transaction inserted the same dedupe_key, the IntegrityError becomes an
-    # UPDATE of that alert instead of an exception.
+
+
+
     alert_obj = Alert(
         id=uuid.uuid4().hex[:25],
         rule_id=rule_id,
@@ -262,8 +232,8 @@ async def create_or_update_alert(
         existing_alert.event_ids = _merge_event_ids(existing_alert.event_ids, evidence_ids)
         await session.flush()
 
-        # Only re-notify if outside cooldown; a just-created alert is within
-        # cooldown and must not generate a duplicate webhook delivery.
+
+
         was_within_cooldown = (
             existing_alert.last_seen is not None and existing_alert.last_seen >= cooldown_start
         )
@@ -297,7 +267,7 @@ async def create_or_update_alert(
             "notified": notified,
         }
 
-    # 3. Notify for the newly created alert.
+
     await _deliver_notifications(
         session,
         alert_obj,

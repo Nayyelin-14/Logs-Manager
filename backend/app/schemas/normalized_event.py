@@ -1,13 +1,3 @@
-"""
-Pydantic v2 NormalizedEvent schema.
-
-Validates and clamps normalized event dicts between the parser layer and the
-database insert layer. Invalid records are rejected per-record with a clear
-error and never fail the batch.
-
-Deterministic id = SHA256(tenant|source|ts.isoformat()|sorted(raw items))
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -47,7 +37,6 @@ class Outcome(str, Enum):
 
 
 class NormalizedEvent(BaseModel):
-    """Common normalized event schema for all log sources."""
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -88,7 +77,6 @@ class NormalizedEvent(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _map_timestamp_to_ts(cls, data: dict) -> dict:
-        """Map 'timestamp' key from parsers to 'ts' field."""
         if isinstance(data, dict) and "ts" not in data and "timestamp" in data:
             data = dict(data)
             data["ts"] = data.pop("timestamp")
@@ -130,7 +118,6 @@ class NormalizedEvent(BaseModel):
     @field_validator("source", mode="before")
     @classmethod
     def _coerce_source(cls, v):
-        """Coerce Source enum or uppercase string to lowercase Source value."""
         if isinstance(v, Source):
             return v
         if isinstance(v, str):
@@ -143,7 +130,6 @@ class NormalizedEvent(BaseModel):
     @field_validator("action", mode="before")
     @classmethod
     def _coerce_action(cls, v):
-        """Coerce uppercase action strings to lowercase Action value."""
         if isinstance(v, Action):
             return v
         if isinstance(v, str):
@@ -171,14 +157,13 @@ class NormalizedEvent(BaseModel):
 
     @model_validator(mode="after")
     def _generate_deterministic_id(self) -> "NormalizedEvent":
-        """Generate deterministic SHA256 id if not provided."""
         if self.id:
             return self
         raw_sorted = json.dumps(self.raw, sort_keys=True, default=str)
-        # Include every field that can distinguish two events sharing a coarse
-        # timestamp: ports, Windows record id, actor/host, event type and the
-        # full (sorted) original payload/line. Without this, distinct failures
-        # in the same second collapsed onto one primary key.
+
+
+
+
         hash_input = "|".join([
             self.tenant,
             str(self.source),
@@ -197,7 +182,6 @@ class NormalizedEvent(BaseModel):
         return self
 
     def to_db_dict(self) -> dict[str, Any]:
-        """Convert to a dict suitable for SQLAlchemy Event insert."""
         return {
             "id": self.id,
             "ts": self.ts,

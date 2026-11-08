@@ -1,5 +1,3 @@
-"""Unit tests for notifier.py - webhook delivery with retries."""
-
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -13,10 +11,8 @@ from app.services.notifier import (
 
 
 class TestBuildWebhookPayload:
-    """Tests for webhook payload construction."""
 
     def test_build_payload_basic(self):
-        """Test basic payload structure."""
         payload = build_webhook_payload(
             alert_id="abc123",
             rule={"name": "Test Rule", "conditions": []},
@@ -36,7 +32,6 @@ class TestBuildWebhookPayload:
         assert payload["group"] == "192.168.1.1"
 
     def test_build_payload_includes_notified_at(self):
-        """Test payload includes notified_at timestamp."""
         payload = build_webhook_payload(
             alert_id="test",
             rule={},
@@ -53,10 +48,8 @@ class TestBuildWebhookPayload:
 
 
 class TestSendWebhook:
-    """Tests for webhook delivery with retries."""
 
     def test_send_webhook_success_first_attempt(self):
-        """HTTP 200 on first attempt returns single record."""
         async def run_test():
             with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
@@ -80,7 +73,6 @@ class TestSendWebhook:
         asyncio.run(run_test())
 
     def test_send_webhook_retries_on_failure(self):
-        """Failed HTTP 500 triggers retries with correct delays."""
         async def run_test():
             with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
@@ -106,7 +98,6 @@ class TestSendWebhook:
         asyncio.run(run_test())
 
     def test_send_webhook_timeout_retry(self):
-        """Timeout triggers retry."""
         async def run_test():
             import httpx
             with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
@@ -131,10 +122,8 @@ class TestSendWebhook:
 
 
 class TestAppendNotification:
-    """Tests for notification record appending."""
 
     def test_append_notification_first(self):
-        """First notification creates new list."""
         result = append_notification(None, "webhook", [], "http://test")
         assert len(result) == 1
         assert result[0]["channel"] == "webhook"
@@ -142,14 +131,12 @@ class TestAppendNotification:
         assert result[0]["final_status"] in ("sent", "failed")
 
     def test_append_notification_appends(self):
-        """Subsequent notifications append to existing list."""
         existing = [{"id": "abc123", "channel": "email", "attempts": [{"status": "sent"}]}]
         result = append_notification(existing, "webhook", [{"status": "sent", "http_code": 200}], "http://webhook")
         assert len(result) == 2
         assert result[1]["channel"] == "webhook"
 
     def test_append_notification_tracks_all_attempts(self):
-        """Notification includes all attempt records."""
         attempts = [
             {"attempt": 1, "status": "failed", "http_code": None, "error": "timeout"},
             {"attempt": 2, "status": "sent", "http_code": 200, "error": None},
@@ -158,13 +145,11 @@ class TestAppendNotification:
         assert len(result[0]["attempts"]) == 2
 
     def test_append_notification_final_status_sent(self):
-        """Final status is 'sent' when last attempt succeeds."""
         attempts = [{"attempt": 1, "status": "sent", "http_code": 200, "error": None}]
         result = append_notification(None, "webhook", attempts, "http://test")
         assert result[0]["final_status"] == "sent"
 
     def test_append_notification_final_status_failed(self):
-        """Final status is 'failed' when all attempts fail."""
         attempts = [
             {"attempt": 1, "status": "failed", "http_code": 500, "error": "error"},
             {"attempt": 2, "status": "failed", "http_code": 500, "error": "error"},
@@ -173,12 +158,10 @@ class TestAppendNotification:
         assert result[0]["final_status"] == "failed"
 
     def test_append_notification_creates_id(self):
-        """Notification includes a unique ID."""
         result = append_notification(None, "webhook", [{"status": "sent"}], "http://test")
         assert "id" in result[0]
         assert len(result[0]["id"]) > 0
 
     def test_append_notification_includes_created_at(self):
-        """Notification includes creation timestamp."""
         result = append_notification(None, "webhook", [{"status": "sent"}], "http://test")
         assert "created_at" in result[0]

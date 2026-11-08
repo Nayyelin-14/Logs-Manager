@@ -1,18 +1,9 @@
-"""Remove unused security_logs and Otp tables
-
-Revision ID: xxxx_remove_unused_tables
-Revises: a7b8c9d0e1f2
-Create Date: 2026-11-07
-
-Remove unused security_logs and Otp tables.
-events is the canonical event table.
-"""
-
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import Computed
 
 revision: str = 'xxxx_remove_unused_tables'
 down_revision: Union[str, Sequence[str], None] = 'a7b8c9d0e1f2'
@@ -30,7 +21,7 @@ def downgrade() -> None:
         sa.Column('id', sa.String(length=25), nullable=False),
         sa.Column('@timestamp', postgresql.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('tenant', sa.String(length=100), nullable=False),
-        sa.Column('source', sa.Enum('firewall', 'crowdstrike', 'aws', 'm365', 'ad', 'api', 'network', name='Source'), nullable=False),
+        sa.Column('source', sa.Enum('firewall', 'crowdstrike', 'aws', 'm365', 'ad', 'api', 'network', name='Source', create_type=False), nullable=False),
         sa.Column('vendor', sa.String(length=100), nullable=True),
         sa.Column('product', sa.String(length=100), nullable=True),
         sa.Column('event_type', sa.String(length=200), nullable=False),
@@ -38,7 +29,7 @@ def downgrade() -> None:
         sa.Column('original_event_type', sa.String(length=200), nullable=True),
         sa.Column('event_subtype', sa.String(length=200), nullable=True),
         sa.Column('severity', sa.Integer(), server_default='0', nullable=False),
-        sa.Column('action', sa.Enum('allow', 'deny', 'create', 'delete', 'login', 'logout', 'alert', 'other', name='Action'), nullable=True),
+        sa.Column('action', sa.Enum('allow', 'deny', 'create', 'delete', 'login', 'logout', 'alert', 'other', name='Action', create_type=False), nullable=True),
         sa.Column('src_ip', sa.String(length=45), nullable=True),
         sa.Column('src_port', sa.String(length=10), nullable=True),
         sa.Column('dst_ip', sa.String(length=45), nullable=True),
@@ -70,6 +61,8 @@ def downgrade() -> None:
         sa.Column('mac', sa.String(length=17), nullable=True),
         sa.Column('ingested_at', postgresql.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('outcome', sa.String(length=20), server_default='unknown', nullable=True),
+        sa.Column('gin__tsvector', postgresql.TSVECTOR(),
+                  Computed("to_tsvector('english'::regconfig, COALESCE(raw::text, ''))", persisted=True)),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index('ix_security_logs_timestamp', 'security_logs', ['@timestamp'])

@@ -1,9 +1,3 @@
-"""
-FastAPI Application Entry Point
-
-Main application factory with all routes, middleware, and lifecycle management.
-"""
-
 import asyncio
 import logging
 import structlog
@@ -18,13 +12,24 @@ from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
 from app.core.database import init_db, close_db, EFFECTIVE_DB_TARGET
-from app.api.routes import health, auth, ingest, search, dashboard, alerts, rules, users, aliases, stats
+from app.api.routes import (
+    health,
+    auth,
+    ingest,
+    search,
+    dashboard,
+    alerts,
+    rules,
+    users,
+    aliases,
+    stats,
+)
 from app.services.retention import start_retention_scheduler, stop_retention_scheduler
 from app.worker import run as worker_run
 
 settings = get_settings()
 
-# Configure structured logging
+
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
@@ -51,10 +56,9 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
     from datetime import datetime, timezone
     app.state.startup_time = datetime.now(timezone.utc)
-    
+
     startup_logger.info(
         "starting_up env=%s db_target=%s worker_embedded=%s",
         settings.APP_ENV,
@@ -64,7 +68,7 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
-    # Background tasks: syslog listeners + 7-day retention scheduler
+
     udp_transport = None
     tcp_server = None
     retention_scheduler = None
@@ -84,9 +88,9 @@ async def lifespan(app: FastAPI):
 
     retention_scheduler = start_retention_scheduler()
 
-    # Background worker task: only when explicitly embedded. The default
-    # deployment runs a dedicated worker service, so the backend must not
-    # duplicate the alert sweep (which would double-evaluate every rule).
+
+
+
     worker_task = None
     if settings.WORKER_EMBEDDED:
         worker_task = asyncio.create_task(worker_run())
@@ -123,7 +127,6 @@ app.state.limiter = limiter
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    """Custom 429 handler that adds Retry-After header."""
     retry_after = getattr(exc, "retry_after", None) or 60
     return JSONResponse(
         status_code=429,
@@ -134,7 +137,7 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -144,7 +147,7 @@ app.add_middleware(
     expose_headers=["Set-Cookie"],
 )
 
-# Security headers
+
 if settings.APP_ENV == "production":
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
@@ -158,10 +161,10 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# Rate limiting is applied per-route via slowapi decorators (see app/api/routes/auth.py).
 
 
-# Include routers
+
+
 app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingest"])

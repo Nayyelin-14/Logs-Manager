@@ -1,23 +1,23 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci
 
-COPY . .
+COPY frontend/ .
 RUN rm -f .env .env.local .env.production.local
 
 ARG VITE_API_URL=/api
+ARG VITE_APP_VERSION=unknown
 ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_APP_VERSION=${VITE_APP_VERSION}
 
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM caddy:2-alpine AS runtime
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv
 
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80 443

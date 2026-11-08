@@ -1,9 +1,3 @@
-"""
-Identity Provider Normalizers
-
-Normalizers for Microsoft 365 and Active Directory / Windows Security events.
-"""
-
 from typing import Any, Dict, Optional
 from app.models.enums import Source, Action
 from app.parsers.helpers import (
@@ -15,7 +9,6 @@ from app.parsers.canonical import resolve_canonical_event_type
 
 
 def normalize_m365(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize Microsoft 365 audit events."""
     payload = as_record(event.get("raw")) or event
     original_event_type = (
         safe_string(pick(event, ["eventType", "event_type", "operation"])) or
@@ -27,7 +20,7 @@ def normalize_m365(event: Dict[str, Any]) -> Dict[str, Any]:
         safe_string(pick(payload, ["ResultStatus", "result_status", "Status", "status", "Result", "result"]))
     ) or "undefined"
     action = map_m365_action(original_event_type)
-    
+
     outcome = determine_outcome(
         event_type=original_event_type,
         canonical_event_type=canonical_event_type,
@@ -78,7 +71,6 @@ def normalize_m365(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_ad(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize Active Directory / Windows Security events."""
     payload = as_record(event.get("raw")) or event
     event_id = safe_number(
         pick(event, ["eventId", "event_id"]) or pick(payload, [
@@ -99,7 +91,7 @@ def normalize_ad(event: Dict[str, Any]) -> Dict[str, Any]:
         ]))
     )
     result = safe_string(pick(event, ["status"]) or pick(payload, ["Status", "status", "Result", "result", "Outcome"]))
-    
+
     outcome = determine_outcome(
         event_type=original_event_type,
         canonical_event_type=canonical_event_type,

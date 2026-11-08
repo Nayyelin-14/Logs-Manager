@@ -1,26 +1,11 @@
-"""add tenants table and normalize tenant field
-
-Revision ID: 60bf177ba117
-Revises: a1b2c3d4e5f6
-Create Date: 2026-11-05 13:58:00
-
-This migration:
-1. Creates the tenants table for API key-based tenant isolation
-2. Adds CHECK constraint for lowercase tenant names
-3. Normalizes existing tenant values to lowercase (in tables that exist)
-"""
 from typing import Sequence, Union
-
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import text
-
-
 revision: str = '60bf177ba117'
 down_revision: Union[str, Sequence[str], None] = 'b2c3d4e5f6g7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
-
 
 def upgrade() -> None:
     op.create_table(
@@ -43,13 +28,9 @@ def upgrade() -> None:
         ),
     )
     op.create_index('ix_tenants_api_key_hash', 'tenants', ['api_key_hash'], unique=True)
-
-    # Normalize existing tenant values to lowercase (for tables that exist)
     op.execute(text("UPDATE \"User\" SET tenant = lower(trim(tenant)) WHERE tenant IS NOT NULL"))
     op.execute(text("UPDATE alerts SET tenant = lower(trim(tenant)) WHERE tenant IS NOT NULL"))
     op.execute(text("UPDATE alert_rules SET tenant = lower(trim(tenant)) WHERE tenant IS NOT NULL"))
-
-
 def downgrade() -> None:
     op.drop_index('ix_tenants_api_key_hash', table_name='tenants')
     op.drop_table('tenants')

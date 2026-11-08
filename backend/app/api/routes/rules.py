@@ -1,9 +1,3 @@
-"""
-Alert Rules API Routes
-
-Alert rule CRUD operations.
-"""
-
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,21 +25,21 @@ class ConditionBase(BaseModel):
     groupBy: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     field: Optional[str] = None
-    
+
     @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
         if v not in VALID_CONDITION_TYPES:
             raise ValueError(f"Unknown condition type: {v}")
         return v
-    
+
     @field_validator("threshold")
     @classmethod
     def validate_threshold(cls, v: Optional[int]) -> Optional[int]:
         if v is not None and v < 0:
             raise ValueError("threshold must be non-negative")
         return v
-    
+
     @field_validator("windowSeconds")
     @classmethod
     def validate_window(cls, v: Optional[int]) -> Optional[int]:
@@ -55,7 +49,7 @@ class ConditionBase(BaseModel):
             if v > 86400:
                 raise ValueError("windowSeconds must be at most 86400")
         return v
-    
+
     @field_validator("groupBy")
     @classmethod
     def validate_group_by(cls, v: Optional[str]) -> Optional[str]:
@@ -102,31 +96,30 @@ async def list_alert_rules(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """List alert rules."""
     tenant = current_user.tenant
-    
+
     query = select(AlertRule).where(AlertRule.tenant == tenant)
-    
+
     if search:
         search_term = f"%{search}%"
         query = query.where(
             (AlertRule.name.ilike(f"%{search}%")) |
             (AlertRule.description.ilike(f"%{search}%"))
         )
-    
+
     query = query.order_by(desc(AlertRule.created_at)).limit(limit + 1)
     if cursor:
         query = query.where(AlertRule.id > cursor)
-    
+
     result = await session.execute(query)
     rules = result.scalars().all()
-    
+
     has_next = len(rules) > limit
     if has_next:
         rules = rules[:limit]
-    
+
     next_cursor = rules[-1].id if has_next else None
-    
+
     return {
         "rules": [{
             "id": r.id,
@@ -150,14 +143,13 @@ async def create_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Create a new alert rule."""
     if not rule.conditions or len(rule.conditions) != 1:
         raise HTTPException(status_code=400, detail="Exactly one condition required")
-    
+
     import uuid
     if rule.tenant != current_user.tenant:
         raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
-    
+
     new_rule = AlertRule(
         id=uuid.uuid4().hex[:25],
         name=rule.name,
@@ -167,11 +159,11 @@ async def create_alert_rule(
         severity=rule.severity,
         conditions=[c.model_dump(exclude_none=True) for c in rule.conditions],
     )
-    
+
     session.add(new_rule)
     await session.commit()
     await session.refresh(new_rule)
-    
+
     return {"message": "Alert rule created", "createdRule": {
         "id": new_rule.id,
         "name": new_rule.name,
@@ -189,25 +181,24 @@ async def update_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Update an alert rule."""
     from pydantic import BaseModel
     from typing import Optional, List, Dict, Any
-    
+
     class AlertRuleUpdate(BaseModel):
         name: Optional[str] = None
         description: Optional[str] = None
         conditions: Optional[List[dict]] = None
         enabled: Optional[bool] = None
         severity: Optional[str] = None
-    
+
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant == current_user.tenant)
     )
     existing = result.scalar_one_or_none()
     if not existing:
         raise HTTPException(status_code=404, detail="Rule not found")
-    
-    # Check for duplicate name
+
+
     if rule.name and rule.name != existing.name:
         result = await session.execute(
             select(AlertRule).where(
@@ -218,14 +209,14 @@ async def update_alert_rule(
         )
         if result.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Rule with this name already exists")
-    
+
     update_data = rule.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(existing, key, value)
-    
+
     await session.commit()
     await session.refresh(existing)
-    
+
     return {"message": "Alert rule updated", "rule": {
         "id": existing.id,
         "name": existing.name,
@@ -243,17 +234,16 @@ async def toggle_rule_enabled(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Enable or disable an alert rule."""
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant == current_user.tenant)
     )
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
-    
+
     rule.enabled = enabled
     await session.commit()
-    
+
     return {"message": f"Rule {'enabled' if enabled else 'disabled'}", "rule": {
         "id": rule.id,
         "enabled": rule.enabled,
@@ -266,15 +256,14 @@ async def delete_alert_rule(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Delete an alert rule."""
     result = await session.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant == current_user.tenant)
     )
     rule = result.scalar_one_or_none()
     if not rule:
         return {"success": False, "message": "Rule not found"}
-    
-    # Capture rule data before deletion for response
+
+
     rule_data = {
         "id": rule.id,
         "name": rule.name,
@@ -282,15 +271,15 @@ async def delete_alert_rule(
         "enabled": rule.enabled,
         "severity": rule.severity,
     }
-    
-    # Check if rule has triggered alerts
+
+
     alert_count = await session.execute(
         select(func.count()).select_from(Alert).where(Alert.rule_id == rule_id)
     )
     if alert_count.scalar() > 0:
         return {"success": False, "message": "Cannot delete rule with existing alerts"}
-    
+
     await session.delete(rule)
     await session.commit()
-    
+
     return {"success": True, "message": "Alert rule deleted", "rule": rule_data}

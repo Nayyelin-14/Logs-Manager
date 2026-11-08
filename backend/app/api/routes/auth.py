@@ -18,21 +18,22 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
 )
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_admin
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.models.enums import Role
 import datetime
 
 settings = get_settings()
 router = APIRouter()
 
-# Dedicated limiter for the login route (avoids circular import with app.main).
-# Uses Redis storage so rate limits are shared across workers/containers.
-# Rate limit exceptions are handled by the global handler registered in main.py.
+
+
+
 login_limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
 
-# Per-username failed attempt tracking (in-memory, resets on restart).
-# Key: email -> {"count": int, "first_failed_at": float}
+
+
 _FAILED_LOGIN_TRACKER: dict[str, dict] = {}
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -54,24 +55,19 @@ class LoginRequest(BaseModel):
 
 
 def _is_locked_out(email: str) -> tuple[bool, int]:
-    """Check if an email is locked out due to repeated failures.
-
-    Returns (locked, retry_after_seconds).
-    """
     entry = _FAILED_LOGIN_TRACKER.get(email)
     if not entry:
         return False, 0
     elapsed = time.time() - entry["first_failed_at"]
     if entry["count"] >= settings.LOGIN_LOCKOUT_ATTEMPTS and elapsed < settings.LOGIN_LOCKOUT_MINUTES * 60:
         return True, int(settings.LOGIN_LOCKOUT_MINUTES * 60 - elapsed)
-    # Lockout expired: reset tracker
+
     if elapsed >= settings.LOGIN_LOCKOUT_MINUTES * 60:
         _FAILED_LOGIN_TRACKER.pop(email, None)
     return False, 0
 
 
 def _record_failed_login(email: str):
-    """Record a failed login attempt for an email."""
     now = time.time()
     entry = _FAILED_LOGIN_TRACKER.get(email)
     if not entry:
@@ -81,7 +77,6 @@ def _record_failed_login(email: str):
 
 
 def _clear_failed_logins(email: str):
-    """Clear failed login tracker for an email on successful login."""
     _FAILED_LOGIN_TRACKER.pop(email, None)
 
 
@@ -122,7 +117,7 @@ async def login(
 ):
     email = login_request.email
 
-    # Per-username lockout check (before DB lookup to avoid user enumeration)
+
     locked, retry_after = _is_locked_out(email)
     if locked:
         return JSONResponse(
@@ -144,9 +139,15 @@ async def login(
                 headers={"Retry-After": str(retry_after)},
             )
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     if user.status != "ACTIVE":
         raise HTTPException(status_code=403, detail="This account is not active.")
+
+    if user.tenant:
+        tenant_result = await session.execute(select(Tenant).where(Tenant.name == user.tenant))
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant and not tenant.is_active:
+            raise HTTPException(status_code=403, detail="Tenant is not active.")
 
     if user.password and not verify_password(login_request.password, user.password):
         _record_failed_login(email)
@@ -220,3 +221,23 @@ async def auth_check(
             "status": user.status,
         },
     }
+
+
+@router.get("/users", response_model=dict)
+async def list_users_for_admin(
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    result = await session.execute(select(User).order_by(User.id.desc()))
+    users = result.scalars().all()
+    users_payload = [{
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "role": u.role,
+        "tenant": u.tenant,
+        "status": u.status,
+        "createAt": u.create_at.isoformat() if u.create_at else None,
+        "updatedAt": u.updated_at.isoformat() if u.updated_at else None,
+    } for u in users]
+    return {"usersList": users_payload, "users": users_payload}

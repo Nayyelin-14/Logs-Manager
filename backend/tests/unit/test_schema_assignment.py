@@ -1,5 +1,3 @@
-"""Unit tests for NormalizedEvent Pydantic model validation - standalone version."""
-
 from datetime import datetime, timezone
 
 import pytest
@@ -8,10 +6,8 @@ from app.schemas.normalized_event import NormalizedEvent, Source, Action, Outcom
 
 
 class TestNormalizedEventAssignmentSamples:
-    """Tests using the assignment sample events (4.1-4.7)."""
 
     def test_firewall_syslog_sample(self):
-        """Test sample 4.1: Firewall/Syslog."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 12, 44, 56, tzinfo=timezone.utc),
             tenant="demoA",
@@ -48,7 +44,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.severity == 2
 
     def test_network_router_syslog_sample(self):
-        """Test sample 4.2: Network Router."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 13, 1, 2, tzinfo=timezone.utc),
             tenant="demoA",
@@ -71,7 +66,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.action == Action.alert
 
     def test_api_login_failed_sample(self):
-        """Test sample 4.3: HTTP API app_login_failed."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 7, 20, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -100,7 +94,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.user == "alice"
 
     def test_crowdstrike_malware_sample(self):
-        """Test sample 4.4: CrowdStrike malware_detected."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 8, 0, 0, tzinfo=timezone.utc),
             tenant="demoA",
@@ -131,7 +124,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.action_detail == "quarantine"
 
     def test_aws_cloudtrail_sample(self):
-        """Test sample 4.5: AWS CloudTrail CreateUser."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 9, 10, 0, tzinfo=timezone.utc),
             tenant="demoB",
@@ -160,7 +152,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.cloud_region == "ap-southeast-1"
 
     def test_m365_user_logged_in_sample(self):
-        """Test sample 4.6: Microsoft 365 UserLoggedIn."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 10, 5, 0, tzinfo=timezone.utc),
             tenant="demoB",
@@ -189,7 +180,6 @@ class TestNormalizedEventAssignmentSamples:
         assert event.action == Action.login
 
     def test_ad_logon_failed_sample(self):
-        """Test sample 4.7: Microsoft AD Windows Security 4625."""
         event = NormalizedEvent(
             ts=datetime(2025, 8, 20, 11, 11, 11, tzinfo=timezone.utc),
             tenant="demoA",

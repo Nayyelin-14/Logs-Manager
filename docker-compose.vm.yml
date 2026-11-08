@@ -1,52 +1,32 @@
-# docker-compose.vm.yml — Production VM / SaaS deployment (standalone)
-#
-# Usage:
-#   cp .env.example .env
-#   # Edit .env — set all required secrets (see .env.example comments)
-#   docker compose -p lms_vm -f docker-compose.vm.yml up -d --build
-#
-# Security posture:
-#   - Caddy exposes only 80 (HTTP->HTTPS redirect) and 443 (HTTPS).
-#   - Ingest exposes 514 UDP/TCP — restrict via cloud firewall to trusted syslog sources.
-#   - PostgreSQL, Redis, Backend, Frontend, Worker, Webhook-receiver have NO public ports.
-#   - All secrets are required (:? syntax) and must be set in .env.
+name: lms_vm
 
 services:
-  ###############################################################################
-  # Caddy — reverse proxy, TLS termination (Let's Encrypt), serves frontend
-  ###############################################################################
   caddy:
-    image: caddy:2-alpine
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be set}
     restart: unless-stopped
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
+      - "0.0.0.0:${HTTP_PORT:-80}:80"
+      - "0.0.0.0:${HTTPS_PORT:-443}:443"
+      - "0.0.0.0:${HTTPS_PORT:-443}:443/udp"
     environment:
       - DOMAIN=${DOMAIN:?DOMAIN must be set for SaaS deployment}
+      - CADDY_EMAIL=${CADDY_EMAIL:-admin@example.com}
     depends_on:
       backend:
         condition: service_healthy
-      frontend:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/metrics"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
       interval: 10s
       timeout: 3s
       retries: 5
     networks:
       - lms
 
-  ###############################################################################
-  # Backend — FastAPI API (internal only, accessed via Caddy)
-  ###############################################################################
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set}
     restart: unless-stopped
     environment:
       - APP_ENV=production
@@ -103,13 +83,8 @@ services:
     networks:
       - lms
 
-  ###############################################################################
-  # Ingest — syslog UDP/TCP listener (5514 inside container, 514 on host)
-  ###############################################################################
   ingest:
-    build:
-      context: .
-      dockerfile: ingest/Dockerfile
+    image: ${INGEST_IMAGE:?INGEST_IMAGE must be set}
     restart: unless-stopped
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -133,13 +108,8 @@ services:
     networks:
       - lms
 
-  ###############################################################################
-  # Worker — alert sweep (30s) + retention maintenance (hourly)
-  ###############################################################################
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be set}
     restart: unless-stopped
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -155,18 +125,15 @@ services:
     networks:
       - lms
 
-  ###############################################################################
-  # Database — PostgreSQL 16 (internal only, no public port)
-  ###############################################################################
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logs}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=${POSTGRES_DB:-logs_manager}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_v18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logs} -d ${POSTGRES_DB:-logs_manager}"]
       interval: 5s
@@ -175,11 +142,8 @@ services:
     networks:
       - lms
 
-  ###############################################################################
-  # Redis — cache + email queue (internal only, no public port)
-  ###############################################################################
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -192,13 +156,8 @@ services:
     networks:
       - lms
 
-  ###############################################################################
-  # Webhook receiver — logs incoming alert webhooks (internal only)
-  ###############################################################################
   webhook-receiver:
-    build:
-      context: .
-      dockerfile: ingest/Dockerfile
+    image: ${INGEST_IMAGE:?INGEST_IMAGE must be set}
     restart: unless-stopped
     environment:
       - PORT=8000
@@ -207,33 +166,17 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    networks:
-      - lms
-
-  ###############################################################################
-  # Frontend — React UI (built with nginx, internal only, served via Caddy)
-  ###############################################################################
-  frontend:
-    image: logs-manager-frontend:local
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: /api
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
-    depends_on:
-      backend:
-        condition: service_healthy
+      start_period: 10s
     networks:
       - lms
 
 volumes:
-  pgdata:
+  pgdata_v18:
   redisdata:
   caddy_data:
   caddy_config:

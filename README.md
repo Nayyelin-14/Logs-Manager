@@ -33,7 +33,7 @@ need Docker PostgreSQL/Redis and a running Compose stack.
 | `/docs/` | `docs/` | Architecture, setup guides, schema, demo guide |
 | `/samples/` | `samples/` | Sample log files + sender scripts (send_syslog.sh, post_logs.py, simulator.py) |
 | `/tests/` | `tests/` + `backend/tests/` | Acceptance check + pytest suite |
-| `docker-compose.yml` | `docker-compose.yml` | Root compose: caddy, backend, ingest, worker, db, redis, webhook-receiver, frontend |
+| `docker-compose.yml` | `docker-compose.yml` | Root compose: caddy (serves the built SPA), backend, ingest, worker, db, redis, webhook-receiver |
 | `.env.example` | `.env.example` | All required settings |
 | `Makefile` | `Makefile` | up, down, seed, demo, test, lint, verify, reset |
 
@@ -123,13 +123,15 @@ cd backend && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
 | Service | Host Port | Internal Port |
 |---|---|---|
 | Caddy HTTP | 127.0.0.1:80 | 80 |
-| Caddy HTTPS | 127.0.0.1:443 | 443 |
+| Caddy HTTPS | 127.0.0.1:443 | 443 (TCP/UDP) |
 | Backend API | 127.0.0.1:4500 | 4500 |
 | PostgreSQL | 127.0.0.1:55432 | 5432 |
 | Redis | 127.0.0.1:56379 | 6379 |
 | Syslog (UDP/TCP) | 127.0.0.1:514 | 5514 |
 | Webhook receiver | 127.0.0.1:8008 | 8000 |
-| Frontend | served via Caddy | 80 |
+
+The React SPA is built into the Caddy image and served by Caddy at `/`; there is
+no separate frontend container or nginx process.
 
 Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 

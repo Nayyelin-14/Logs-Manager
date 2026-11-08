@@ -1,5 +1,3 @@
-#!/bin/sh
-# Wait for PostgreSQL to be ready using asyncpg
 echo "Waiting for PostgreSQL at db:5432..."
 for i in $(seq 1 60); do
   python3 -c "

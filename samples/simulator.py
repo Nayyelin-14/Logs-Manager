@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Log simulator for the Logs Manager demo.
-
-Generates current-timestamp events for all 7 source types, including
-bruteforce attack patterns (>=8 failed logins from one IP within 60s).
-"""
 
 from __future__ import annotations
 
@@ -31,7 +26,6 @@ _SEQ = itertools.count(1)
 
 
 def _stamp_unique(event: dict) -> dict:
-    """Add a unique record marker so repeated identical-looking events never collide."""
     raw = event.get("raw")
     if not isinstance(raw, dict):
         raw = {}

@@ -6,7 +6,6 @@ from app.models.security_event import SecurityEvent
 
 
 def test_user_model_columns():
-    """Verify User model has all required columns (matching actual DB column names)."""
     cols = {c.name for c in User.__table__.columns}
     expected = {
         "id", "username", "email", "password", "role", "tenant",
@@ -16,7 +15,6 @@ def test_user_model_columns():
 
 
 def test_user_model_indexes():
-    """Verify User model has required indexes."""
     index_names = {ix.name for ix in User.__table__.indexes}
     expected = {
         "ix_User_tenant", "ix_User_role", "ix_User_create_at", "ix_User_status",
@@ -25,7 +23,6 @@ def test_user_model_indexes():
 
 
 def test_alert_rule_model_columns():
-    """Verify AlertRule model has all required columns."""
     cols = {c.name for c in AlertRule.__table__.columns}
     expected = {
         "id", "name", "description", "tenant", "conditions",
@@ -35,7 +32,6 @@ def test_alert_rule_model_columns():
 
 
 def test_alert_model_columns():
-    """Verify Alert model has all required columns."""
     cols = {c.name for c in Alert.__table__.columns}
     expected = {
         "id", "rule_id", "tenant", "description", "triggeredAt",
@@ -45,7 +41,6 @@ def test_alert_model_columns():
 
 
 def test_security_event_model_columns():
-    """Verify SecurityEvent model has all required columns."""
     cols = {c.name for c in SecurityEvent.__table__.columns}
     expected = {
         "id", "@timestamp", "tenant", "source", "vendor", "product",
@@ -62,13 +57,11 @@ def test_security_event_model_columns():
 
 
 def test_security_event_ingested_at_column():
-    """Verify SecurityEvent has ingested_at column."""
     cols = {c.name for c in SecurityEvent.__table__.columns}
     assert "ingested_at" in cols
 
 
 def test_email_notification_model_columns():
-    """Verify EmailNotification model has all required columns."""
     cols = {c.name for c in EmailNotification.__table__.columns}
     expected = {
         "id", "alertId", "emailType", "tenant", "recipientEmail",
@@ -79,13 +72,11 @@ def test_email_notification_model_columns():
 
 
 def test_email_notification_unique_constraint():
-    """Verify EmailNotification has unique constraint on alertId, emailType, recipientEmail."""
     constraints = {c.name for c in EmailNotification.__table__.constraints}
     assert "uq_email_notification_alert_type_recipient" in constraints
 
 
 def test_table_names_match_prisma():
-    """Verify table names match Prisma schema."""
     assert User.__tablename__ == "User"
     assert AlertRule.__tablename__ == "alert_rules"
     assert Alert.__tablename__ == "alerts"

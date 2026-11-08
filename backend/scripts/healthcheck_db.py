@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Tiny DB healthcheck used by container HEALTHCHECK directives."""
 import asyncio
 import sys
 

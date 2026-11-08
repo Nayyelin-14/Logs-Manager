@@ -1,12 +1,3 @@
-"""events_schema
-
-Revision ID: b2c3d4e5f6g7
-Revises: a1b2c3d4e5f6
-Create Date: 2026-11-05
-
-Create the events table for normalized log events.
-This matches the Event model in app/models/events.py.
-"""
 from typing import Sequence, Union
 
 from alembic import op

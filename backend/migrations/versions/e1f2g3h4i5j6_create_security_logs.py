@@ -1,12 +1,3 @@
-"""create security_logs table
-
-Revision ID: e1f2g3h4i5j6
-Revises: 3991f2b40841
-Create Date: 2026-11-06
-
-Create the security_logs table for normalized security events.
-This is the legacy table that co-exists with the events table.
-"""
 from typing import Sequence, Union
 
 from alembic import op
@@ -105,8 +96,8 @@ def downgrade() -> None:
     op.drop_index('ix_security_logs_tenant_timestamp', table_name='security_logs')
     op.drop_index('ix_security_logs_timestamp', table_name='security_logs')
     op.drop_index('ix_security_logs_gin_tsvector', table_name='security_logs')
-    
+
     op.drop_table('security_logs')
-    
+
     op.execute('DROP TYPE IF EXISTS "Source"')
     op.execute('DROP TYPE IF EXISTS "Action"')

@@ -1,4 +1,3 @@
-"""Functional end-to-end tests against the real FastAPI app + test database."""
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -12,7 +11,6 @@ def _login(client, email: str, password: str):
 
 
 class TestFunctional:
-    """End-to-end functional verification."""
 
     def test_admin_login_and_sees_all_tenants(self):
         client = TestClient(app)

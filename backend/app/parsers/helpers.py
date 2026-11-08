@@ -1,14 +1,7 @@
-"""
-Normalization Helper Functions
-
-Shared utilities for parsing and normalizing log events.
-"""
-
 from typing import Any, Dict, List, Optional, TypedDict
 
 
 class SecurityEventInput(TypedDict, total=False):
-    """Input structure for normalized security events."""
     login_type: Optional[int]
     tenant: Optional[str]
     source: str
@@ -52,12 +45,10 @@ class SecurityEventInput(TypedDict, total=False):
 
 
 def as_record(value: Any) -> Optional[Dict[str, Any]]:
-    """Convert value to dict if it's a dict-like object."""
     return value if isinstance(value, dict) and not isinstance(value, list) else None
 
 
 def pick(source: Any, paths: List[str]) -> Any:
-    """Try multiple paths to extract a value from a nested dict."""
     for path in paths:
         parts = path.split(".")
         value = source
@@ -73,7 +64,6 @@ def pick(source: Any, paths: List[str]) -> Any:
 
 
 def safe_string(value: Any) -> Optional[str]:
-    """Safely convert value to string."""
     if isinstance(value, str):
         return value
     if isinstance(value, (int, float, bool)):
@@ -82,7 +72,6 @@ def safe_string(value: Any) -> Optional[str]:
 
 
 def safe_number(value: Any) -> Optional[int]:
-    """Safely convert value to integer."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, str) and value.strip():
@@ -94,15 +83,14 @@ def safe_number(value: Any) -> Optional[int]:
 
 
 def safe_severity(value: Any) -> Optional[int]:
-    """Convert value to severity (0-10 scale)."""
     numeric = safe_number(value)
     if numeric is not None:
         return max(0, min(10, numeric))
-    
+
     key = safe_string(value).lower() if safe_string(value) else None
     if not key:
         return None
-    
+
     severity_map = {
         "info": 2, "informational": 2, "low": 2,
         "medium": 5, "moderate": 5, "warning": 5,
@@ -113,40 +101,37 @@ def safe_severity(value: Any) -> Optional[int]:
 
 
 def safe_timestamp(value: Any) -> str:
-    """Convert various timestamp formats to ISO 8601 string."""
     if value is None:
         from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
-    
+
     if isinstance(value, (int, float)):
         if value < 1e12:
             value = value * 1000
         from datetime import datetime, timezone
         return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
-    
+
     from datetime import datetime
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
     except (ValueError, AttributeError):
         pass
-    
+
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
 
 def safe_tags(value: Any) -> List[str]:
-    """Convert value to list of string tags."""
     if isinstance(value, list):
         return [str(tag) for tag in value]
     return []
 
 
 def get_firewall_event_type(action: Any) -> str:
-    """Determine firewall event type from action."""
     action_str = safe_string(action).upper() if safe_string(action) else None
     if not action_str:
         return "network_traffic"
-    
+
     if action_str in ["DENY", "BLOCK", "DROP", "REJECT"]:
         return "firewall_deny"
     elif action_str in ["ALLOW", "PERMIT", "ACCEPT", "PASS"]:
@@ -155,7 +140,6 @@ def get_firewall_event_type(action: Any) -> str:
 
 
 def map_aws_verb(event_name: Optional[str]) -> Optional[str]:
-    """Map AWS event name to action."""
     if not event_name:
         return None
     if event_name.startswith("Create"):
@@ -170,7 +154,6 @@ def map_aws_verb(event_name: Optional[str]) -> Optional[str]:
 
 
 def map_m365_action(operation: Optional[str]) -> Optional[str]:
-    """Map M365 operation to action."""
     if not operation:
         return None
     if "LogIn" in operation or "SignIn" in operation or "LoggedIn" in operation:
@@ -185,7 +168,6 @@ def map_m365_action(operation: Optional[str]) -> Optional[str]:
 
 
 def map_ad_event_type(event_id: Optional[int]) -> Optional[str]:
-    """Map Windows Event ID to event type."""
     if event_id is None:
         return None
     mapping = {
@@ -199,7 +181,6 @@ def map_ad_event_type(event_id: Optional[int]) -> Optional[str]:
 
 
 def map_ad_action(event_id: Optional[int]) -> Optional[str]:
-    """Map Windows Event ID to action."""
     if event_id is None:
         return None
     mapping = {
@@ -221,65 +202,42 @@ def determine_outcome(
     event_id: Optional[int],
     source: Optional[str] = None
 ) -> str:
-    """
-    Determine the outcome (success/failure/unknown) from event data.
-    
-    Precedence rules:
-    1. Explicit status field (if recognized) takes highest priority
-    2. Event ID for authentication events (4624→success, 4625→failure)
-    3. Canonical event type (ad_logon_failed, login_failed, etc.)
-    4. Event type string (contains "failed"/"failure"/"success"/"succeeded")
-    5. Action field for authentication events
-    6. Default: unknown
-    
-    Args:
-        event_type: Original event type from source
-        canonical_event_type: Resolved canonical event type
-        status: Status field from event (e.g., "Success", "Failure")
-        action: Action field
-        severity: Severity value
-        event_id: Windows Event ID
-        source: Source system name
-    
-    Returns:
-        "success", "failure", or "unknown"
-    """
-    # 1. Check explicit status field first (highest priority)
+
     if status:
         status_lower = str(status).lower()
         if status_lower in ("success", "successful", "succeeded"):
             return "success"
         if "failure" in status_lower or "failed" in status_lower or "denied" in status_lower or "error" in status_lower:
-            # Exception: firewall actions with failure status -> unknown
+
             if source and str(source).lower() == "firewall":
                 return "unknown"
             return "failure"
-    
-    # 2. Event ID for authentication events
+
+
     if event_id is not None:
         if event_id == 4624:
             return "success"
         if event_id == 4625:
             return "failure"
-    
-    # 3. Canonical event types
+
+
     if canonical_event_type:
         canonical_lower = canonical_event_type.lower()
         if canonical_lower in ("ad_logon_success", "login_success", "logon_success", "userloggedin"):
             return "success"
         if canonical_lower in ("ad_logon_failed", "login_failed", "logon_failed"):
             return "failure"
-    
-    # 4. Event type string
+
+
     if event_type:
         event_lower = str(event_type).lower()
-        # Only check for failure if status was not provided or unrecognized
+
         if "failed" in event_lower or "failure" in event_lower:
             return "failure"
         if "success" in event_lower:
             return "success"
-    
-    # 5. Action field for authentication events  
+
+
     if action:
         action_lower = str(action).lower()
         if action_lower in ("failure", "error"):
@@ -287,6 +245,6 @@ def determine_outcome(
         if action_lower in ("login", "logout"):
             if source and str(source).lower() in ("firewall", "aws"):
                 return "unknown"
-    
-    # 6. Default: unknown
+
+
     return "unknown"

@@ -1,21 +1,261 @@
+import asyncio
+import os
+import pathlib
+import subprocess
+import sys
+
+BACKEND_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+IN_CONTAINER = os.path.exists("/.dockerenv")
+
+
+_DB_HOST = "db" if IN_CONTAINER else "localhost"
+_REDIS_HOST = "redis" if IN_CONTAINER else "localhost"
+
+
+_DB_PORT = int(os.environ.get("TEST_DB_PORT", "5432" if IN_CONTAINER else "55432"))
+_REDIS_PORT = int(os.environ.get("TEST_REDIS_PORT", "6379" if IN_CONTAINER else "56379"))
+
+
+_ADMIN_EMAIL = "admin@demo.local"
+_ADMIN_PASSWORD = os.environ.get("SEED_ADMIN_PASSWORD") or "TestPassword123!"
+_VIEWER_A_EMAIL = "viewerA@demo.local"
+_VIEWER_A_PASSWORD = os.environ.get("SEED_VIEWER_A_PASSWORD") or "TestViewerPassword1!"
+_VIEWER_B_EMAIL = "viewerB@demo.local"
+_VIEWER_B_PASSWORD = os.environ.get("SEED_VIEWER_B_PASSWORD") or "TestViewerBP@ssw0rd!"
+
+
+os.environ.setdefault("SEED_ADMIN_PASSWORD", _ADMIN_PASSWORD)
+os.environ.setdefault("SEED_VIEWER_A_PASSWORD", _VIEWER_A_PASSWORD)
+os.environ.setdefault("SEED_VIEWER_B_PASSWORD", _VIEWER_B_PASSWORD)
+
+
+_POSTGRES_USER = os.environ.get("POSTGRES_USER", "logs")
+_POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres_pass")
+_POSTGRES_DB = os.environ.get("POSTGRES_DB", "logs_manager")
+
+DEFAULT_TEST_DB = (
+    f"postgresql+asyncpg://{_POSTGRES_USER}:{_POSTGRES_PASSWORD}@{_DB_HOST}:{_DB_PORT}/logs_manager_test?sslmode=disable"
+)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DB)
+
+if "neon" in TEST_DATABASE_URL.lower():
+    raise RuntimeError(
+        f"Refusing to run tests against a Neon database ({TEST_DATABASE_URL}). "
+        "Use TEST_DATABASE_URL pointing at a disposable test database."
+    )
+db_name = TEST_DATABASE_URL.rsplit("/", 1)[-1].split("?")[0]
+if "test" not in db_name.lower():
+    raise RuntimeError(
+        f"Refusing to run tests against a production database ({db_name}). "
+        "TEST_DATABASE_URL must point at a disposable test database containing 'test' in the name."
+    )
+
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["REDIS_URL"] = f"redis://{_REDIS_HOST}:{_REDIS_PORT}"
+os.environ["SYSLOG_ENABLED"] = "false"
+os.environ["DATABASE_POOL"] = "null"
+
+
+ADMIN_EMAIL = _ADMIN_EMAIL
+ADMIN_PASSWORD = _ADMIN_PASSWORD
+VIEWER_A_EMAIL = _VIEWER_A_EMAIL
+VIEWER_A_PASSWORD = _VIEWER_A_PASSWORD
+VIEWER_B_EMAIL = _VIEWER_B_EMAIL
+VIEWER_B_PASSWORD = _VIEWER_B_PASSWORD
+
+
+
+DEMOA_API_KEY = "demoa-api-key-0123456789abcdef0123456789abcdef"
+DEMOB_API_KEY = "demob-api-key-0123456789abcdef0123456789abcdef"
+
+import pytest
+
+
+def _connection_kwargs(database: str) -> dict:
+    from urllib.parse import unquote, urlparse
+
+    url = urlparse(TEST_DATABASE_URL.replace("+asyncpg", ""))
+    return {
+        "host": url.hostname or _DB_HOST,
+        "port": url.port or 5432,
+        "user": unquote(url.username or _POSTGRES_USER),
+        "password": unquote(url.password or _POSTGRES_PASSWORD),
+        "database": database,
+        "ssl": False,
+    }
+
+
+def _ensure_database_exists() -> None:
+    import asyncpg
+
+    target = TEST_DATABASE_URL.replace("+asyncpg", "").split("?")[0].rsplit("/", 1)[-1]
+
+    async def _ensure() -> None:
+        try:
+            conn = await asyncpg.connect(**_connection_kwargs(target))
+        except asyncpg.InvalidCatalogNameError:
+            admin = await asyncpg.connect(**_connection_kwargs("postgres"))
+            try:
+                await admin.execute(f'CREATE DATABASE "{target}"')
+            finally:
+                await admin.close()
+            conn = await asyncpg.connect(**_connection_kwargs(target))
+        await conn.close()
+
+    asyncio.run(_ensure())
+
+
+def _run(args: list, *, check: bool = True) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["DATABASE_URL"] = TEST_DATABASE_URL
+    return subprocess.run(
+        args,
+        cwd=str(BACKEND_DIR),
+        env=env,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def test_database():
+    _ensure_database_exists()
+
+    if "test" in db_name.lower():
+        import asyncpg
+
+        async def _reset():
+            conn = await asyncpg.connect(**_connection_kwargs(database=db_name))
+            try:
+                await conn.execute("DROP SCHEMA public CASCADE")
+                await conn.execute("CREATE SCHEMA public")
+                await conn.execute(f"GRANT ALL ON SCHEMA public TO {_POSTGRES_USER}")
+            finally:
+                await conn.close()
+
+        asyncio.run(_reset())
+
+    result = _run([sys.executable, "-m", "alembic", "upgrade", "heads"], check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"alembic upgrade failed:\n{result.stdout}\n{result.stderr}")
+
+    result = _run([sys.executable, "scripts/seed_demo_data.py"], check=False)
+    output = f"{result.stdout}\n{result.stderr}"
+    if result.returncode != 0 or "Seed error" in output:
+        raise RuntimeError(f"seed_demo_data failed:\n{output}")
+
+    yield
+
+
 @pytest.fixture()
 def client():
-    """Test client with the test-only flagged route registered."""
     from fastapi import Depends, FastAPI
     from fastapi.testclient import TestClient
     from app.main import app
     from app.api.routes.health import require_feature
 
-    # Create a test-only app that includes the health router plus a
-    # test-only flagged route. This route is NOT registered in the
-    # production app, so it only exists during tests.
     test_app = FastAPI()
     test_app.include_router(app.router)
 
     @test_app.get("/features/test-flagged")
     async def test_flagged_route(_=Depends(require_feature("test_flag"))):
-        """Test-only route behind FEATURE_TEST_FLAG_ENABLED."""
         return {"status": "ok", "feature": "test_flag"}
 
     with TestClient(test_app) as test_client:
         yield test_client
+
+
+def login(client, email: str, password: str):
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, f"login failed: {response.status_code} {response.text}"
+    return response
+
+
+@pytest.fixture()
+def admin_client(client):
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    return client
+
+
+@pytest.fixture()
+def viewer_a_client(client):
+    login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
+    return client
+
+
+@pytest.fixture()
+def viewer_b_client(client):
+    login(client, VIEWER_B_EMAIL, VIEWER_B_PASSWORD)
+    return client
+
+
+@pytest.fixture()
+def api_key_demoa(test_database):
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import update
+    import hashlib
+
+    async def _setup():
+        key_hash = hashlib.sha256(DEMOA_API_KEY.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant).where(Tenant.name == "demoa").values(api_key_hash=key_hash, is_active=True)
+            )
+            await session.commit()
+
+    asyncio.run(_setup())
+    return DEMOA_API_KEY
+
+
+@pytest.fixture()
+def api_key_demob(test_database):
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import update
+    import hashlib
+
+    async def _setup():
+        key_hash = hashlib.sha256(DEMOB_API_KEY.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant).where(Tenant.name == "demob").values(api_key_hash=key_hash, is_active=True)
+            )
+            await session.commit()
+
+    asyncio.run(_setup())
+    return DEMOB_API_KEY
+
+
+@pytest.fixture()
+def api_key(api_key_demoa):
+    return api_key_demoa
+
+
+@pytest.fixture()
+def feature_test_flag_enabled():
+    os.environ["FEATURE_TEST_FLAG_ENABLED"] = "true"
+    try:
+        yield
+    finally:
+        os.environ.pop("FEATURE_TEST_FLAG_ENABLED", None)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    from app.api.routes.auth import _FAILED_LOGIN_TRACKER, login_limiter
+
+    _FAILED_LOGIN_TRACKER.clear()
+    try:
+        login_limiter.reset()
+    except Exception:
+        pass
+    yield
+    _FAILED_LOGIN_TRACKER.clear()
+    try:
+        login_limiter.reset()
+    except Exception:
+        pass

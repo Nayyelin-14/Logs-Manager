@@ -1,13 +1,3 @@
-"""
-Idempotency and failure-isolation tests for alerting.
-
-(a) create_or_update_alert called twice with the same dedupe_key yields
-    one alert row with count updated (never a UniqueViolation).
-(b) A forced IntegrityError in one rule does not stop other rules from
-    evaluating (evaluate_all_rules continues).
-(c) seed_demo_data.py runs twice without error and creates no duplicates.
-"""
-
 import asyncio
 import os
 import subprocess
@@ -71,8 +61,6 @@ async def _make_tenant(session, name="demoa"):
 
 @pytest.mark.asyncio
 async def test_create_or_update_alert_twice_same_dedupe_key():
-    """(a) Calling create_or_update_alert twice with the same dedupe_key
-    yields one alert row with count updated, never an exception."""
     async with async_session_maker() as session:
         await _make_tenant(session)
         rule = await _make_rule(session)
@@ -103,16 +91,16 @@ async def test_create_or_update_alert_twice_same_dedupe_key():
         assert result2["dedupe_key"] == dedupe_key
         assert result1["id"] == result2["id"], "Same alert row expected"
         assert result1["count"] == 3, f"First count should be 3, got {result1['count']}"
-        # Same evidence_ids re-sent: count must NOT double-count (idempotent).
+
         assert result2["count"] == 3, f"Second count should stay 3 (no new events), got {result2['count']}"
 
-        # New event IDs on same dedupe_key: count increases by new IDs only.
+
         kwargs2 = dict(kwargs, evidence_ids=["e3", "e4"])
         result3 = await create_or_update_alert(**kwargs2)
         assert result3["id"] == result1["id"], "Same alert row for new events too"
         assert result3["count"] == 5, f"Third count should be 5 (3+2 new), got {result3['count']}"
 
-        # Verify exactly one alert row exists for this dedupe_key
+
         alerts = await session.execute(
             select(Alert).where(Alert.dedupe_key == dedupe_key)
         )
@@ -123,9 +111,6 @@ async def test_create_or_update_alert_twice_same_dedupe_key():
 
 @pytest.mark.asyncio
 async def test_integrity_error_in_one_rule_does_not_stop_others():
-    """(b) A forced IntegrityError in one rule does not stop other rules
-    from evaluating. evaluate_rule catches the IntegrityError, rolls back,
-    returns [], and subsequent rules still evaluate."""
     async with async_session_maker() as session:
         await _make_tenant(session, "demoa")
         rule_a = await _make_rule(session, "demoa", "rule-a")
@@ -168,21 +153,21 @@ async def test_integrity_error_in_one_rule_does_not_stop_others():
                 "app.services.alerting.evaluator.create_or_update_alert",
                 side_effect=fake_create_or_update,
             ):
-                # Rule A: create_or_update_alert raises IntegrityError ->
-                # evaluate_rule catches it, rolls back, returns [].
+
+
                 _add_events("1.1.1.1")
                 await session.flush()
                 result_a = await evaluate_rule(session, rule_a, NOW)
                 assert result_a == []
                 assert results["a"] >= 1
 
-                # Remove rule A's events so rule B's query sees only its own groups.
+
                 await session.execute(
                     text("DELETE FROM events WHERE src_ip = '1.1.1.1'")
                 )
                 await session.flush()
 
-                # Re-flush events for rule B.
+
                 _add_events("2.2.2.2")
                 await session.flush()
                 result_b = await evaluate_rule(session, rule_b, NOW)
@@ -195,9 +180,9 @@ def _run_seed():
     script = os.path.join(backend_dir, "scripts", "seed_demo_data.py")
 
     env = dict(os.environ)
-    # Always point the subprocess at the local test database, regardless of
-    # any DATABASE_URL the parent test process may have set.
-    # Inside a container, db is reachable at db:5432; on the host at localhost:55432.
+
+
+
     db_host = "db" if os.path.exists("/.dockerenv") else "localhost"
     db_port = "5432" if os.path.exists("/.dockerenv") else "55432"
     env["DATABASE_URL"] = f"postgresql+asyncpg://logs:postgres_pass@{db_host}:{db_port}/logs_manager_test?sslmode=disable"
@@ -216,7 +201,6 @@ def _run_seed():
 
 
 def test_seed_demo_data_runs_twice():
-    """(c) Running seed_demo_data.py twice succeeds without error."""
     for run in (1, 2):
         result = _run_seed()
         output = f"{result.stdout}\n{result.stderr}"
@@ -226,8 +210,6 @@ def test_seed_demo_data_runs_twice():
 
 
 def test_seed_twice_no_duplicate_tenants_users_alerts():
-    """(c continued) After running seed twice, no duplicate tenants,
-    users, or alert dedupe_keys exist."""
     for _ in range(2):
         result = _run_seed()
         assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"

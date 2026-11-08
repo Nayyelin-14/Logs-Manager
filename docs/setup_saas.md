@@ -5,55 +5,39 @@ This guide covers deploying Log Manager to a cloud VM with HTTPS/TLS.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Internet (HTTPS)                         │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│              Caddy Reverse Proxy (port 443/80)            │
-│  - Automatic Let's Encrypt certificates                   │
-│  - HTTP→HTTPS redirect                                     │
-│  - /api/* → backend:4500                                   │
-│  - /static/* → frontend (nginx)                            │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-    ┌──────────────────┴──────────────────┐
-    │                                     │
-    ▼                                     ▼
-┌──────────────┐                  ┌─────────────┐
-│  Backend     │                  │  Frontend   │
-│  FastAPI     │                  │  (nginx)    │
-│  port 4500   │                  │  port 80    │
-│  (no public  │                  │  (no public │
-│   port)      │                  │   port)     │
-└──────────────┘                  └─────────────┘
-       │                                 │
-       │                                 ▼
-       │                         ┌─────────────┐
-       │                         │   Assets    │
-       │                         │  (built-in) │
-       │                         └─────────────┘
-       │
-       ▼
-┌─────────────────────────────────────┐
-│  PostgreSQL (port 5432)             │
-│  - Persistent volume                │
-│  - Daily backups recommended      │
-│  - No public port                   │
-└─────────────────────────────────────┘
-
-┌─────────────────────────────────────┐
-│  Redis (port 6379)                  │
-│  - Cache + email queue              │
-│  - No public port                   │
-└─────────────────────────────────────┘
-
-┌─────────────────────────────────────┐
-│  Syslog Ingest (port 514)           │
-│  - Public, but IP-restricted via    │
-│    cloud firewall                   │
-└─────────────────────────────────────┘
+                    Internet (HTTPS)
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│  Caddy — the only public web server (ports 80/443)          │
+│  - Automatic Let's Encrypt certificates                     │
+│  - HTTP→HTTPS redirect                                      │
+│  - Serves the built React SPA from /srv + SPA fallback      │
+│  - /api/*, /ingest*, /docs*, /healthz, /ready → backend     │
+│  - /webhook → webhook-receiver                              │
+└───────────────┬─────────────────────────────┬───────────────┘
+                │                             │
+                ▼                             ▼
+       ┌──────────────────┐          ┌──────────────────┐
+       │ Backend FastAPI  │          │ Webhook receiver │
+       │ port 4500        │          │ port 8000        │
+       │ (internal only)  │          │ (internal only)  │
+       └────────┬─────────┘          └──────────────────┘
+                │
+       ┌────────┴─────────┐
+       ▼                  ▼
+┌──────────────┐   ┌──────────────┐
+│ PostgreSQL   │   │ Redis        │
+│ (internal)   │   │ (internal)   │
+└──────────────┘   └──────────────┘
 ```
+
+The static frontend assets are baked into the same image as Caddy
+(`logs-manager-frontend`). There is no separate frontend container and no nginx
+process in production.
+
+Syslog ingestion (UDP/TCP 514) is published directly by the ingest service and
+should be restricted with the cloud firewall.
+
 
 ## Prerequisites
 
@@ -159,9 +143,11 @@ DOMAIN=logs.example.com
 CADDY_EMAIL=admin@example.com
 ```
 
-The existing `Caddyfile` uses `{$DOMAIN:localhost}` — when `DOMAIN` is set,
-Caddy uses that domain for automatic TLS. When unset (local mode), it falls back
-to a self-signed internal CA certificate.
+The `Caddyfile` uses `{$DOMAIN:localhost}` — when `DOMAIN` is set, Caddy uses
+that domain for automatic TLS. When unset (local mode), it falls back to a
+self-signed internal CA certificate. The Caddyfile and the built SPA are baked
+into the `logs-manager-frontend` image, so the Caddy container needs only the
+`caddy_data` and `caddy_config` volumes (TLS/ACME state) at runtime.
 
 ### 6. Deploy Application Stack
 
@@ -171,32 +157,13 @@ to a self-signed internal CA certificate.
 # INGEST_API_KEY, SEED_ADMIN_PASSWORD, SEED_VIEWER_A_PASSWORD,
 # SEED_VIEWER_B_PASSWORD, CORS_ORIGINS, ALLOWED_HOSTS
 
-# Deploy with standalone VM Compose file (project: lms_vm)
-docker compose -p lms_vm -f docker-compose.vm.yml up -d --build
+# Deploy with standalone VM Compose file (project: lms_vm).
+# Images are resolved by digest by the deploy workflow; no --build on the VM.
+docker compose -p lms_vm -f docker-compose.vm.yml up -d
 ```
 
-Alternatively, use the provided docker-compose.yml with modifications:
-
-```yaml
-# Add to docker-compose.yml under services:
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - backend
-      - frontend
-
-volumes:
-  caddy_data:
-  caddy_config:
-```
+For a local appliance build (including the Caddy/frontend image), use the root
+`docker-compose.yml` with `make up` or `docker compose -p lms_local -f docker-compose.yml up -d --build`.
 
 ### 7. Wait for Certificates
 

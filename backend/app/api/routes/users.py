@@ -1,9 +1,3 @@
-"""
-User Management API Routes
-
-User CRUD operations (Admin only).
-"""
-
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,9 +33,8 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """List all users (Admin only)."""
     tenant = current_user.tenant
-    
+
     query = select(User).where(User.tenant == tenant)
     if search:
         search_term = f"%{search}%"
@@ -49,31 +42,34 @@ async def list_users(
             (User.username.ilike(f"%{search}%")) |
             (User.email.ilike(f"%{search}%"))
         )
-    
-    query = query.order_by(desc(User.create_at)).limit(limit + 1)
+
+    query = query.order_by(desc(User.id)).limit(limit + 1)
     if cursor:
         query = query.where(User.id > cursor)
-    
+
     result = await session.execute(query)
     users = result.scalars().all()
-    
+
     has_next = len(users) > limit
     if has_next:
         users = users[:limit]
-    
+
     next_cursor = users[-1].id if has_next else None
-    
+
+    users_payload = [{
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "role": u.role,
+        "tenant": u.tenant,
+        "status": u.status,
+        "createAt": u.create_at.isoformat() if u.create_at else None,
+        "updatedAt": u.updated_at.isoformat() if u.updated_at else None,
+    } for u in users]
+
     return {
-        "usersList": [{
-            "id": u.id,
-            "username": u.username,
-            "email": u.email,
-            "role": u.role,
-            "tenant": u.tenant,
-            "status": u.status,
-            "createAt": u.create_at.isoformat() if u.create_at else None,
-            "updatedAt": u.updated_at.isoformat() if u.updated_at else None,
-        } for u in users],
+        "usersList": users_payload,
+        "users": users_payload,
         "newCursor": next_cursor,
     }
 
@@ -87,18 +83,17 @@ async def get_users_infinite(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Infinite scroll users with filters (Admin only)."""
     tenant = current_user.tenant
-    
+
     query_stmt = select(User).where(User.tenant == tenant)
-    
+
     if filters:
         if filters.get("role"):
             query_stmt = query_stmt.where(User.role == filters["role"])
         if filters.get("status"):
             query_stmt = query_stmt.where(User.status == filters["status"])
         if filters.get("date"):
-            # Parse date filter
+
             pass
         if filters.get("search"):
             search_term = f"%{filters['search']}%"
@@ -106,20 +101,20 @@ async def get_users_infinite(
                 (User.username.ilike(f"%{filters['search']}%")) |
                 (User.email.ilike(f"%{filters['search']}%"))
             )
-    
-    query_stmt = query_stmt.order_by(desc(User.create_at)).limit(limit + 1)
+
+    query_stmt = query_stmt.order_by(desc(User.id)).limit(limit + 1)
     if cursor:
         query_stmt = query_stmt.where(User.id > cursor)
-    
+
     result = await session.execute(query_stmt)
     users = result.scalars().all()
-    
+
     has_next = len(users) > limit
     if has_next:
         users.pop()
-    
+
     next_cursor = users[-1].id if has_next else None
-    
+
     return {
         "usersList": [{
             "id": u.id,
@@ -147,16 +142,15 @@ async def create_user(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Create a new user (Admin only)."""
     if tenant != current_user.tenant:
         raise HTTPException(status_code=403, detail="Cannot create user for different tenant")
-    
+
     from app.core.security import hash_password
-    
+
     existing = await session.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
-    
+
     hashed = hash_password(password)
     user = User(
         username=username,
@@ -169,7 +163,7 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    
+
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -193,14 +187,13 @@ async def update_user(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Update a user (Admin only)."""
     result = await session.execute(
         select(User).where(User.id == id, User.tenant == current_user.tenant)
     )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if username is not None:
         user.username = username
     if email is not None:
@@ -211,10 +204,10 @@ async def update_user(
         user.role = role
     if status is not None:
         user.status = status
-    
+
     await session.commit()
     await session.refresh(user)
-    
+
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -229,19 +222,22 @@ async def update_user(
 
 @router.delete("/delete-user/{user_id}", response_model=dict)
 async def delete_user(
-    user_id: int,
+    user_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Delete a user (Admin only)."""
+    if user_id.isdigit():
+        criteria = User.id == int(user_id)
+    else:
+        criteria = User.email == user_id
     result = await session.execute(
-        select(User).where(User.id == user_id, User.tenant == current_user.tenant)
+        select(User).where(criteria, User.tenant == current_user.tenant)
     )
     user = result.scalar_one_or_none()
     if not user:
         return {"success": False, "message": "User not found"}
-    
-    # Capture user data before deletion for response
+
+
     user_data = {
         "id": user.id,
         "username": user.username,
@@ -250,10 +246,10 @@ async def delete_user(
         "tenant": user.tenant,
         "status": user.status,
     }
-    
+
     await session.delete(user)
     await session.commit()
-    
+
     return {"success": True, "message": "User deleted successfully", "user": user_data}
 
 
@@ -263,9 +259,8 @@ async def get_all_data(
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
-    """Get aggregated data counts for dashboard cards."""
     tenant = tenant if tenant and tenant != "all" else current_user.tenant
-    
+
     total_events = await session.execute(
         select(func.count()).select_from(Event).where(Event.tenant == tenant)
     )
@@ -278,7 +273,7 @@ async def get_all_data(
     total_users = await session.execute(
         select(func.count()).select_from(User).where(User.tenant == tenant)
     )
-    
+
     return {
         "data": {
             "allLogs": total_events.scalar() or 0,

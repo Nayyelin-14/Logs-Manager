@@ -1,7 +1,3 @@
-#!/usr/bin/env bash
-# scripts/acceptance_check.sh
-# Runs the assignment acceptance checklist against a running stack.
-# Prints PASS/FAIL per item. Exit non-zero if any item fails.
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,9 +77,6 @@ echo " Base URL: $BASE_URL"
 echo " Syslog: $SYSLOG_HOST:$SYSLOG_PORT"
 echo ""
 
-# ------------------------------------------------------------------
-# Item 1: System is running
-# ------------------------------------------------------------------
 echo "[1] System is running (one-command start prerequisite)"
 if curl -sf "$BASE_URL/healthz" >/dev/null 2>&1; then
   pass "API healthz responds"
@@ -92,9 +85,6 @@ else
 fi
 admin_login || true
 
-# ------------------------------------------------------------------
-# Item 2: Syslog on port 514 (UDP + TCP) visible via the API in <60s
-# ------------------------------------------------------------------
 echo ""
 echo "[2] Syslog message on port 514 (UDP + TCP) visible via the API within 60s"
 SYSLOG_MSG='<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg="DNS blocked" policy=Block-DNS'
@@ -112,9 +102,6 @@ for _ in $(seq 1 30); do
 done
 [[ "$SYSLOG_OK" -eq 1 ]] && pass "Syslog events searchable via API (UDP+TCP within 60s)" || fail "Syslog events NOT searchable within 60s"
 
-# ------------------------------------------------------------------
-# Item 3: POST /ingest sample JSON then searchable
-# ------------------------------------------------------------------
 echo ""
 echo "[3] POST /ingest sample JSON (4.3) then searchable"
 SAMPLE='{"tenant":"demoA","source":"api","event_type":"app_login_failed","user":"alice","ip":"203.0.113.7","reason":"wrong_password","@timestamp":"2026-11-05T10:00:00Z"}'
@@ -128,9 +115,6 @@ else
   fail "Ingested record NOT searchable (HTTP $SEARCH_CODE)"
 fi
 
-# ------------------------------------------------------------------
-# Item 4: Upload AWS/M365/AD sample files -> normalized + searchable
-# ------------------------------------------------------------------
 echo ""
 echo "[4] File upload: AWS/M365/AD sample files normalized"
 for pair in "aws_cloudtrail.json:aws" "m365_audit.json:m365" "ad_4625.json:ad"; do
@@ -152,9 +136,6 @@ for pair in "aws_cloudtrail.json:aws" "m365_audit.json:m365" "ad_4625.json:ad"; 
   fi
 done
 
-# ------------------------------------------------------------------
-# Item 5: Dashboard stats endpoints
-# ------------------------------------------------------------------
 echo ""
 echo "[5] Dashboard stats endpoints respond"
 for endpoint in "stats/summary" "stats/top?field=src_ip&n=10" "stats/timeline"; do
@@ -162,9 +143,6 @@ for endpoint in "stats/summary" "stats/top?field=src_ip&n=10" "stats/timeline"; 
   [[ "$CODE" =~ ^2 ]] && pass "/api/$endpoint responds (HTTP $CODE)" || fail "/api/$endpoint does not respond (HTTP $CODE)"
 done
 
-# ------------------------------------------------------------------
-# Item 6: Bruteforce -> exactly one alert + webhook delivery
-# ------------------------------------------------------------------
 echo ""
 echo "[6] Bruteforce simulator creates exactly ONE alert and webhook logs it"
 BRUTE_IP=""
@@ -202,9 +180,6 @@ WEBHOOKS_AFTER=$(webhook_count "$BRUTE_IP")
 WEBHOOK_DELTA=$((WEBHOOKS_AFTER - WEBHOOKS_BEFORE))
 [[ "$WEBHOOK_DELTA" -eq 1 ]] && pass "Webhook receiver logged exactly 1 delivery for IP $BRUTE_IP" || fail "Expected 1 webhook delivery for IP $BRUTE_IP, got $WEBHOOK_DELTA"
 
-# ------------------------------------------------------------------
-# Item 7: RBAC - viewer-a cannot see demoB
-# ------------------------------------------------------------------
 echo ""
 echo "[7] RBAC: viewer-a sees only demoA, not demoB"
 LOGIN_CODE=$(http_code -s -c "$VIEWER_JAR" -X POST "$BASE_URL/api/auth/login" -H "Content-Type: application/json" \
@@ -221,9 +196,6 @@ else
   fail "Viewer-a login failed (HTTP $LOGIN_CODE)"
 fi
 
-# ------------------------------------------------------------------
-# Item 8: HTTPS via Caddy
-# ------------------------------------------------------------------
 echo ""
 echo "[8] HTTPS responds (Caddy TLS)"
 HTTPS_CODE=$(http_code -s -k -o /tmp/ac_https_body "$HTTPS_URL")
@@ -231,9 +203,6 @@ HTTPS_CODE=$(http_code -s -k -o /tmp/ac_https_body "$HTTPS_URL")
 REDIRECT_CODE=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" "$HTTP_URL")
 [[ "$REDIRECT_CODE" == 30*"https://localhost/"* ]] && pass "HTTP redirects to HTTPS ($REDIRECT_CODE)" || fail "HTTP does not redirect to HTTPS ($REDIRECT_CODE)"
 
-# ------------------------------------------------------------------
-# Item 9: Retention configuration
-# ------------------------------------------------------------------
 echo ""
 echo "[9] Retention configuration"
 RETENTION_DAYS_CHECK=$(grep -E '^RETENTION_DAYS=' "$ROOT_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2)
