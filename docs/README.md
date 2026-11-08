@@ -10,7 +10,7 @@ match the running codebase.
 |---|---|
 | [`architecture.md`](architecture.md) | System architecture, components, data flow, ingestion pipeline, storage, worker, and tenant model |
 | [`setup_appliance.md`](setup_appliance.md) | Local/on-prem installation and operation using Docker Compose |
-| [`setup_saas.md`](setup_saas.md) | Production VM/SaaS deployment, domain, HTTPS, firewall, and secrets |
+| [`setup_saas.md`](setup_saas.md) | Zero-cost SaaS deployment on Render + Vercel + Neon + Upstash, including CI/CD |
 | [`DEMO_GUIDE.md`](DEMO_GUIDE.md) | Practical 30-minute assignment demonstration walkthrough |
 | [`API_CONTRACT.md`](API_CONTRACT.md) | Actual API endpoints, authentication, request/response formats, and examples |
 | [`SECURITY_DESIGN.md`](SECURITY_DESIGN.md) | Authentication, RBAC, tenant isolation, and security controls |

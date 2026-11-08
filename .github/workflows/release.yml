@@ -21,7 +21,7 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GIT_PUSH_PAT }}
+          token: ${{ secrets.GIT_PUSH_PAT || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           target-branch: dev
 

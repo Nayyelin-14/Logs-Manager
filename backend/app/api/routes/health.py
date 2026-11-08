@@ -66,7 +66,7 @@ async def health_liveness(request: Request, session: AsyncSession = Depends(get_
 async def version_info():
     return {
         "app_version": os.getenv("APP_VERSION", "unknown"),
-        "git_sha": os.getenv("GIT_SHA", "unknown"),
+        "git_sha": os.getenv("GIT_SHA") or os.getenv("RENDER_GIT_COMMIT", "unknown"),
     }
 
 

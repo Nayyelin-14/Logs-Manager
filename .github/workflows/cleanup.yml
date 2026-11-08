@@ -19,7 +19,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Clean up old GHCR image versions
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

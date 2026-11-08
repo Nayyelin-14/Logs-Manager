@@ -1,376 +1,390 @@
-# SaaS/Cloud Deployment Guide
+# SaaS Deployment Guide (Render + Vercel + Neon + Upstash)
 
-This guide covers deploying Log Manager to a cloud VM with HTTPS/TLS.
+This guide deploys Log Manager as a public HTTPS SaaS at **$0/month** using
+free tiers only. It is separate from the single-machine appliance described in
+`docs/setup_appliance.md`.
 
-## Architecture
+## What gets deployed
 
 ```
-                    Internet (HTTPS)
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│  Caddy — the only public web server (ports 80/443)          │
-│  - Automatic Let's Encrypt certificates                     │
-│  - HTTP→HTTPS redirect                                      │
-│  - Serves the built React SPA from /srv + SPA fallback      │
-│  - /api/*, /ingest*, /docs*, /healthz, /ready → backend     │
-│  - /webhook → webhook-receiver                              │
-└───────────────┬─────────────────────────────┬───────────────┘
-                │                             │
-                ▼                             ▼
-       ┌──────────────────┐          ┌──────────────────┐
-       │ Backend FastAPI  │          │ Webhook receiver │
-       │ port 4500        │          │ port 8000        │
-       │ (internal only)  │          │ (internal only)  │
-       └────────┬─────────┘          └──────────────────┘
-                │
-       ┌────────┴─────────┐
-       ▼                  ▼
-┌──────────────┐   ┌──────────────┐
-│ PostgreSQL   │   │ Redis        │
-│ (internal)   │   │ (internal)   │
-└──────────────┘   └──────────────┘
+Browser
+  │  https://<project>.vercel.app
+  ▼
+Vercel (React SPA, static hosting)
+  │  /api/*  →  rewrite/proxy
+  ▼
+Render (FastAPI + embedded worker, Docker, free web service)
+  │                 │
+  ▼                 ▼
+Neon PostgreSQL     Upstash Redis
+(TLS, pooled)       (TLS, rediss://)
 ```
 
-The static frontend assets are baked into the same image as Caddy
-(`logs-manager-frontend`). There is no separate frontend container and no nginx
-process in production.
+| Service | Free tier | What it runs | Main limitation |
+|---|---|---|---|
+| Vercel | Hobby | React SPA + `/api/*` proxy | None for this app |
+| Render | Free web service | FastAPI, alert sweep, retention | 512 MB RAM, sleeps after 15 min idle |
+| Neon | Free | PostgreSQL 18 | 0.5 GB storage, autosuspend |
+| Upstash | Free | Redis for rate limiting/health | ~10k commands/day |
 
-Syslog ingestion (UDP/TCP 514) is published directly by the ingest service and
-should be restricted with the cloud firewall.
+Because the API is proxied through Vercel, the browser sees a **same-origin**
+`/api/*`. Auth cookies therefore work with `Secure` + `SameSite=Lax`; no
+cross-site cookie workarounds are needed.
 
+## Why raw syslog is not available
+
+Render and Vercel only expose HTTP(S). The UDP/TCP syslog listener on port 5514
+runs only in the Docker appliance. In SaaS mode set `SYSLOG_ENABLED=false` and
+send events to `POST /api/ingest` with an `X-API-Key` header.
 
 ## Prerequisites
 
-### Cloud VM Requirements
+- A GitHub account with this repository (branch `dev`).
+- A [Render](https://render.com) account linked to GitHub.
+- A [Vercel](https://vercel.com) account linked to GitHub.
+- A Neon account and an Upstash account. The existing `neondb` database and
+  Upstash Redis used during development can be reused.
+- Python 3.13 and Node 20+ locally, to run migrations and seed users.
 
-| Requirement | Details |
-|-------------|---------|
-| OS | Ubuntu 22.04 LTS (recommended) |
-| CPU | 2 vCPU minimum |
-| Memory | 4 GB minimum (8 GB recommended) |
-| Disk | 30 GB (50 GB recommended with backups) |
-| Network | Public IP, ports 80/443 open |
+## 1. Neon PostgreSQL
 
-### DNS Configuration
-
-Point your domain (e.g., `logs.example.com`) to your VM's public IP:
+1. Open the Neon console and select the project.
+2. Click **Connect**.
+3. Enable **Pooled connection**.
+4. Copy the connection string. It looks like:
 
 ```
-A record: logs.example.com → <VM_PUBLIC_IP>
+postgresql://neondb_owner:<password>@ep-xxxx-pooler.<region>.aws.neon.tech/neondb?sslmode=require&channel_binding=require
 ```
 
-## Deployment Steps
+5. Change the scheme to `postgresql+asyncpg://`. Keep the rest:
 
-### 1. Provision VM
+```
+postgresql+asyncpg://neondb_owner:<password>@ep-xxxx-pooler.<region>.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+```
+
+The app removes `channel_binding` before handing the URL to `asyncpg` and turns
+`sslmode=require` into an SSL context. Do not remove `sslmode=require`.
+
+If you create a fresh Neon project instead of reusing the existing one, run the
+migrations once from your laptop:
 
 ```bash
-# Ubuntu 22.04
-# SSH into your VM
-ssh ubuntu@<VM_PUBLIC_IP>
+cd backend
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+export DATABASE_URL='postgresql+asyncpg://...'
+alembic upgrade head
 ```
 
-### 2. Install Docker
+## 2. Upstash Redis
+
+1. Open the Upstash console and select the Redis database.
+2. Copy the **TLS** connection string. It starts with `rediss://`:
+
+```
+rediss://default:<password>@<name>.upstash.io:6379
+```
+
+`redis://` will not work with Upstash. Keep `rediss://`.
+
+## 3. Generate application secrets
+
+Render can generate the JWT secrets automatically from `render.yaml`. If you
+prefer to set them yourself:
 
 ```bash
-# Install Docker and Compose
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker $USER
-
-# Install Compose plugin
-sudo apt-get update
-sudo apt-get install -y docker-compose-plugin
-
-# Logout and login again to apply group change
+openssl rand -hex 32
+openssl rand -hex 32
 ```
 
-### 3. Clone Repository
+Choose an ingestion key. It must match the key used when seeding the database:
 
 ```bash
-git clone https://github.com/your-org/logs-manager.git
-cd logs-manager
+openssl rand -hex 24
 ```
 
-### 4. Configure Environment
+## 4. Deploy the backend on Render
+
+The repository contains `render.yaml` at the root. It defines one free Docker
+web service named `nayyelin-logs-api` with the worker embedded in the web
+process.
+
+1. In Render, click **New → Blueprint**.
+2. Connect the GitHub repository and select the `dev` branch.
+3. Render reads `render.yaml` and asks for the values marked `sync: false`:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Neon `postgresql+asyncpg://...` string from step 1 |
+| `REDIS_URL` | Upstash `rediss://...` string from step 2 |
+| `INGEST_API_KEY` | The key you chose in step 3 |
+| `CORS_ORIGINS` | `["https://<project>.vercel.app"]`, or `[]` if the Vercel URL is not ready |
+
+`ACCESS_TOKEN_SECRET` and `REFRESH_TOKEN_SECRET` are generated by Render.
+`ALLOWED_HOSTS` already includes `*.onrender.com` and `*.vercel.app`.
+
+`CORS_ORIGINS` only matters for direct browser calls to Render. The Vercel
+proxy is same-origin, so you can set or change it after the first Vercel
+deploy and then redeploy the Render service.
+
+4. Click **Apply**. The first build installs Python dependencies and usually
+   takes several minutes.
+5. Wait until the service shows **Live**. The health check is `/ready`, which
+   verifies both PostgreSQL and Redis.
+6. Copy the public URL. It is normally:
+
+```
+https://nayyelin-logs-api.onrender.com
+```
+
+If that name is already taken, Render will use a different URL. In that case
+update two places:
+
+- `frontend/vercel.json` → the `/api/:path*` rewrite destination
+- the GitHub repository variable `SAAS_BACKEND_URL`
+
+### Render settings used
+
+| Setting | Value | Why |
+|---|---|---|
+| Plan | `free` | $0 |
+| Runtime | Docker | Reuses `backend/Dockerfile` |
+| Worker | embedded (`WORKER_EMBEDDED=true`) | Free plan has no background workers |
+| Syslog | `SYSLOG_ENABLED=false` | No UDP/TCP on Render |
+| DB pool | `DATABASE_POOL=null` | Safe with the Neon pooler |
+| Health check | `/ready` | Verifies DB and Redis |
+| Auto deploy | off | Deploys are triggered by CI after tests pass |
+
+### Verify the backend
 
 ```bash
-# Copy example
-cp backend/.env.example backend/.env
-
-# Edit critical values
-nano backend/.env
+curl -s https://nayyelin-logs-api.onrender.com/healthz
+curl -s https://nayyelin-logs-api.onrender.com/ready
+curl -s https://nayyelin-logs-api.onrender.com/version
 ```
 
-**Key settings for SaaS:**
+`/ready` must return `"status":"ready"`.
 
-```dotenv
-# Production environment
-APP_ENV=production
-COOKIE_SECURE=true
-COOKIE_SAME_SITE=none
+## 5. Deploy the frontend on Vercel
 
-# External URL (for redirect after login)
-CORS_ORIGINS=["https://logs.example.com"]
-ALLOWED_HOSTS=["logs.example.com", "*.example.com"]
+1. Before deploying, open `frontend/vercel.json` and confirm the rewrite points
+   at your Render URL:
 
-# Strong secrets
-ACCESS_TOKEN_SECRET=<generate with: openssl rand -hex 32>
-REFRESH_TOKEN_SECRET=<generate with: openssl rand -hex 32>
-
-# Database
-DATABASE_URL=postgresql+asyncpg://logs:your_password@db:5432/logs_manager
-
-# Redis (internal Docker network)
-REDIS_URL=redis://redis:6379
-
-# Email (optional, for alerts/2FA)
-SMTP_ENABLED=true
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=alert@example.com
-SMTP_PASSWORD=<smtp_password>
-ALERT_EMAIL_RECIPIENTS=security@example.com
+```json
+{
+  "source": "/api/:path*",
+  "destination": "https://nayyelin-logs-api.onrender.com/api/:path*"
+}
 ```
 
-### 5. HTTPS via Caddy (Recommended)
-
-The repository includes a `Caddyfile` configured for SaaS deployment. Set `DOMAIN`
-in `.env` to your public domain (e.g., `logs.example.com`) and Caddy will obtain
-a Let's Encrypt certificate automatically:
+2. In Vercel, click **Add New → Project** and import the repository.
+3. Set **Root Directory** to `frontend`.
+4. Framework preset: **Vite**. Build command `npm run build`, output `dist`.
+5. Add an environment variable for Production (and Preview if you want):
 
 ```
-DOMAIN=logs.example.com
-CADDY_EMAIL=admin@example.com
+VITE_API_URL=/api
 ```
 
-The `Caddyfile` uses `{$DOMAIN:localhost}` — when `DOMAIN` is set, Caddy uses
-that domain for automatic TLS. When unset (local mode), it falls back to a
-self-signed internal CA certificate. The Caddyfile and the built SPA are baked
-into the `logs-manager-frontend` image, so the Caddy container needs only the
-`caddy_data` and `caddy_config` volumes (TLS/ACME state) at runtime.
+6. Click **Deploy**.
+7. Open `https://<project>.vercel.app`. The SPA loads from Vercel and API calls
+   go to `/api/*`, which Vercel proxies to Render.
 
-### 6. Deploy Application Stack
+### Verify the frontend proxy
 
 ```bash
-# Set environment (all required secrets must be in .env)
-# DOMAIN, POSTGRES_PASSWORD, ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET,
-# INGEST_API_KEY, SEED_ADMIN_PASSWORD, SEED_VIEWER_A_PASSWORD,
-# SEED_VIEWER_B_PASSWORD, CORS_ORIGINS, ALLOWED_HOSTS
-
-# Deploy with standalone VM Compose file (project: lms_vm).
-# Images are resolved by digest by the deploy workflow; no --build on the VM.
-docker compose -p lms_vm -f docker-compose.vm.yml up -d
+curl -s https://<project>.vercel.app/api/healthz
 ```
 
-For a local appliance build (including the Caddy/frontend image), use the root
-`docker-compose.yml` with `make up` or `docker compose -p lms_local -f docker-compose.yml up -d --build`.
+This must return the same JSON as the Render `/healthz` endpoint. If it returns
+HTML, the rewrite order or destination is wrong.
 
-### 7. Wait for Certificates
+## 6. Seed or repair the database
+
+The database may already contain demo data. To create it on a fresh database:
 
 ```bash
-# Wait 1-2 minutes for Let's Encrypt verification
-# Caddy logs will show certificate status
-
-docker compose -p lms_vm -f docker-compose.vm.yml logs caddy | grep -i certificate
+cd backend
+. .venv/bin/activate
+export DATABASE_URL='postgresql+asyncpg://...'
+export SAAS_MODE=true
+export SEED_ADMIN_PASSWORD='<strong password>'
+export SEED_VIEWER_A_PASSWORD='<strong password>'
+export SEED_VIEWER_B_PASSWORD='<strong password>'
+export INGEST_API_KEY='<same key as Render>'
+python scripts/seed_demo_data.py
 ```
 
-### 8. Seed Initial Data
+`SAAS_MODE=true` makes the seed script refuse to fall back to generated demo
+passwords.
+
+If the users already exist and you need a known password, set it directly:
 
 ```bash
-# Create admin account and sample events
-cd /path/to/logs-manager
-
-docker compose -p lms_vm -f docker-compose.vm.yml exec -T backend python scripts/seed_demo_data.py
-
-# Save the API keys displayed
-# They are required for ingestion
+cd backend
+. .venv/bin/activate
+export DATABASE_URL='postgresql+asyncpg://...'
+python scripts/set_password.py admin '<new password>'
 ```
 
-## Production Hardening
-
-### 1. Firewall Rules
+or from the repository root:
 
 ```bash
-# Allow only necessary ports
-sudo ufw enable
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 80/tcp    # HTTP (for ACME challenge)
-sudo ufw allow 443/tcp   # HTTPS
-# IMPORTANT: Port 514 (syslog) must be restricted by IP in the cloud firewall
-#   - Only allow trusted syslog sources to send to this port
-#   - Example AWS Security Group rule: source = syslog server IPs only
-# Block internal ports (5432, 6379, 4500, 8000 should NOT be exposed)
+DATABASE_URL='postgresql+asyncpg://...' make set-password USERNAME=admin PASSWORD='<new password>'
 ```
 
-### 2. Database Backups
+## 7. Send events
+
+Use the Vercel URL so the request stays same-origin:
 
 ```bash
-# Create backup script
-cat > backup.sh << 'EOF'
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/opt/backups"
-mkdir -p $BACKUP_DIR
-
-docker compose -p lms_vm -f docker-compose.vm.yml exec -T db pg_dump -U logs logs_manager > $BACKUP_DIR/logs_$DATE.sql
-gzip $BACKUP_DIR/logs_$DATE.sql
-
-# Keep last 7 days
-find $BACKUP_DIR -name "logs_*.sql.gz" -mtime +7 -delete
-EOF
-
-chmod +x backup.sh
-
-# Add to crontab (daily at 2 AM)
-echo "0 2 * * * /opt/logs-manager/backup.sh" | crontab -
+curl -X POST https://<project>.vercel.app/api/ingest \
+  -H 'Content-Type: application/json' \
+  -H "X-API-Key: $INGEST_API_KEY" \
+  -d '{"source":"firewall","event_type":"user_login","action":"ALLOW","src_ip":"203.0.113.42","severity":3}'
 ```
 
-### 3. Monitoring
+The old `/ingest` alias without `/api` also exists, but `/api/ingest` is the
+documented path.
+
+## 8. CI/CD
+
+`.github/workflows/ci.yml` runs on every push to `dev` and on pull requests.
+After lint, tests, migrations, and the Docker smoke test pass, a push to `dev`
+also runs the `deploy-saas` job:
+
+1. Triggers the Render deploy hook.
+2. Polls `/version` until `git_sha` equals the pushed commit (up to 15 minutes).
+3. Deploys the frontend with the Vercel CLI.
+4. Runs `scripts/smoke_saas.sh` against the public URLs.
+
+If the Render or Vercel secrets are absent, those steps are skipped and CI still
+passes. This keeps forks and pull requests safe.
+
+### GitHub repository secrets
+
+Add these under **Settings → Secrets and variables → Actions → Secrets**:
+
+| Secret | Where to get it |
+|---|---|
+| `RENDER_DEPLOY_HOOK_URL` | Render service → Settings → Deploy Hook |
+| `VERCEL_TOKEN` | Vercel → Account Settings → Tokens |
+| `VERCEL_ORG_ID` | Vercel project → Settings → General → Team ID |
+| `VERCEL_PROJECT_ID` | Vercel project → Settings → General → Project ID |
+| `GIT_PUSH_PAT` | Optional. A PAT with `repo` scope for release-please. Falls back to `GITHUB_TOKEN` |
+
+### GitHub repository variables
+
+Add these under **Settings → Secrets and variables → Actions → Variables**:
+
+| Variable | Value |
+|---|---|
+| `SAAS_BACKEND_URL` | `https://nayyelin-logs-api.onrender.com` |
+| `SAAS_FRONTEND_URL` | `https://<project>.vercel.app` |
+
+`SAAS_BACKEND_URL` has a built-in default that matches `render.yaml`. Set it
+only if you renamed the Render service.
+
+### Manual deploy
+
+Render: open the service and click **Manual Deploy → Deploy latest commit**.
+
+Vercel:
 
 ```bash
-# Enable monitoring label for Prometheus/Grafana
-# Or use simple health check:
-curl -sf http://localhost:4500/healthz || echo "ALERT: API down"
+cd frontend
+npx vercel --prod
 ```
 
-### 4. Log Rotation
+### Local validation before pushing
 
 ```bash
-# Docker logs are retained by Docker
-# For application logs, configure:
-sudo journalctl --vacuum-time=7d
-
-# Or bind mount logs to host:
-# In docker-compose.yml:
-# volumes:
-#   - /var/log/logs-manager:/app/logs
+make saas-check
+bash scripts/smoke_saas.sh https://nayyelin-logs-api.onrender.com https://<project>.vercel.app
 ```
 
-### 5. TLS Certificate Renewal
+## 9. Free-tier behaviour you must expect
 
-Caddy handles automatic renewal. Verify:
+- **Cold start:** Render sleeps after 15 minutes without traffic. The first
+  request afterwards can take 30-60 seconds. Open the site once before a demo.
+- **Worker pauses:** alerts and retention run inside the web process. They do
+  not run while Render is asleep. This is acceptable for a demo.
+- **Neon autosuspend:** the first query after idle can take a couple of seconds.
+- **512 MB RAM:** do not deploy a separate worker service or add another process
+  to the Render service. The current configuration is sized for the free plan.
+- **No syslog:** use `POST /api/ingest`.
+- **Upstash command budget:** the health check uses Redis. If the daily command
+  limit is a concern, point the Render health check at `/healthz` instead of
+  `/ready`.
+- **Ephemeral disk:** no local file storage. Everything persistent lives in Neon.
+
+## 10. Troubleshooting
+
+### `400 Invalid host header`
+
+`APP_ENV=production` enables `TrustedHostMiddleware`. Add the missing host to
+`ALLOWED_HOSTS`. The default in `render.yaml` already allows `*.onrender.com`
+and `*.vercel.app`.
+
+### Login succeeds but the UI immediately returns to `/login`
+
+- Access the app through the Vercel URL, not the Render URL directly.
+- Keep `COOKIE_SECURE=true` and `COOKIE_SAME_SITE=lax` when using the proxy.
+- Clear cookies for both domains and retry.
+
+If you intentionally call Render directly from a different origin, set
+`COOKIE_SAME_SITE=none` (requires HTTPS) and add the exact origin to
+`CORS_ORIGINS`.
+
+### `sslmode` / SSL errors from PostgreSQL
+
+Use the Neon pooled connection string with `sslmode=require`, and change only
+the scheme to `postgresql+asyncpg://`.
+
+### `prepared statement ... does not exist`
+
+This happens when a transaction-mode pooler is used with a client-side prepared
+statement cache. Keep `DATABASE_POOL=null` on Render and use the Neon **pooled**
+host (`...-pooler...`).
+
+### Render reports unhealthy
+
+Check the service logs. The usual causes are:
+
+- `DATABASE_URL` or `REDIS_URL` missing or still containing a placeholder
+- Upstash URL using `redis://` instead of `rediss://`
+- Neon project suspended or password rotated
+- The service exceeding 512 MB and being restarted
+
+### Vercel returns 404 or HTML for `/api/*`
+
+- `frontend/vercel.json` must list the `/api/:path*` rewrite before the SPA
+  catch-all.
+- The Render URL in that rewrite must match the real service URL.
+- Redeploy after editing the file.
+
+### Alembic fails during the first boot
+
+Run migrations from your laptop against the same Neon database:
 
 ```bash
-# Check certificate expiration
-docker compose -p lms_vm -f docker-compose.vm.yml exec caddy caddy cert-info --domains logs.example.com
-
-# Force renewal (if needed)
-docker compose -p lms_vm -f docker-compose.vm.yml exec caddy caddy reload
+cd backend
+. .venv/bin/activate
+export DATABASE_URL='postgresql+asyncpg://...'
+alembic upgrade head
 ```
 
-## API Access
+Then redeploy the Render service.
 
-### Base URL
-```
-https://logs.example.com/api/
-```
+## 11. Teardown
 
-### Ingestion Endpoint
-```bash
-POST https://logs.example.com/api/ingest
+1. Render: suspend or delete the web service.
+2. Vercel: delete the project.
+3. Neon: delete the project or database if it is no longer shared.
+4. Upstash: delete the Redis database.
+5. GitHub: remove the deploy secrets and the deploy hook.
 
-Headers:
-  Content-Type: application/json
-  X-API-Key: <your-tenant-api-key>
-```
-
-### Example Request
-
-```bash
-curl -X POST https://logs.example.com/api/ingest \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: demoa-key-here" \
-  -d '{
-    "tenant": "demoa",
-    "source": "api",
-    "event_type": "user_login",
-    "user": "admin",
-    "src_ip": "203.0.113.42",
-    "severity": 3
-  }'
-```
-
-## Security Considerations
-
-### 1. Admin Access
-- Admin users have `tenant: NULL` for cross-tenant access
-- CHANGE_default passwords immediately after seeding
-- Use strong, unique passwords (min 12 chars, mixed case, numbers, symbols)
-
-### 2. API Keys
-- Generated during seeding
-- Each tenant gets unique key
-- Store securely - displayed only once
-- Rotate periodically using `/api/tenants/{name}/rotate-key`
-
-### 3. JWT Security
-- Access tokens: 15 minute expiry
-- Refresh tokens: 30 day expiry
-- Cookies have HttpOnly and Secure flags
-
-### 4. Network Security
-- Internal services (PostgreSQL, Redis) not exposed
-- All external access via Caddy reverse proxy
-- Rate limiting enabled
-
-### 5. Data Encryption
-- TLS 1.3 for all external traffic
-- PostgreSQL data at rest (configure PG settings)
-- Consider encrypting backups
-
-## Troubleshooting SaaS Deployment
-
-### Certificate Issues
-```bash
-# Check Caddy logs
-docker compose -p lms_vm -f docker-compose.vm.yml logs caddy
-
-# Test HTTP challenge manually
-curl -I http://logs.example.com/.well-known/acme-challenge/
-
-# Force certificate renewal
-docker compose -p lms_vm -f docker-compose.vm.yml restart caddy
-```
-
-### CORS Errors
-```bash
-# Check browser console for CORS errors
-# Verify CORS_ORIGINS includes your domain exactly
-# Ensure you restarted containers after changes
-```
-
-### Database Connection
- ```bash
- # Test connection
- docker compose -p lms_vm -f docker-compose.vm.yml exec -T backend python -c "from app.core.database import engine; print(engine.url)"
- ```
-
-### Email Not Working
-```bash
-# Check if SMTP credentials are correct
-# Verify ALERT_EMAIL_RECIPIENTS is set
-# Check spam folder
-```
-
-## Scaling Considerations
-
-For higher load:
-- Use external PostgreSQL (RDS, Cloud SQL)
-- Use managed Redis (ElastiCache, MemoryDB)
-- Run backend with multiple replicas behind load balancer
-- Consider ClickHouse for higher volume logs
-
-## Maintenance Tasks
-
- ```bash
- # Restart services
- docker compose -p lms_vm -f docker-compose.vm.yml restart
-
- # Pull latest images
- docker compose -p lms_vm -f docker-compose.vm.yml pull
- docker compose -p lms_vm -f docker-compose.vm.yml down
- docker compose -p lms_vm -f docker-compose.vm.yml up -d
-
- # Check resource usage
- docker stats
- ```
+The Docker appliance remains available in `docker-compose.yml` and
+`docs/setup_appliance.md`.

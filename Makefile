@@ -8,7 +8,7 @@ COMPOSE_VM := docker compose -p lms_vm -f docker-compose.vm.yml
 TEST_DB_PORT ?= 55432
 TEST_REDIS_PORT ?= 56379
 
-.PHONY: help up down restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate
+.PHONY: help up down restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate saas-check saas-smoke set-password
 
 help:
 	@echo "Logs Manager - Fullstack assignment targets:"
@@ -32,8 +32,11 @@ help:
 	@echo "  make frontend-check  Frontend lint + typecheck + production build"
 	@echo "  make check-env       Environment sync check (example files only; safe for CI)"
 	@echo "  make check-files     File size and configuration validation"
-	@echo "  make check           check-env + check-files + frontend-check"
+	@echo "  make check           check-env + check-files + saas-check + frontend-check"
 	@echo "  make compose-check   Validate Docker Compose files parse"
+	@echo "  make saas-check      Validate render.yaml and frontend/vercel.json"
+	@echo "  make saas-smoke      Smoke test a deployed SaaS URL (SAAS_BACKEND_URL, SAAS_FRONTEND_URL)"
+	@echo "  make set-password    Set an existing user password (USERNAME=... PASSWORD=...)"
 	@echo "  make test-deps       Start only db + redis for backend tests"
 
 up: env
@@ -91,11 +94,21 @@ check-env:
 check-files:
 	@bash $(REPO_ROOT)/scripts/check_file_sizes.sh
 
-check: check-env check-files frontend-check
+check: check-env check-files saas-check frontend-check
 
 compose-check:
 	docker compose -p lms_local -f docker-compose.yml config -q
 	BACKEND_IMAGE=example/backend INGEST_IMAGE=example/ingest FRONTEND_IMAGE=example/frontend DOMAIN=example.com docker compose -p lms_vm -f docker-compose.vm.yml config -q
+
+saas-check:
+	@python3 $(REPO_ROOT)/scripts/check_saas_config.py
+
+saas-smoke:
+	@bash $(REPO_ROOT)/scripts/smoke_saas.sh "$${SAAS_BACKEND_URL:?set SAAS_BACKEND_URL}" "$${SAAS_FRONTEND_URL:-}"
+
+set-password:
+	@test -n "$$USERNAME" -a -n "$$PASSWORD" || (echo "usage: make set-password USERNAME=admin PASSWORD=..."; exit 1)
+	cd $(BACKEND_DIR) && .venv/bin/python3 scripts/set_password.py "$$USERNAME" "$$PASSWORD"
 
 test-deps: env
 	$(COMPOSE_LOCAL) up -d db redis

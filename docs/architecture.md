@@ -4,7 +4,19 @@
 
 A log management system that ingests, normalizes, searches, visualizes, and alerts
 on events from multiple sources. Deployable as a single-node appliance (Docker
-Compose) or as SaaS/Cloud with HTTPS.
+Compose) or as a zero-cost SaaS.
+
+## Deployment modes
+
+| Mode | Hosting | Public entry point | Ingestion |
+|---|---|---|---|
+| Appliance | One VM or machine, Docker Compose | Caddy on 80/443 | Syslog 5514/514 and HTTP `/api/ingest` |
+| SaaS | Vercel (SPA) + Render (API) + Neon + Upstash | Vercel HTTPS, `/api/*` proxied to Render | HTTP `/api/ingest` only |
+
+Both modes run the same backend code. The appliance runs PostgreSQL, Redis,
+the worker, the syslog listener, and the webhook receiver as separate Compose
+services. SaaS mode uses managed Neon and Upstash, embeds the worker in the web
+process, and disables raw syslog because Render and Vercel are HTTP-only.
 
 ## Mermaid architecture diagram
 
@@ -116,8 +128,10 @@ graph TB
 **Roles:**
 | Role | Capabilities |
 |---|---|
-| ADMIN | All tenants, manage rules/users/API keys, upload files, view all alerts |
-| VIEWER | Own tenant only, read-only, no rule editing |
+| ADMIN | Platform administrator: all tenants, manage rules/users/API keys, upload files, view all alerts. `tenant=NULL` enables cross-tenant queries via `tenant=all` or omitting the `tenant` parameter. |
+| VIEWER | Own tenant only, read-only, no rule editing. `tenant` is forced to `user.tenant`; any `tenant=` query param is ignored. |
+
+**ADMIN cross-tenant access:** The ADMIN role is a platform-level role (not a tenant-level admin). Cross-tenant data access by ADMIN is intentional by design — the ADMIN's `tenant` is `NULL`, which enables querying all tenants. VIEWERs are strictly scoped to their own tenant and cannot bypass this restriction via query parameters, headers, or request bodies. The backend enforces this on every `/api/*` endpoint; frontend filters alone are not sufficient for tenant isolation.
 
 The frontend uses the same canonical values, `ADMIN` and `VIEWER`. Management
 routes (`/`, `/rules`, `/users`) redirect non-admin sessions to `/dashboard`;
@@ -131,8 +145,8 @@ the backend remains the authorization boundary.
 | Database | PostgreSQL 16 | JSONB + GIN indexes, mature, single DB to operate |
 | Syslog collector | Custom Python asyncio | Full control over parsing, easy to explain in interview |
 | Frontend | React 19 + Vite + TypeScript + Recharts | Modern, well-documented, chart library included |
-| Web server / reverse proxy / TLS | Caddy | Serves the built SPA, automatic HTTPS (Let's Encrypt), self-signed fallback, security headers |
-| Packaging | Docker Compose | Same file for appliance and SaaS, one-command start |
+| Web server / reverse proxy / TLS | Caddy (appliance); Vercel + Render (SaaS) | Caddy serves the SPA and terminates TLS on one machine; Vercel serves the SPA and proxies `/api/*` to Render |
+| Packaging | Docker Compose (appliance); Render Blueprint + Vercel (SaaS) | One-command appliance start; zero-cost managed SaaS |
 
 **Considered alternatives:**
 - **OpenSearch/Elasticsearch**: More powerful search but higher operational complexity
@@ -194,7 +208,8 @@ See `docs/schema.md` for the full field table and per-source mappings.
 ## Security
 
 - JWT access tokens (15 min) + refresh tokens (30 days) in HttpOnly, Secure,
-  SameSite cookies (Secure/SameSite=None in SaaS mode).
+  SameSite=Lax cookies. SaaS mode serves the API through a same-origin Vercel
+  proxy, so cross-site cookie rules do not apply.
 - Passwords hashed with bcrypt.
 - API keys stored as SHA-256 hashes; plaintext shown once at creation.
 - Login rate limiting (slowapi), CORS restricted to configured origins.
@@ -207,7 +222,9 @@ See `docs/schema.md` for the full field table and per-source mappings.
   4 vCPU / 8 GB). For higher volume, consider read replicas or ClickHouse.
 - True multi-tenancy (separate schemas/tables per tenant) is a bonus feature.
 - Enrichment (GeoIP, reverse DNS) can be added behind a feature flag.
-- CI/CD (GitHub Actions) and IaC (Terraform/Helm) are bonus items.
+- CI/CD is implemented with GitHub Actions (test, smoke, GHCR, Render, Vercel).
+  IaC (Terraform/Helm) is not implemented; Docker Compose and `render.yaml`
+  are the deployment definitions.
 
 ## Design decisions and trade-offs
 

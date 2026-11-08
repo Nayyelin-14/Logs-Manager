@@ -14,8 +14,8 @@ Full-Stack Developer (Intern) practical assignment.
 | Postgres JSONB + GIN storage, dashboard with Top IP/User/Event Type, timeline | ✅ |
 | ≥1 alert rule with UI + webhook notification | ✅ |
 | Admin/Viewer RBAC with tenant data isolation | Implemented |
-| Appliance + SaaS deploy modes (Docker Compose) | Implemented |
-| HTTPS (Caddy: Let's Encrypt or self-signed tls internal) | Implemented |
+| Appliance (Docker Compose) + SaaS (Render + Vercel + Neon + Upstash) | Implemented |
+| HTTPS (Caddy on the appliance; managed TLS on Vercel/Render) | Implemented |
 | Retention ≥7 days (deletion + cleanup-ready) | Implemented |
 | Tests, docs, Postman collection, samples + sender scripts | Implemented |
 
@@ -69,6 +69,34 @@ Demo logins (after `make seed`):
 | viewerA@demo.local | (see seed output) | VIEWER | demoA |
 | viewerB@demo.local | (see seed output) | VIEWER | demoB |
 
+## Quick start (zero-cost SaaS)
+
+The SaaS mode runs the SPA on Vercel, the API and embedded worker on Render,
+PostgreSQL on Neon, and Redis on Upstash. It costs $0/month on free tiers and
+does not need a VM.
+
+```
+Browser → Vercel (SPA + /api/* proxy) → Render (FastAPI + worker)
+                                           ├── Neon PostgreSQL
+                                           └── Upstash Redis
+```
+
+1. Create the Neon database and Upstash Redis; copy the pooled Neon URL
+   (`postgresql+asyncpg://...?sslmode=require`) and the Upstash `rediss://` URL.
+2. In Render, **New → Blueprint**, select this repo and the `dev` branch, and
+   fill in `DATABASE_URL`, `REDIS_URL`, `INGEST_API_KEY`, and `CORS_ORIGINS`.
+3. In Vercel, import the repo, set **Root Directory** to `frontend`, and add
+   `VITE_API_URL=/api`.
+4. Point `frontend/vercel.json` at the Render service URL, deploy, then seed or
+   reset users from your laptop.
+
+Full click-by-click instructions, CI/CD secrets, and troubleshooting:
+`docs/setup_saas.md`.
+
+SaaS limitations: the free Render service sleeps after 15 minutes idle, raw
+syslog is unavailable (use `POST /api/ingest`), and the worker pauses while the
+service is asleep.
+
 ## Key endpoints
 
 | Method | Path | Description |
@@ -98,6 +126,9 @@ Demo logins (after `make seed`):
 | `make verify` | Run acceptance checklist (PASS/FAIL per item) |
 | `make maintenance` | Run retention maintenance once |
 | `make shell` | Shell into backend container |
+| `make saas-check` | Validate `render.yaml` and `frontend/vercel.json` |
+| `make saas-smoke` | Smoke test a deployed SaaS URL |
+| `make set-password` | Set an existing user password against any database |
 
 ### Running Tests
 
@@ -152,7 +183,7 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
 - `docs/README.md` — Documentation index and navigation
 - `docs/architecture.md` — Mermaid diagram, data flow, tenant model, tech choices
 - `docs/setup_appliance.md` — Appliance deployment steps
-- `docs/setup_saas.md` — SaaS/Cloud deployment with HTTPS
+- `docs/setup_saas.md` — Zero-cost SaaS deployment (Render + Vercel + Neon + Upstash)
 - `docs/DEMO_GUIDE.md` — 30-minute demo script
 - `docs/schema.md` — Common schema field reference
 - `docs/API_CONTRACT.md` — API route and response contract

@@ -9,10 +9,22 @@
  | CPU | 2 vCPU | 4 vCPU |
  | Memory | 4 GB | 8 GB |
  | Disk | 20 GB | 40 GB |
- | OS | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
+ | OS | Ubuntu 22.04/24.04 LTS | Ubuntu 24.04 LTS |
  | Ports | 80, 443, 514, 4500 | 80, 443, 514, 4500 |
- 
- ## Prerequisites
+
+### Host sizing reality check
+
+The full stack runs PostgreSQL, Redis, the API, the worker, the ingest listener,
+and Caddy together, so 4 GB of RAM is a real minimum. A 1 GB VM will swap
+heavily even when it appears to start.
+
+For reference, an Azure for Students `Standard_B2ats_v2` has 2 vCPU and only
+1 GB of RAM and costs roughly $10-16/month equivalent. Resizing it to a 4 GB
+size (`B2pls_v2` or `B2als_v2`) costs roughly $34-38/month, which is far above
+a $5/month budget. If your VM has 1 GB, use it only when it is dedicated and
+you accept swap, or use the SaaS mode in `docs/setup_saas.md` instead.
+
+## Prerequisites
  
  - Docker Engine 24.x or later
  - Docker Compose plugin

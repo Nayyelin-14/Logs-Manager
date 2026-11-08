@@ -204,34 +204,28 @@ Log in as admin@demo.local and verify admin can see all tenants and create rules
 
 ---
 
-## 6. HTTPS on SaaS URL (3 min)
+## 6. Public HTTPS URL (3 min)
 
-For a SaaS deployment with a public domain:
+For the SaaS deployment, open the Vercel URL. Vercel and Render manage TLS, so
+there is no domain or certificate work:
 
 ```bash
-# Set DOMAIN in .env
+curl -sSI https://<project>.vercel.app/
+curl -sS  https://<project>.vercel.app/api/healthz
+```
+
+For an appliance with a domain, set `DOMAIN` and `CADDY_EMAIL` in `.env` and
+start the VM Compose file. Caddy requests a certificate once DNS points at the
+host:
+
+```bash
 DOMAIN=logs.example.com
 CADDY_EMAIL=admin@example.com
-
-# Start with VM Compose file
 docker compose -p lms_vm -f docker-compose.vm.yml up -d
 ```
 
-Caddy obtains a Let's Encrypt certificate automatically. Verify:
-
-```bash
-curl -v https://logs.example.com/
-```
-
-For IP-based or local deployment (self-signed):
-
-```bash
-# No DOMAIN set → tls internal (self-signed)
-make up
-curl -vk https://localhost:443/
-```
-
-Browser will show a self-signed certificate warning — document this as expected.
+For a local appliance without a domain, Caddy uses `tls internal` and the
+browser shows a self-signed certificate warning. Document that as expected.
 
 ---
 

@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: nayyelin-logs-api
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: dev
+    autoDeployTrigger: 'off'
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /ready
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SAAS_MODE
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_POOL
+        value: "null"
+      - key: REDIS_URL
+        sync: false
+      - key: ACCESS_TOKEN_SECRET
+        generateValue: true
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      - key: INGEST_API_KEY
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAME_SITE
+        value: lax
+      - key: WORKER_EMBEDDED
+        value: "true"
+      - key: SYSLOG_ENABLED
+        value: "false"
+      - key: SMTP_ENABLED
+        value: "false"
+      - key: OTP_EMAIL_ENABLED
+        value: "false"
+      - key: ALERT_EMAIL_ENABLED
+        value: "false"
+      - key: RETENTION_DAYS
+        value: "7"
+      - key: ALERT_SWEEP_INTERVAL
+        value: "60"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ALLOWED_HOSTS
+        value: '["*.onrender.com","*.vercel.app","localhost","127.0.0.1"]'

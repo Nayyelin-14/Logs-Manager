@@ -5,6 +5,7 @@ on:
     branches: [dev, 'hotfix/*']
   pull_request:
     branches: [dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -46,13 +47,13 @@ jobs:
       ACCESS_TOKEN_SECRET: ci-test-access-secret-0123456789abcdef0123456789abcdef
       REFRESH_TOKEN_SECRET: ci-test-refresh-secret-0123456789abcdef0123456789abcdef
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -67,6 +68,12 @@ jobs:
         run: cd frontend && npm ci
       - name: Environment sync check
         run: python3 scripts/check_env_sync.py
+      - name: SaaS deployment config check
+        run: |
+          cd backend
+          . .venv/bin/activate
+          cd ..
+          python3 scripts/check_saas_config.py
       - name: File size check
         run: bash scripts/check_file_sizes.sh
       - name: Frontend typecheck
@@ -87,24 +94,25 @@ jobs:
           PGPASSWORD: postgres_pass
           DATABASE_URL: postgresql+asyncpg://logs:postgres_pass@localhost:55432/logs_manager_alembic?sslmode=disable
         run: |
+          set -euo pipefail
           cd backend
           . .venv/bin/activate
-          python3 -c "
-            import asyncio
-            import asyncpg
+          python3 - <<'PY'
+          import asyncio
+          import asyncpg
 
-            async def main():
-                conn = await asyncpg.connect(
-                    host='localhost', port=55432,
-                    user='logs', password='postgres_pass',
-                    database='postgres'
-                )
-                await conn.execute('DROP DATABASE IF EXISTS logs_manager_alembic')
-                await conn.execute('CREATE DATABASE logs_manager_alembic OWNER logs')
-                await conn.close()
+          async def main():
+              conn = await asyncpg.connect(
+                  host='localhost', port=55432,
+                  user='logs', password='postgres_pass',
+                  database='postgres'
+              )
+              await conn.execute('DROP DATABASE IF EXISTS logs_manager_alembic')
+              await conn.execute('CREATE DATABASE logs_manager_alembic OWNER logs')
+              await conn.close()
 
-            asyncio.run(main())
-          "
+          asyncio.run(main())
+          PY
           alembic upgrade head
       - name: Alembic single-head check
         run: |
@@ -151,7 +159,7 @@ jobs:
       packages: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Set up Docker Buildx
@@ -190,7 +198,7 @@ jobs:
             echo "owner_lower=${REPO_OWNER,,}"
           } >> "$GITHUB_OUTPUT"
       - name: Build backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -208,7 +216,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build ingest image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./ingest/Dockerfile
@@ -226,7 +234,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build frontend (Caddy) image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./frontend/Dockerfile
@@ -311,3 +319,55 @@ jobs:
             docker push "ghcr.io/${OWNER}/logs-manager-${PKG}:${DEV_TAG}"
             docker push "ghcr.io/${OWNER}/logs-manager-${PKG}:${FULL_SHA}"
           done
+
+  deploy-saas:
+    needs: [lint-and-test, build-smoke-push]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      SAAS_BACKEND_URL: ${{ vars.SAAS_BACKEND_URL || 'https://nayyelin-logs-api.onrender.com' }}
+      SAAS_FRONTEND_URL: ${{ vars.SAAS_FRONTEND_URL }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trigger Render deploy
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" >/dev/null
+      - name: Wait for Render to serve the pushed commit
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            SHA=$(curl -fsS --max-time 15 "$SAAS_BACKEND_URL/version" 2>/dev/null \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' 2>/dev/null || true)
+            if [ "$SHA" = "$GITHUB_SHA" ]; then
+              echo "Render is serving $GITHUB_SHA"
+              exit 0
+            fi
+            echo "waiting for Render ($i/90): deployed=${SHA:-none} expected=${GITHUB_SHA}"
+            sleep 10
+          done
+          echo "Render did not serve $GITHUB_SHA within 15 minutes" >&2
+          exit 1
+      - name: Deploy frontend to Vercel
+        if: env.VERCEL_TOKEN != ''
+        run: |
+          set -euo pipefail
+          npm install --global vercel@latest
+          cd frontend
+          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+          vercel build --prod --token "$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+      - name: Smoke test SaaS endpoints
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/smoke_saas.sh "$SAAS_BACKEND_URL" "${SAAS_FRONTEND_URL:-}"
