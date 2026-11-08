@@ -322,10 +322,9 @@ only if you renamed the Render service.
 
 Render: open the service and click **Manual Deploy → Deploy latest commit**.
 
-Vercel:
+Vercel (run from the repository root; the project Root Directory is `frontend`):
 
 ```bash
-cd frontend
 npx vercel --prod
 ```
 
