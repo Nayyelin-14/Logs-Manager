@@ -77,11 +77,32 @@ jobs:
           python -m venv .venv
           . .venv/bin/activate
           pip install -r requirements.txt
+      - name: Tune Postgres for tests
+        run: |
+          cd backend
+          . .venv/bin/activate
+          python - <<'PY'
+          import asyncio
+          import asyncpg
+
+          async def main():
+              conn = await asyncpg.connect(
+                  host='localhost',
+                  port=55432,
+                  user='logs',
+                  password='postgres_pass',
+                  database='logs_manager_test',
+              )
+              await conn.execute('ALTER DATABASE logs_manager_test SET synchronous_commit = off')
+              await conn.close()
+
+          asyncio.run(main())
+          PY
       - name: Backend tests
         run: |
           cd backend
           . .venv/bin/activate
-          python -m pytest -q
+          python -m pytest -q --durations=25
       - name: Alembic upgrade head (fresh database)
         env:
           PGPASSWORD: postgres_pass
