@@ -126,6 +126,10 @@ process.
 `CORS_ORIGINS` defaults to `[]`, which is correct because the Vercel proxy is
 same-origin. You only need to set it if browsers call the Render URL directly.
 
+Run the key rotation in step 6 before you click **Apply**, so you have the
+`INGEST_API_KEY` value to paste here. The value must match the database; a
+mismatch only affects ingestion, not login.
+
 4. Click **Apply**. The first build installs Python dependencies and usually
    takes several minutes.
 5. Wait until the service shows **Live**. The health check is `/ready`, which
@@ -222,18 +226,24 @@ passwords.
 
 If the users already exist and you need a known password, set it directly:
 
+Login uses the email address, for example `admin@demo.local`. The script accepts
+either an email or a username:
+
 ```bash
 cd backend
 . .venv/bin/activate
 export DATABASE_URL='postgresql+asyncpg://...'
-python scripts/set_password.py admin '<new password>'
+python scripts/set_password.py admin@demo.local '<new password>'
 ```
 
 or from the repository root:
 
 ```bash
-DATABASE_URL='postgresql+asyncpg://...' make set-password USERNAME=admin PASSWORD='<new password>'
+DATABASE_URL='postgresql+asyncpg://...' make set-password IDENTIFIER=admin@demo.local PASSWORD='<new password>'
 ```
+
+The existing demo accounts are `admin@demo.local`, `viewerA@demo.local`, and
+`viewerB@demo.local`.
 
 ### Ingestion API key
 

@@ -84,7 +84,8 @@ Browser → Vercel (SPA + /api/* proxy) → Render (FastAPI + worker)
 1. Create the Neon database and Upstash Redis; copy the pooled Neon URL
    (`postgresql+asyncpg://...?sslmode=require`) and the Upstash `rediss://` URL.
 2. In Render, **New → Blueprint**, select this repo and the `dev` branch, and
-   fill in `DATABASE_URL`, `REDIS_URL`, `INGEST_API_KEY`, and `CORS_ORIGINS`.
+   fill in `DATABASE_URL`, `REDIS_URL`, and an `INGEST_API_KEY` that matches the
+   database tenant.
 3. In Vercel, import the repo, set **Root Directory** to `frontend`, and add
    `VITE_API_URL=/api`.
 4. Point `frontend/vercel.json` at the Render service URL, deploy, then seed or

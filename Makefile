@@ -36,7 +36,7 @@ help:
 	@echo "  make compose-check   Validate Docker Compose files parse"
 	@echo "  make saas-check      Validate render.yaml and frontend/vercel.json"
 	@echo "  make saas-smoke      Smoke test a deployed SaaS URL (SAAS_BACKEND_URL, SAAS_FRONTEND_URL)"
-	@echo "  make set-password    Set an existing user password (USERNAME=... PASSWORD=...)"
+	@echo "  make set-password    Set a user password (IDENTIFIER=email-or-username PASSWORD=...)"
 	@echo "  make set-api-key     Rotate a tenant ingestion key (TENANT=demoa [KEY=...])"
 	@echo "  make test-deps       Start only db + redis for backend tests"
 
@@ -108,8 +108,8 @@ saas-smoke:
 	@bash $(REPO_ROOT)/scripts/smoke_saas.sh "$${SAAS_BACKEND_URL:?set SAAS_BACKEND_URL}" "$${SAAS_FRONTEND_URL:-}"
 
 set-password:
-	@test -n "$$USERNAME" -a -n "$$PASSWORD" || (echo "usage: make set-password USERNAME=admin PASSWORD=..."; exit 1)
-	cd $(BACKEND_DIR) && .venv/bin/python3 scripts/set_password.py "$$USERNAME" "$$PASSWORD"
+	@test -n "$$IDENTIFIER" -a -n "$$PASSWORD" || (echo "usage: make set-password IDENTIFIER=admin@demo.local PASSWORD=..."; exit 1)
+	cd $(BACKEND_DIR) && .venv/bin/python3 scripts/set_password.py "$$IDENTIFIER" "$$PASSWORD"
 
 set-api-key:
 	@test -n "$$TENANT" || (echo "usage: make set-api-key TENANT=demoa [KEY=...]"; exit 1)
