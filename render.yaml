@@ -45,6 +45,6 @@ services:
       - key: ALERT_SWEEP_INTERVAL
         value: "60"
       - key: CORS_ORIGINS
-        sync: false
+        value: "[]"
       - key: ALLOWED_HOSTS
         value: '["*.onrender.com","*.vercel.app","localhost","127.0.0.1"]'
