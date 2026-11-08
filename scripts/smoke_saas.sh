@@ -31,7 +31,11 @@ if [ -n "${FRONTEND_URL}" ]; then
   echo "Checking frontend SPA..."
   curl -fsS --max-time 90 "${FRONTEND_URL}/" | grep -qi '<!doctype html'
   echo "Checking frontend API proxy..."
-  curl -fsS --max-time 90 "${FRONTEND_URL}/api/healthz" | grep -q '"status"'
+  CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 90 "${FRONTEND_URL}/api/get-logs")
+  if [ "${CODE}" != "401" ]; then
+    echo "Expected 401 from the proxied /api/get-logs, got ${CODE}" >&2
+    exit 1
+  fi
 fi
 
 echo "SaaS smoke checks passed."

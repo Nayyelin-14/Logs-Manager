@@ -129,6 +129,7 @@ service is asleep.
 | `make saas-check` | Validate `render.yaml` and `frontend/vercel.json` |
 | `make saas-smoke` | Smoke test a deployed SaaS URL |
 | `make set-password` | Set an existing user password against any database |
+| `make set-api-key` | Rotate a tenant ingestion API key against any database |
 
 ### Running Tests
 

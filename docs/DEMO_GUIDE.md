@@ -211,7 +211,7 @@ there is no domain or certificate work:
 
 ```bash
 curl -sSI https://<project>.vercel.app/
-curl -sS  https://<project>.vercel.app/api/healthz
+curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/api/get-logs
 ```
 
 For an appliance with a domain, set `DOMAIN` and `CADDY_EMAIL` in `.env` and

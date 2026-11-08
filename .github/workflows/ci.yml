@@ -322,9 +322,8 @@ jobs:
 
   deploy-saas:
     needs: [lint-and-test, build-smoke-push]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
     runs-on: ubuntu-latest
-    environment: production
     env:
       RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

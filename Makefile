@@ -8,7 +8,7 @@ COMPOSE_VM := docker compose -p lms_vm -f docker-compose.vm.yml
 TEST_DB_PORT ?= 55432
 TEST_REDIS_PORT ?= 56379
 
-.PHONY: help up down restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate saas-check saas-smoke set-password
+.PHONY: help up down restart logs ps seed test lint validate demo reset maintenance verify env samples frontend-install frontend-check check-env check-files check compose-check test-deps backend-test backend-up backend-down backend-ps backend-shell backend-migrate saas-check saas-smoke set-password set-api-key
 
 help:
 	@echo "Logs Manager - Fullstack assignment targets:"
@@ -37,6 +37,7 @@ help:
 	@echo "  make saas-check      Validate render.yaml and frontend/vercel.json"
 	@echo "  make saas-smoke      Smoke test a deployed SaaS URL (SAAS_BACKEND_URL, SAAS_FRONTEND_URL)"
 	@echo "  make set-password    Set an existing user password (USERNAME=... PASSWORD=...)"
+	@echo "  make set-api-key     Rotate a tenant ingestion key (TENANT=demoa [KEY=...])"
 	@echo "  make test-deps       Start only db + redis for backend tests"
 
 up: env
@@ -109,6 +110,10 @@ saas-smoke:
 set-password:
 	@test -n "$$USERNAME" -a -n "$$PASSWORD" || (echo "usage: make set-password USERNAME=admin PASSWORD=..."; exit 1)
 	cd $(BACKEND_DIR) && .venv/bin/python3 scripts/set_password.py "$$USERNAME" "$$PASSWORD"
+
+set-api-key:
+	@test -n "$$TENANT" || (echo "usage: make set-api-key TENANT=demoa [KEY=...]"; exit 1)
+	cd $(BACKEND_DIR) && .venv/bin/python3 scripts/set_api_key.py "$$TENANT" "$${KEY:-}"
 
 test-deps: env
 	$(COMPOSE_LOCAL) up -d db redis

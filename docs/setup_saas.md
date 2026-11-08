@@ -194,12 +194,15 @@ VITE_API_URL=/api
 
 ### Verify the frontend proxy
 
+Health routes live at the backend root, not under `/api`. Verify the proxy with
+an authenticated API route instead:
+
 ```bash
-curl -s https://<project>.vercel.app/api/healthz
+curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/api/get-logs
 ```
 
-This must return the same JSON as the Render `/healthz` endpoint. If it returns
-HTML, the rewrite order or destination is wrong.
+This must return `401`. If it returns `200` with HTML, the rewrite order or
+destination is wrong and Vercel is serving the SPA instead of proxying.
 
 ## 6. Seed or repair the database
 
@@ -233,6 +236,25 @@ or from the repository root:
 
 ```bash
 DATABASE_URL='postgresql+asyncpg://...' make set-password USERNAME=admin PASSWORD='<new password>'
+```
+
+### Ingestion API key
+
+If you reuse an existing database, its `demoa` tenant already has an API key
+hash. The `INGEST_API_KEY` on Render must hash to that same value, or ingestion
+returns `401 Invalid API key`. Either reuse the original key, or rotate the
+stored hash to the key you want to use:
+
+```bash
+DATABASE_URL='postgresql+asyncpg://...' make set-api-key TENANT=demoa
+```
+
+Without `KEY`, the command prints a new random key. Store that value as
+`INGEST_API_KEY` on Render and use it in the ingest requests below. If you pass
+a key explicitly, use the same value on Render:
+
+```bash
+DATABASE_URL='postgresql+asyncpg://...' make set-api-key TENANT=demoa KEY='<your key>'
 ```
 
 ## 7. Send events
