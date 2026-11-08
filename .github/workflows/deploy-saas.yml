@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: deploy-saas
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -31,14 +31,27 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
 
+      - name: Check the tested commit is still the branch head
+        id: head
+        run: |
+          set -euo pipefail
+          HEAD_SHA=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/dev | cut -f1)
+          echo "tested=$TARGET_SHA head=$HEAD_SHA"
+          if [ "$HEAD_SHA" = "$TARGET_SHA" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "A newer commit is on dev; its CI run will deploy instead."
+          fi
+
       - name: Trigger Render deploy
-        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
         run: |
           set -euo pipefail
           curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" >/dev/null
 
       - name: Wait for Render to serve the tested commit
-        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
         run: |
           set -euo pipefail
           for i in $(seq 1 90); do
@@ -55,7 +68,7 @@ jobs:
           exit 1
 
       - name: Deploy frontend to Vercel
-        if: env.VERCEL_TOKEN != ''
+        if: env.VERCEL_TOKEN != '' && steps.head.outputs.skip == 'false'
         run: |
           set -euo pipefail
           npm install --global vercel@latest
@@ -65,7 +78,7 @@ jobs:
           vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
 
       - name: Smoke test SaaS endpoints
-        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        if: env.RENDER_DEPLOY_HOOK_URL != '' && steps.head.outputs.skip == 'false'
         run: |
           set -euo pipefail
           EXPECTED_SHA="$TARGET_SHA" bash scripts/smoke_saas.sh "$SAAS_BACKEND_URL" "${SAAS_FRONTEND_URL:-}"
