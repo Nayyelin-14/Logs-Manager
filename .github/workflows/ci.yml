@@ -211,7 +211,7 @@ jobs:
             fi
             if [ -z "$BASE" ]; then
               DOCKER=true
-            elif git diff --name-only "$BASE" "$SHA" | grep -Eq '^(backend/Dockerfile|backend/requirements.txt|backend/pyproject.toml|backend/alembic.ini|backend/migrations/|backend/wait-for-db.sh|frontend/Dockerfile|frontend/package.json|frontend/package-lock.json|frontend/vite.config.|frontend/tsconfig|frontend/index.html|frontend/public/|ingest/|docker-compose|scripts/smoke_saas.sh|.github/workflows/ci.yml)'; then
+            elif git diff --name-only "$BASE" "$SHA" | grep -Eq '^(backend/|frontend/|ingest/|Caddyfile|docker-compose|scripts/smoke_saas.sh|\.github/workflows/ci\.yml)'; then
               DOCKER=true
             fi
           fi
