@@ -31,3 +31,5 @@ htmlcov/
 _review/REPORT.md
 _fixes
 _review
+.vercel
+.env*
