@@ -271,16 +271,18 @@ documented path.
 ## 8. CI/CD
 
 `.github/workflows/ci.yml` runs on every push to `dev` and on pull requests.
-After lint, tests, migrations, and the Docker smoke test pass, a push to `dev`
-also runs the `deploy-saas` job:
+It does not deploy anything. When a CI run for `dev` finishes successfully,
+`.github/workflows/deploy-saas.yml` is triggered by the `workflow_run` event:
 
-1. Triggers the Render deploy hook.
-2. Polls `/version` until `git_sha` equals the pushed commit (up to 15 minutes).
-3. Deploys the frontend with the Vercel CLI.
-4. Runs `scripts/smoke_saas.sh` against the public URLs.
+1. Checks out the exact commit that CI tested.
+2. Triggers the Render deploy hook.
+3. Polls `/version` until `git_sha` equals that commit (up to 15 minutes).
+4. Deploys the frontend with the Vercel CLI.
+5. Runs `scripts/smoke_saas.sh` against the public URLs.
 
-If the Render or Vercel secrets are absent, those steps are skipped and CI still
-passes. This keeps forks and pull requests safe.
+You can also run **Actions → Deploy SaaS → Run workflow** manually. If the
+Render or Vercel secrets are absent, those steps are skipped and the workflow
+still passes. This keeps forks and pull requests safe.
 
 ### GitHub repository secrets
 

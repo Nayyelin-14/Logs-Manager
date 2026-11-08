@@ -1,0 +1,71 @@
+name: Deploy SaaS
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-saas
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      SAAS_BACKEND_URL: ${{ vars.SAAS_BACKEND_URL || 'https://nayyelin-logs-api.onrender.com' }}
+      SAAS_FRONTEND_URL: ${{ vars.SAAS_FRONTEND_URL }}
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Trigger Render deploy
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" >/dev/null
+
+      - name: Wait for Render to serve the tested commit
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            SHA=$(curl -fsS --max-time 15 "$SAAS_BACKEND_URL/version" 2>/dev/null \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' 2>/dev/null || true)
+            if [ "$SHA" = "$TARGET_SHA" ]; then
+              echo "Render is serving $TARGET_SHA"
+              exit 0
+            fi
+            echo "waiting for Render ($i/90): deployed=${SHA:-none} expected=$TARGET_SHA"
+            sleep 10
+          done
+          echo "Render did not serve $TARGET_SHA within 15 minutes" >&2
+          exit 1
+
+      - name: Deploy frontend to Vercel
+        if: env.VERCEL_TOKEN != ''
+        run: |
+          set -euo pipefail
+          npm install --global vercel@latest
+          cd frontend
+          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+          vercel build --prod --token "$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+
+      - name: Smoke test SaaS endpoints
+        if: env.RENDER_DEPLOY_HOOK_URL != ''
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="$TARGET_SHA" bash scripts/smoke_saas.sh "$SAAS_BACKEND_URL" "${SAAS_FRONTEND_URL:-}"

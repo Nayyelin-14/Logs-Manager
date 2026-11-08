@@ -8,6 +8,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 RENDER = ROOT / "render.yaml"
 VERCEL = ROOT / "frontend" / "vercel.json"
+DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-saas.yml"
 SECRET_KEYS = {
     "DATABASE_URL",
     "REDIS_URL",
@@ -102,9 +103,28 @@ def check_vercel() -> bool:
     return True
 
 
+def check_deploy_workflow() -> bool:
+    if not DEPLOY_WORKFLOW.exists():
+        fail(".github/workflows/deploy-saas.yml is missing")
+        return False
+    text = DEPLOY_WORKFLOW.read_text()
+    required = [
+        "workflow_run",
+        "RENDER_DEPLOY_HOOK_URL",
+        "VERCEL_TOKEN",
+        "smoke_saas.sh",
+    ]
+    for token in required:
+        if token not in text:
+            fail(f".github/workflows/deploy-saas.yml is missing {token}")
+            return False
+    return True
+
+
 def main() -> int:
     ok = check_render()
     ok = check_vercel() and ok
+    ok = check_deploy_workflow() and ok
     if ok:
         print("PASS: SaaS configuration is valid")
         return 0
