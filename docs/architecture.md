@@ -167,6 +167,11 @@ graph TB
 
 **ADMIN cross-tenant access:** The ADMIN role is a platform-level role (not a tenant-level admin). Cross-tenant data access by ADMIN is intentional by design — the ADMIN's `tenant` is `NULL`, which enables querying all tenants. VIEWERs are strictly scoped to their own tenant and cannot bypass this restriction via query parameters, headers, or request bodies. The backend enforces this on every `/api/*` endpoint; frontend filters alone are not sufficient for tenant isolation.
 
+**Tenant-bound admins:** An ADMIN created with a non-NULL `tenant` is bound to
+that tenant. It can manage rules, users, alerts, and logs for its own tenant
+only; cross-tenant reads/writes and `/api/tenants*` management return 403/404.
+The seeded `admin@demo.local` account is a platform ADMIN (`tenant = NULL`).
+
 The frontend uses the same canonical values, `ADMIN` and `VIEWER`. Management
 routes (`/`, `/rules`, `/users`) redirect non-admin sessions to `/dashboard`;
 the backend remains the authorization boundary.

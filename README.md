@@ -107,6 +107,7 @@ service is asleep.
 | POST | `/ingest/file` | File upload (JSON, NDJSON, CSV, CloudTrail) |
 | POST | `/api/ingest/syslog` | Syslog over HTTPS (text or `{"lines":[...]}`) for SaaS |
 | GET | `/api/events` | Search events with filters (from,to,tenant,source,q,...) |
+| GET | `/api/events/{id}` | Tenant-scoped event detail (includes `raw`) |
 | GET | `/api/stats/top` | Top N values for a field |
 | GET | `/api/stats/timeline` | Event counts over time, split by source |
 | GET | `/api/stats/summary` | Dashboard KPIs |

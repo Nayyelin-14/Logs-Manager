@@ -64,12 +64,17 @@ For backend-only development, start `db` and `redis` with Compose and run the Fa
 - `POST /ingest` / `POST /api/ingest` - Single event (exact assignment path)
 - `POST /ingest/batch` / `POST /api/ingest/batch` - Batch events
 - `POST /ingest/file` / `POST /api/ingest/file` - File upload (JSON, NDJSON, CSV, syslog text)
+- `POST /api/ingest/syslog` - Syslog lines over HTTPS for SaaS (`text/plain` or `{"lines":[...]}`)
 - `GET /api/events` / `GET /api/get-logs` - Search events with filters
+- `GET /api/events/{event_id}` - Tenant-scoped event detail (includes `raw`)
 - `GET /api/stats/summary` - Dashboard KPIs
 - `GET /api/stats/top` - Top N values for a field
 - `GET /api/stats/timeline` - Event counts over time, split by source
 - `GET /api/sources/health` - Per-source health (admin only)
 - `GET /api/dashboard` - Dashboard statistics
+
+All ingestion routes are rate limited per API key with `INGEST_RATE_LIMIT`
+(default `600/minute`); exceeded requests return HTTP 429 with `Retry-After`.
 
 ### Alerts & Rules
 - `GET /api/get-alerts` - List alerts (tenant-scoped)
@@ -87,7 +92,7 @@ For backend-only development, start `db` and `redis` with Compose and run the Fa
 - `PUT /api/update-user` - Update user
 - `DELETE /api/delete-user/{user_id}` - Delete user
 - `GET /api/get-all-data` - Aggregated dashboard counts
-- `GET /api/tenants` - List tenants
+- `GET /api/tenants` - List tenants (platform admin only)
 - `POST /api/tenants` - Create tenant (API key returned once)
 - `PATCH /api/tenants/{name}` - Activate/deactivate tenant
 - `POST /api/tenants/{name}/rotate-key` - Rotate tenant API key

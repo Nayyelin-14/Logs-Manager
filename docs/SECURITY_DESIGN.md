@@ -248,10 +248,12 @@ Authentication is **login-only**. There is **no public self-registration**, **no
 
 | Code Role | Assignment Role | Description |
 |-----------|-----------------|-------------|
-| `ADMIN` | ADMIN | Full administrative access; may query all tenants when `tenant` is empty/`all`, or a specific tenant otherwise |
+| `ADMIN` (tenant `NULL`) | Platform ADMIN | Full administrative access; may query all tenants when `tenant` is empty/`all`, or a specific tenant otherwise |
+| `ADMIN` (tenant set) | Tenant ADMIN | Administrative access bound to its own tenant; cross-tenant reads/writes and tenant management are rejected |
 | `VIEWER` | VIEWER | Read-only access; always forced to `user.tenant`, ignoring requested `tenant` |
 
 The code uses `ADMIN` and `VIEWER` directly. There is no legacy `USER` role.
+The seed/demo admin is a platform ADMIN with `tenant = NULL`.
 
 ### 4.2 Authorization Dependencies
 
@@ -278,6 +280,13 @@ async def get_current_user_any(current_user: TokenPayload = Depends(get_current_
     return current_user
 ```
 
+`require_admin` establishes the role. Routes that touch tenant-owned resources
+also call `owns_tenant` / `effective_read_tenant` (ingest rules) so a
+tenant-bound ADMIN cannot modify another tenant's rules, alerts, users, logs,
+or tenant API keys. Tenant management (`/api/tenants*`) requires a platform
+ADMIN (`tenant = NULL`). Cross-tenant reads remain available to a platform
+ADMIN by design.
+
 ### 4.3 Endpoint Protection Matrix
 
 | Endpoint | Required Dependency | Notes |
@@ -288,6 +297,8 @@ async def get_current_user_any(current_user: TokenPayload = Depends(get_current_
 | `POST /api/ingest` | `verify_api_key` OR `get_current_user` | API key or user |
 | `POST /api/ingest/batch` | `verify_api_key` OR `get_current_user` | API key or user |
 | `POST /api/ingest/file` | `verify_api_key` OR `get_current_user` | API key or user |
+| `POST /api/ingest/syslog` | `verify_api_key` | TLS syslog forwarder |
+| `GET /api/events/{event_id}` | `get_current_user` | Tenant-scoped detail; 404 on tenant mismatch |
 | `GET /api/get-logs` | `get_current_user` | VIEWER+ (tenant-scoped) |
 | `DELETE /api/delete-log/:id` | `require_admin` | Admin only |
 | `GET /api/dashboard` | `get_current_user` | VIEWER+ (tenant-scoped) |
@@ -567,35 +578,34 @@ async def add_security_headers(request: Request, call_next):
 
 ## 9. Rate Limiting
 
-### 9.1 Global Rate Limit (ported from the legacy `rateLimit` middleware)
+### 9.1 Ingestion Rate Limit
+
+Ingestion endpoints use the shared in-process limiter in
+`app/core/limiting.py`. The limiter keys on the SHA-256 of the presented
+`X-API-Key`, falling back to the remote address when no key is present, so one
+tenant cannot exhaust another tenant's budget behind a reverse proxy.
 
 ```python
-# app/main.py
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+# app/core/limiting.py
+limiter = Limiter(key_func=ingest_rate_key)
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# Apply to all /api routes
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api"):
-        # Check rate limit
-        pass
-    return await call_next(request)
+# app/api/routes/ingest.py
+@router.post("/ingest")
+@limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
+async def ingest_single_event(request: Request, ...):
+    ...
 ```
 
-**Note:** Use `slowapi` for FastAPI rate limiting. Configure per-endpoint limits for auth endpoints.
+The same decorator is applied to `/api/ingest/batch`, `/api/ingest/file`, and
+`/api/ingest/syslog`. The limit is configurable with `INGEST_RATE_LIMIT`
+(default `600/minute`). Exceeded requests return HTTP 429 with `Retry-After`.
 
 ### 9.2 Auth-Specific Limits
 
 | Endpoint | Limit |
 |----------|-------|
 | `POST /api/auth/login` | 5 req/min per IP |
-| `POST /api/ingest` | 100 req/min per API key |
+| `POST /api/ingest`, `/api/ingest/batch`, `/api/ingest/file`, `/api/ingest/syslog` | `INGEST_RATE_LIMIT` (default 600/min) per API key |
 
 ---
 

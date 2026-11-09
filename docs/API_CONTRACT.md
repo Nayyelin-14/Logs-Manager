@@ -84,7 +84,7 @@ All endpoints preserve:
 | **Auth** | API Key (`X-API-Key`) OR JWT cookies |
 | **Request Body** | Single event object |
 | **Response (201/400)** | `{ success: boolean, eventId?: string, message?: string, alerts?: Alert[], ingested?: number, rejected?: number }` |
-| **Rate Limit** | Global (middleware) |
+| **Rate Limit** | `INGEST_RATE_LIMIT` per API key (default `600/minute`) |
 
 **Event Object Example:**
 ```json
@@ -113,6 +113,7 @@ All endpoints preserve:
 | **Response (201/400)** | `{ success, total, ingested, failed, results: [{ index, success, eventId?, error? }] }` |
 | **Max File Size** | `INGEST_MAX_FILE_BYTES` (10MB) |
 | **Max Events** | `INGEST_BATCH_MAX_EVENTS` (1000) |
+| **Rate Limit** | `INGEST_RATE_LIMIT` per API key (default `600/minute`) |
 
 **Supported Formats:** JSON array, JSONL/NDJSON, CSV
 
@@ -404,26 +405,26 @@ All endpoints preserve:
 
 ---
 
-## 10. Missing Endpoint — Event Detail
+## 10. Event Detail Endpoint
 
 ### 10.1 Current State
 
-**Frontend:** LogsTable row click → no detail view (partial support in UI but no backend endpoint)
+**Frontend:** LogsTable row click → no detail view yet (the API is available for the future modal/page).
 
-**Backend:** No `GET /api/events/:id` or similar
+**Backend:** `GET /api/events/{event_id}` is implemented and tenant-scoped.
 
-### 10.2 Proposed Endpoint
+### 10.2 Endpoint
 
 | Aspect | Design |
 |--------|--------|
 | **Method** | GET |
 | **Path** | `/api/events/{event_id}` |
-| **Auth** | JWT required (VIEWER scoped to tenant) |
-| **Response (200)** | Full `SecurityEvent` with all fields including `raw` |
-| **Response (404)** | `{ message: "Event not found" }` |
-| **Tenant Scoping** | VIEWER only sees events in their tenant |
+| **Auth** | JWT required |
+| **Response (200)** | Full event object with all fields including `raw` |
+| **Response (404)** | `{ detail: "Event not found" }` |
+| **Tenant Scoping** | VIEWERs and tenant-bound ADMINs only see events in their tenant; a platform ADMIN (tenant `NULL`) sees any tenant |
 
-**Frontend Integration:** Add detail modal/page in LogsPage (future enhancement, not required for migration).
+**Frontend Integration:** Add detail modal/page in LogsPage (future enhancement).
 
 ---
 
