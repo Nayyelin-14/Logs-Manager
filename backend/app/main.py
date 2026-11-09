@@ -62,6 +62,32 @@ async def lifespan(app: FastAPI):
         settings.WORKER_EMBEDDED,
     )
 
+    email_provider = (settings.EMAIL_PROVIDER or "smtp").strip().lower()
+    if not settings.EMAIL_ENABLED:
+        email_state = "disabled"
+    elif email_provider == "resend":
+        email_state = (
+            "valid"
+            if settings.RESEND_API_KEY and settings.ALERT_EMAIL_FROM
+            else "invalid_config"
+        )
+    elif email_provider == "smtp":
+        email_state = (
+            "valid"
+            if settings.SMTP_HOST and settings.SMTP_USERNAME
+            else "invalid_config"
+        )
+    else:
+        email_state = "unknown_provider"
+    startup_logger.info(
+        "email provider=%s enabled=%s config=%s recipient_configured=%s webhook_configured=%s",
+        email_provider,
+        settings.EMAIL_ENABLED,
+        email_state,
+        bool(settings.ALERT_EMAIL_TO),
+        bool(settings.ALERT_WEBHOOK_URL),
+    )
+
     await init_db()
 
 
@@ -80,9 +106,13 @@ async def lifespan(app: FastAPI):
         if settings.SYSLOG_TCP_PORT:
             tcp_server = await start_tcp_syslog_listener(async_session_maker)
 
-    from app.services.retention import start_retention_scheduler
+    # The embedded worker already runs retention at startup and hourly. Only
+    # start the in-process scheduler when no worker process is embedded, so the
+    # web process still handles retention on long-running deployments.
+    if not settings.WORKER_EMBEDDED:
+        from app.services.retention import start_retention_scheduler
 
-    retention_scheduler = start_retention_scheduler()
+        retention_scheduler = start_retention_scheduler()
 
 
 

@@ -57,18 +57,28 @@ def _cron_kwargs(cron_expr: str) -> dict:
 def start_retention_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     scheduler = AsyncIOScheduler(timezone="UTC")
+    interval_minutes = max(1, int(settings.RETENTION_INTERVAL_MINUTES or 60))
     scheduler.add_job(
         run_retention_once,
-        trigger="cron",
+        trigger="interval",
+        minutes=interval_minutes,
         id="retention_purge",
         name=f"Purge security logs older than {settings.RETENTION_DAYS} days",
         replace_existing=True,
-        **_cron_kwargs(settings.RETENTION_SCHEDULE),
     )
+    if settings.RETENTION_RUN_ON_STARTUP:
+        scheduler.add_job(
+            run_retention_once,
+            trigger="date",
+            id="retention_startup",
+            name="Retention purge at startup",
+            replace_existing=True,
+        )
     scheduler.start()
     logger.info(
-        "retention scheduler started: schedule=%r days=%s",
-        settings.RETENTION_SCHEDULE,
+        "retention scheduler started: interval_minutes=%s startup=%s days=%s",
+        interval_minutes,
+        settings.RETENTION_RUN_ON_STARTUP,
         settings.RETENTION_DAYS,
     )
     return scheduler

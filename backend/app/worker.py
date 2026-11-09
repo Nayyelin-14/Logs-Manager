@@ -40,7 +40,7 @@ async def retention_maintenance(interval_seconds: int = 3600) -> None:
 async def run() -> None:
     await asyncio.gather(
         alert_sweep(settings.ALERT_SWEEP_INTERVAL if hasattr(settings, 'ALERT_SWEEP_INTERVAL') else 30),
-        retention_maintenance(),
+        retention_maintenance(max(1, int(settings.RETENTION_INTERVAL_MINUTES or 60)) * 60),
     )
 def main() -> None:
     logging.basicConfig(

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     ALERT_EMAIL_FROM: Optional[str] = None
     ALERT_EMAIL_TO: Optional[str] = None
+    ALERT_WEBHOOK_URL: Optional[str] = None
 
 
     INGEST_API_USERNAME: str = "log-forwarder"
@@ -84,6 +85,8 @@ class Settings(BaseSettings):
 
     RETENTION_DAYS: int = 7
     RETENTION_SCHEDULE: str = "0 5 * * *"
+    RETENTION_INTERVAL_MINUTES: int = 60
+    RETENTION_RUN_ON_STARTUP: bool = True
 
 
     ALERT_SWEEP_INTERVAL: int = 30

@@ -39,9 +39,25 @@ services:
       - key: OTP_EMAIL_ENABLED
         value: "false"
       - key: ALERT_EMAIL_ENABLED
-        value: "false"
+        value: "true"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_ENABLED
+        value: "true"
+      - key: ALERT_EMAIL_FROM
+        sync: false
+      - key: ALERT_EMAIL_TO
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
       - key: RETENTION_DAYS
         value: "7"
+      - key: RETENTION_INTERVAL_MINUTES
+        value: "60"
+      - key: RETENTION_RUN_ON_STARTUP
+        value: "true"
       - key: ALERT_SWEEP_INTERVAL
         value: "60"
       - key: CORS_ORIGINS

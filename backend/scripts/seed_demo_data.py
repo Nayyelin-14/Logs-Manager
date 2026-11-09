@@ -188,8 +188,10 @@ async def seed_demo_data():
                     window_minutes=5,
                     cooldown_minutes=15,
                     notify={
-                        "webhook_url": os.environ.get(
-                            "ALERT_WEBHOOK_URL", "http://webhook-receiver:8000/webhook"
+                        **(
+                            {"webhook_url": os.environ["ALERT_WEBHOOK_URL"]}
+                            if os.environ.get("ALERT_WEBHOOK_URL")
+                            else {}
                         ),
                         "cooldown_minutes": 15,
                     },
