@@ -115,6 +115,26 @@ def test_smtp_route_when_provider_not_resend(monkeypatch):
     assert result["status"] in ("failed", "skipped")
 
 
+def test_render_smtp_is_skipped_with_warning(monkeypatch):
+    """On Render, SMTP is unreachable; skip instead of attempting a connection."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "EMAIL_ENABLED", True)
+    monkeypatch.setattr(settings, "EMAIL_PROVIDER", "smtp")
+    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
+    monkeypatch.setenv("RENDER", "true")
+
+    result = _run(
+        send_email_notification(
+            recipient="admin@example.com",
+            subject="Alert",
+            html_body="<p>body</p>",
+            text_body="body",
+        )
+    )
+    assert result["status"] == "skipped"
+    assert result["error"] == "smtp_disabled_on_render"
+
+
 # ---------------------------------------------------------------------------
 # send_resend_email with mocked httpx transport
 # ---------------------------------------------------------------------------

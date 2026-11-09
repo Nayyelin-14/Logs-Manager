@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input";
 import { SeverityBadge } from "../AppComponents/Tables/shared/SeverityBadge";
 import { useAppMutation } from "../hooks/useMutationApi";
 import { useUserStore } from "../store/userStore";
-import type { PaginatedAlertsResponse } from "../types/types";
+import type { AlertNotification, PaginatedAlertsResponse } from "../types/types";
 import { useSecurityEventFilterStore } from "../store/filterStore";
 
 type AlertRecord = PaginatedAlertsResponse["alerts"][number];
@@ -99,6 +99,29 @@ function FilterTag({ label }: { label: string }) {
   return <span className="rounded-full bg-surface-muted px-2.5 py-1 font-mono text-ink">{label}</span>;
 }
 
+function DeliveryBadge({ notifications }: { notifications?: AlertNotification[] }) {
+  const latest = notifications?.[notifications.length - 1];
+  if (!latest) {
+    return <span title="No delivery channel has been attempted for this alert." className="rounded-md border border-border/40 bg-surface-muted/60 px-2 py-1 text-xs font-medium text-ink-muted">Delivery: not configured</span>;
+  }
+  const status = (latest.status || latest.final_status || "unknown").toLowerCase();
+  const attempts = latest.attempts?.length ?? 0;
+  const lastError = latest.error || latest.attempts?.[latest.attempts.length - 1]?.error;
+  const channel = latest.channel === "email" ? "Email" : latest.channel === "webhook" ? "Webhook" : latest.channel;
+  const tone = status === "sent"
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+    : status === "skipped"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+      : "border-critical/30 bg-critical/10 text-critical";
+  const label = status === "sent" ? "delivered" : status === "skipped" ? "skipped" : "failed";
+  return <span
+    title={`${channel} ${label}${attempts ? ` after ${attempts} attempt${attempts === 1 ? "" : "s"}` : ""}${lastError ? `: ${lastError}` : ""}`}
+    className={`rounded-md border px-2 py-1 text-xs font-medium capitalize ${tone}`}
+  >
+    {channel}: {label}{attempts > 1 ? ` (${attempts})` : ""}
+  </span>;
+}
+
 function QueueRow({ alert, selected, onClick }: { alert: AlertRecord; selected: boolean; onClick: () => void }) {
   const triggered = new Date(alert.triggeredAt);
   return <button onClick={onClick} className={`relative grid w-full grid-cols-12 items-center gap-2 px-4 py-3.5 text-left transition-colors ${selected ? "bg-brand/10 hover:bg-brand/15" : "hover:bg-surface-muted/50"} ${isResolved(alert.status) ? "opacity-65" : ""}`}>
@@ -129,7 +152,7 @@ function AlertDetail({ alert, admin, isPending, onResolve, onClose }: { alert: A
   };
 
   return <div className="flex flex-col gap-5 rounded-3xl border border-border/50 bg-card p-5 shadow-sm sm:p-6" aria-label="Alert detail workspace">
-    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 flex flex-wrap items-center gap-2"><SeverityBadge severity={alert.severity} /><span className="rounded-md bg-brand/10 px-2 py-1 font-mono text-xs font-semibold uppercase text-brand-hover">{alert.status}</span></div><h2 className="text-base font-semibold tracking-tight text-ink">{alert.title}</h2><div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-ink-muted"><span>{alert.rule?.name || "Unlinked rule"}</span><span>·</span><span>{Number.isNaN(time.getTime()) ? "Unknown time" : time.toLocaleString()}</span></div></div><button onClick={onClose} aria-label="Clear selected alert" title="Clear selected alert" className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink"><X className="size-4" /></button></div>
+    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 flex flex-wrap items-center gap-2"><SeverityBadge severity={alert.severity} /><span className="rounded-md bg-brand/10 px-2 py-1 font-mono text-xs font-semibold uppercase text-brand-hover">{alert.status}</span><DeliveryBadge notifications={alert.notifications} /></div><h2 className="text-base font-semibold tracking-tight text-ink">{alert.title}</h2><div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs text-ink-muted"><span>{alert.rule?.name || "Unlinked rule"}</span><span>·</span><span>{Number.isNaN(time.getTime()) ? "Unknown time" : time.toLocaleString()}</span></div></div><button onClick={onClose} aria-label="Clear selected alert" title="Clear selected alert" className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink"><X className="size-4" /></button></div>
     <section className="flex flex-col gap-2"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Detection context</h3><p className="rounded-2xl border border-border/35 bg-surface-muted/50 p-3.5 text-xs leading-5 text-ink">{alert.description || alert.rule?.description || "No additional detection narrative is available."}</p></section>
     <section className="flex flex-col gap-2.5"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Affected entities</h3><div className="grid grid-cols-2 gap-2"><Entity label="Tenant" value={alert.tenant} /><Entity label="Alert ID" value={alert.id} mono /></div></section>
     <section className="flex flex-col gap-2.5"><div className="flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">Linked telemetry</h3><span className="inline-flex items-center gap-1 font-mono text-xs text-ink-muted"><Activity className="size-3" />{alert.eventIds.length} events</span></div>{alert.eventIds.length ? <div className="flex flex-col gap-1.5">{alert.eventIds.map((id) => <div key={id} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-border/30 bg-surface-muted/40 px-3.5 py-2.5"><span className="truncate font-mono text-xs text-ink">{id}</span><ChevronRight className="size-3 shrink-0 text-ink-muted" /></div>)}</div> : <p className="rounded-xl bg-surface-muted/40 px-3 py-2.5 text-xs text-ink-muted">No linked event IDs were recorded.</p>}</section>

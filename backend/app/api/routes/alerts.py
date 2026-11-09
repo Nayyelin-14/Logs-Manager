@@ -79,6 +79,7 @@ async def list_alerts(
             "triggeredAt": a.triggered_at.isoformat() if a.triggered_at else None,
             "eventIds": a.event_ids,
             "tags": a.tags,
+            "notifications": a.notifications or [],
             "rule": {"name": a.rule.name, "description": a.rule.description} if a.rule else None,
             "dedupeKey": a.dedupe_key,
         } for a in alerts],

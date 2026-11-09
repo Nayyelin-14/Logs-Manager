@@ -17,20 +17,48 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 WEBHOOK_TIMEOUT = 5.0
 
+DEFAULT_RESEND_RETRY_DELAYS = (1.0, 2.0)
+RESEND_MAX_ATTEMPTS = 3
+
+
+def _parse_delays(raw: str | None, default: tuple[float, ...]) -> tuple[float, ...]:
+    if not raw:
+        return default
+    try:
+        parsed = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
+    except ValueError:
+        return default
+    if not parsed or any(delay < 0 for delay in parsed):
+        return default
+    return parsed
+
 
 def _resolve_retry_delays(retry_delays: tuple[float, ...] | None) -> tuple[float, ...]:
     if retry_delays is not None:
         return retry_delays
-    raw = os.environ.get("WEBHOOK_RETRY_DELAYS")
-    if not raw:
-        return DEFAULT_RETRY_DELAYS
-    try:
-        parsed = tuple(float(part.strip()) for part in raw.split(",") if part.strip())
-    except ValueError:
-        return DEFAULT_RETRY_DELAYS
-    if not parsed or any(delay < 0 for delay in parsed):
-        return DEFAULT_RETRY_DELAYS
-    return parsed
+    return _parse_delays(os.environ.get("WEBHOOK_RETRY_DELAYS"), DEFAULT_RETRY_DELAYS)
+
+
+def _resolve_resend_retry_delays(
+    retry_delays: tuple[float, ...] | None,
+) -> tuple[float, ...]:
+    if retry_delays is not None:
+        return retry_delays
+    return _parse_delays(
+        os.environ.get("RESEND_RETRY_DELAYS"), DEFAULT_RESEND_RETRY_DELAYS
+    )
+
+
+def _scrub_secret(text: str, secret: Optional[str]) -> str:
+    if secret and text:
+        return text.replace(secret, "[redacted]")
+    return text
+
+
+def _retry_delay(delays: tuple[float, ...], attempt: int) -> float:
+    if attempt - 1 < len(delays):
+        return delays[attempt - 1]
+    return float(2 ** (attempt - 1))
 
 
 def _now_iso() -> str:
@@ -165,13 +193,18 @@ def append_notification(
     target: str,
 ) -> list[dict[str, Any]]:
     notifications = list(existing or [])
+    last = attempts[-1] if attempts else {}
+    final_status = last.get("status") or "failed"
     notifications.append({
         "id": uuid.uuid4().hex[:16],
         "channel": channel,
         "target": target,
         "created_at": _now_iso(),
+        "status": final_status,
+        "error": last.get("error"),
         "attempts": attempts,
-        "final_status": attempts[-1]["status"] if attempts else "failed",
+        "sent_at": last.get("timestamp") if final_status == "sent" else None,
+        "final_status": final_status,
     })
     return notifications
 
@@ -200,21 +233,28 @@ async def send_resend_email(
     api_key: Optional[str] = None,
     timeout: float = RESEND_TIMEOUT,
     transport: Any = None,
+    retry_delays: tuple[float, ...] | None = None,
+    max_attempts: int = RESEND_MAX_ATTEMPTS,
 ) -> dict[str, Any]:
     """Send a transactional email via the Resend HTTPS API.
 
+    Retries transient failures (HTTP 429, 5xx, timeouts, network errors) up to
+    ``max_attempts`` with exponential backoff. Authentication and validation
+    failures (HTTP 401/403/422, invalid recipient/sender) are never retried.
+
     Returns a dict with ``status`` ("sent"/"failed"), an optional ``error``,
-    and an optional ``message_id`` when the provider accepts the message.
-    Does not log the API key or recipient body content.
+    ``attempts`` (one record per provider call), and an optional ``message_id``
+    when the provider accepts the message. The API key is never logged or
+    returned.
     """
     if not api_key:
-        return {"status": "failed", "error": "missing_resend_api_key"}
+        return {"status": "failed", "error": "missing_resend_api_key", "attempts": []}
     if not is_valid_email(recipient):
-        return {"status": "failed", "error": "invalid_recipient"}
+        return {"status": "failed", "error": "invalid_recipient", "attempts": []}
     if not is_valid_email(from_email):
-        return {"status": "failed", "error": "invalid_sender"}
+        return {"status": "failed", "error": "invalid_sender", "attempts": []}
     if not html_body and not text_body:
-        return {"status": "failed", "error": "empty_body"}
+        return {"status": "failed", "error": "empty_body", "attempts": []}
 
     payload: dict[str, Any] = {
         "from": from_email,
@@ -230,36 +270,96 @@ async def send_resend_email(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    delays = _resolve_resend_retry_delays(retry_delays)
+    attempts: list[dict[str, Any]] = []
+    last_error: Optional[str] = None
+    max_attempts = max(1, int(max_attempts))
 
-    try:
-        async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
-            resp = await client.post(RESEND_API_URL, json=payload, headers=headers)
-        if resp.is_success:
-            data = resp.json() or {}
-            message_id = data.get("id")
-            logger.info(
-                "resend email accepted: recipient=%s status=%s message_id=%s",
+    for attempt in range(1, max_attempts + 1):
+        record: dict[str, Any] = {
+            "attempt": attempt,
+            "timestamp": _now_iso(),
+            "http_code": None,
+            "error": None,
+        }
+        retryable = False
+        try:
+            async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+                resp = await client.post(RESEND_API_URL, json=payload, headers=headers)
+            body = _scrub_secret(resp.text[:200], api_key)
+            if resp.is_success:
+                data = resp.json() or {}
+                message_id = data.get("id")
+                record.update(
+                    status="sent",
+                    http_code=resp.status_code,
+                    message_id=message_id,
+                )
+                attempts.append(record)
+                logger.info(
+                    "resend email accepted: recipient=%s status=%s message_id=%s attempt=%d",
+                    recipient,
+                    resp.status_code,
+                    message_id,
+                    attempt,
+                )
+                return {
+                    "status": "sent",
+                    "error": None,
+                    "message_id": message_id,
+                    "attempts": attempts,
+                }
+
+            record.update(
+                status="failed",
+                http_code=resp.status_code,
+                error=f"http_{resp.status_code}: {body}",
+            )
+            last_error = record["error"]
+            retryable = resp.status_code == 429 or resp.status_code >= 500
+            logger.warning(
+                "resend email rejected: recipient=%s http=%d attempt=%d retryable=%s",
                 recipient,
                 resp.status_code,
-                message_id,
+                attempt,
+                retryable,
             )
-            return {"status": "sent", "error": None, "message_id": message_id}
-        logger.error(
-            "resend email rejected: recipient=%s http=%d error=%s",
-            recipient,
-            resp.status_code,
-            resp.text[:200],
-        )
-        return {
-            "status": "failed",
-            "error": f"http_{resp.status_code}: {resp.text[:200]}",
-        }
-    except httpx.TimeoutException as exc:
-        logger.warning("resend email timeout: recipient=%s", recipient)
-        return {"status": "failed", "error": f"timeout: {type(exc).__name__}"}
-    except Exception as exc:  # noqa: BLE001 - never crash notification flow
-        logger.exception("resend email error: recipient=%s", recipient)
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        except httpx.TimeoutException as exc:
+            record.update(
+                status="failed",
+                error=f"timeout: {type(exc).__name__}",
+            )
+            last_error = record["error"]
+            retryable = True
+            logger.warning(
+                "resend email timeout: recipient=%s attempt=%d", recipient, attempt
+            )
+        except Exception as exc:  # noqa: BLE001 - never crash notification flow
+            record.update(
+                status="failed",
+                error=_scrub_secret(f"{type(exc).__name__}: {exc}", api_key),
+            )
+            last_error = record["error"]
+            retryable = True
+            logger.exception("resend email error: recipient=%s attempt=%d", recipient, attempt)
+
+        attempts.append(record)
+        if not retryable:
+            return {"status": "failed", "error": last_error, "attempts": attempts}
+        if attempt < max_attempts:
+            delay = _retry_delay(delays, attempt)
+            if delay > 0:
+                import asyncio
+
+                await asyncio.sleep(delay)
+
+    logger.error(
+        "resend email failed after %d attempts: recipient=%s last_error=%s",
+        max_attempts,
+        recipient,
+        last_error,
+    )
+    return {"status": "failed", "error": last_error, "attempts": attempts}
 
 
 async def send_email_notification(
@@ -272,16 +372,17 @@ async def send_email_notification(
     """Dispatch an alert email through the configured provider.
 
     Routes to Resend when ``EMAIL_PROVIDER=resend`` and settings are present,
-    otherwise falls back to SMTP. Returns a provider-neutral result dict.
-    Email is disabled when no provider is configured.
+    otherwise falls back to SMTP. Returns a provider-neutral result dict with an
+    ``attempts`` list. Email is disabled when no provider is configured.
     """
     settings = get_settings()
+    provider = (settings.EMAIL_PROVIDER or "").strip().lower()
 
     if not settings.EMAIL_ENABLED:
-        return {"status": "skipped", "error": "email_disabled"}
+        return {"status": "skipped", "error": "email_disabled", "attempts": []}
 
-    if settings.EMAIL_PROVIDER == "resend":
-        return await send_resend_email(
+    if provider == "resend":
+        result = await send_resend_email(
             recipient=recipient,
             subject=subject,
             html_body=html_body,
@@ -289,9 +390,20 @@ async def send_email_notification(
             from_email=settings.ALERT_EMAIL_FROM,
             api_key=settings.RESEND_API_KEY,
         )
+        result.setdefault("attempts", [])
+        return result
 
-    # SMTP fallback (existing behaviour)
-    return await send_email(
+    # SMTP fallback. Render blocks outbound SMTP ports, so refuse to try there.
+    if "RENDER" in os.environ:
+        logger.warning(
+            "EMAIL_PROVIDER=smtp is not usable on Render; set EMAIL_PROVIDER=resend. "
+            "Skipping SMTP delivery."
+        )
+        return {"status": "skipped", "error": "smtp_disabled_on_render", "attempts": []}
+    if not settings.SMTP_ENABLED:
+        return {"status": "skipped", "error": "smtp_disabled", "attempts": []}
+
+    result = await send_email(
         recipient=recipient,
         subject=subject,
         body=html_body or text_body or subject,
@@ -301,3 +413,11 @@ async def send_email_notification(
         smtp_password=settings.SMTP_PASSWORD,
         use_tls=settings.SMTP_USE_TLS,
     )
+    result["attempts"] = [{
+        "attempt": 1,
+        "timestamp": _now_iso(),
+        "status": result.get("status", "failed"),
+        "http_code": None,
+        "error": result.get("error"),
+    }]
+    return result

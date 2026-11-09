@@ -15,6 +15,11 @@ from app.models.alert import Alert, AlertRule, EmailNotification, EmailType, Ema
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.services.ingest_service import IngestionService
+from app.services.notifier import (
+    is_valid_email,
+    send_email_notification,
+    send_webhook,
+)
 from app.integrations.queue import enqueue_alert_email
 from app.integrations.syslog import parse_syslog_message
 from app.core.limiting import limiter
@@ -279,6 +284,12 @@ class AlertStatusUpdate(BaseModel):
     status: str
 
 
+class TestNotificationRequest(BaseModel):
+    channel: str
+    recipient: Optional[str] = None
+    webhook_url: Optional[str] = None
+
+
 class SyslogIngestResponse(BaseModel):
     accepted: int
     rejected: int
@@ -477,12 +488,143 @@ async def list_alerts(
             "triggeredAt": a.triggered_at.isoformat() if a.triggered_at else None,
             "eventIds": a.event_ids,
             "tags": a.tags,
+            "notifications": a.notifications or [],
             "rule": {"name": a.rule.name, "description": a.rule.description} if a.rule else None,
             "dedupeKey": a.dedupe_key,
         } for a in alerts],
         "hasNextPage": has_next,
         "newCursor": next_cursor,
     }
+
+@router.post("/alerts/test-notification", response_model=dict)
+async def send_test_notification(
+    payload: "TestNotificationRequest",
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Send a one-off email or webhook using the production delivery path.
+
+    Admin-only. Returns actionable JSON errors for disabled providers, missing
+    credentials, invalid recipients, and provider rejections. Secrets are never
+    returned.
+    """
+    channel = (payload.channel or "").strip().lower()
+    settings = get_settings()
+
+    def fail(code: str, message: str, status_code: int = 400):
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": code, "message": message},
+        )
+
+    if channel == "email":
+        recipient = (payload.recipient or settings.ALERT_EMAIL_TO or "").strip()
+        if not settings.EMAIL_ENABLED:
+            fail(
+                "email_disabled",
+                "Email delivery is disabled. Set EMAIL_ENABLED=true after configuring a provider.",
+            )
+        provider = (settings.EMAIL_PROVIDER or "").strip().lower()
+        if provider == "resend":
+            if not settings.RESEND_API_KEY:
+                fail(
+                    "missing_resend_api_key",
+                    "RESEND_API_KEY is not configured on the server.",
+                )
+            if not is_valid_email(settings.ALERT_EMAIL_FROM):
+                fail(
+                    "missing_sender",
+                    "ALERT_EMAIL_FROM is missing or is not a valid address.",
+                )
+        if not is_valid_email(recipient):
+            fail(
+                "invalid_recipient",
+                "Provide a valid recipient email address in the request or ALERT_EMAIL_TO.",
+            )
+
+        try:
+            result = await send_email_notification(
+                recipient=recipient,
+                subject="Logs Manager test notification",
+                html_body="<p>This is a test notification from Logs Manager. "
+                "Email delivery is configured correctly.</p>",
+                text_body="This is a test notification from Logs Manager. "
+                "Email delivery is configured correctly.",
+            )
+        except Exception as exc:  # noqa: BLE001 - report instead of crashing
+            fail("provider_error", f"{type(exc).__name__}: {exc}", 502)
+
+        if result.get("status") == "sent":
+            return {
+                "ok": True,
+                "channel": "email",
+                "status": "sent",
+                "provider": provider or "smtp",
+                "attempts": len(result.get("attempts") or []),
+                "message_id": result.get("message_id"),
+            }
+
+        error = str(result.get("error") or "provider_error")
+        if error in ("smtp_disabled_on_render", "smtp_disabled"):
+            fail(
+                error,
+                "SMTP delivery is unavailable here. Configure EMAIL_PROVIDER=resend "
+                "and a verified sender.",
+            )
+        if error == "invalid_recipient":
+            fail("invalid_recipient", "The recipient address was rejected as invalid.")
+        if error == "invalid_sender":
+            fail("missing_sender", "ALERT_EMAIL_FROM is invalid.")
+        if error == "missing_resend_api_key":
+            fail("missing_resend_api_key", "RESEND_API_KEY is not configured on the server.")
+        fail(
+            "provider_rejected",
+            f"The email provider rejected the test message: {error}",
+            502,
+        )
+
+    if channel == "webhook":
+        from urllib.parse import urlparse
+
+        url = (payload.webhook_url or settings.ALERT_WEBHOOK_URL or "").strip()
+        if not url:
+            fail(
+                "missing_webhook_url",
+                "Provide webhook_url in the request or configure ALERT_WEBHOOK_URL.",
+            )
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            fail("invalid_webhook_url", "webhook_url must be an absolute http(s) URL.")
+
+        try:
+            attempts = await send_webhook(
+                webhook_url=url,
+                payload={
+                    "test": True,
+                    "channel": "webhook",
+                    "message": "Logs Manager test notification",
+                    "notified_at": datetime.now(timezone.utc).isoformat(),
+                },
+                retries=1,
+            )
+        except Exception as exc:  # noqa: BLE001 - report instead of crashing
+            fail("webhook_error", f"{type(exc).__name__}: {exc}", 502)
+
+        last = attempts[-1] if attempts else {}
+        if last.get("status") == "sent":
+            return {
+                "ok": True,
+                "channel": "webhook",
+                "status": "sent",
+                "attempts": len(attempts),
+                "http_code": last.get("http_code"),
+            }
+        fail(
+            "webhook_delivery_failed",
+            f"Webhook delivery failed: {last.get('error') or 'no response'}",
+            502,
+        )
+
+    fail("invalid_channel", "channel must be 'email' or 'webhook'.")
 
 @router.patch("/alerts/{alert_id}", response_model=dict)
 async def update_alert_status(

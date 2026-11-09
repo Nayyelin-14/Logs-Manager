@@ -218,6 +218,27 @@ export type FormData = {
   };
 };
 
+export interface AlertNotificationAttempt {
+  attempt: number;
+  timestamp?: string;
+  status?: string;
+  http_code?: number | null;
+  error?: string | null;
+  message_id?: string | null;
+}
+
+export interface AlertNotification {
+  id?: string;
+  channel: string;
+  target?: string;
+  created_at?: string;
+  status?: string;
+  error?: string | null;
+  sent_at?: string | null;
+  attempts?: AlertNotificationAttempt[];
+  final_status?: string;
+}
+
 export interface AlertTableProps {
   id: string;
 
@@ -226,6 +247,7 @@ export interface AlertTableProps {
 
   severity: string;
   status: string;
+  notifications?: AlertNotification[];
 
   triggeredAt: string | Date;
 }

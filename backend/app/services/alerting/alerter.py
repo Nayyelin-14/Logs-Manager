@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import logging
 import uuid
@@ -10,7 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.alert import Alert, AlertStatus
+from app.models.alert import (
+    Alert,
+    AlertStatus,
+    EmailNotification,
+    EmailStatus,
+    EmailType,
+)
 from app.core.config import get_settings
 from app.services.notifier import (
     build_webhook_payload,
@@ -25,6 +32,76 @@ logger = logging.getLogger(__name__)
 
 def _dedupe_key(rule_id: str, tenant: str, group_value: str) -> str:
     return f"{rule_id}:{tenant}:{group_value}"
+
+
+def _email_notification_id(alert_id: str, recipient: str) -> str:
+    """Deterministic id so a redelivery upserts instead of duplicating."""
+    digest = hashlib.sha256(
+        f"{alert_id}|{EmailType.ALERT.value}|{recipient}".encode("utf-8")
+    ).hexdigest()
+    return digest[:40]
+
+
+async def _persist_email_notification(
+    session: AsyncSession,
+    alert_obj: Alert,
+    *,
+    tenant: str,
+    subject: str,
+    recipient: str,
+    result: dict[str, Any],
+) -> None:
+    """Record an email attempt in the existing ``email_notifications`` table.
+
+    The insert/update is isolated in a savepoint so a persistence problem can
+    never roll back the alert itself or block webhook delivery.
+    """
+    if not is_valid_email(recipient):
+        return
+    status_value = result.get("status")
+    if status_value == "sent":
+        email_status = EmailStatus.SENT
+    elif status_value == "failed":
+        email_status = EmailStatus.FAILED
+    else:
+        # Disabled/skipped providers did not attempt a delivery.
+        return
+
+    attempts = result.get("attempts") or []
+    now = datetime.now(timezone.utc)
+    notification_id = _email_notification_id(alert_obj.id, recipient)
+
+    try:
+        async with session.begin_nested():
+            existing = await session.execute(
+                select(EmailNotification).where(EmailNotification.id == notification_id)
+            )
+            row = existing.scalar_one_or_none()
+            if row is None:
+                row = EmailNotification(
+                    id=notification_id,
+                    alert_id=alert_obj.id,
+                    email_type=EmailType.ALERT,
+                    tenant=tenant,
+                    recipient_email=recipient,
+                    subject=subject[:500],
+                    status=email_status,
+                    attempts=0,
+                )
+                session.add(row)
+            row.status = email_status
+            row.attempts = int(row.attempts or 0) + max(1, len(attempts))
+            row.last_attempt_at = now
+            row.last_error = result.get("error")
+            if email_status == EmailStatus.SENT:
+                row.sent_at = now
+            await session.flush()
+    except Exception:  # noqa: BLE001 - notification bookkeeping is best-effort
+        logger.exception(
+            "failed to persist email notification: alert=%s recipient=%s",
+            alert_obj.id,
+            recipient,
+        )
 
 
 async def _deliver_notifications(
@@ -43,34 +120,44 @@ async def _deliver_notifications(
     last_seen: datetime,
     notify: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    notifications: list[dict[str, Any]] = []
+    notifications: list[dict[str, Any]] = list(alert_obj.notifications or [])
 
     webhook_url = (notify or {}).get("webhook_url") if isinstance(notify, dict) else None
     email = (notify or {}).get("email") if isinstance(notify, dict) else None
 
     if webhook_url:
-        payload = build_webhook_payload(
-            alert_id=alert_obj.id,
-            rule={
-                "id": rule_id,
-                "name": rule_name,
-                "severity": severity,
-                "type": "threshold",
-                "filter": (notify or {}).get("filter", {}),
-                "group_by": group_by,
-                "threshold": int((notify or {}).get("threshold", 5) or 5),
-                "window_minutes": window_minutes,
-            },
-            tenant=tenant,
-            severity=severity,
-            group_value=str(group_value),
-            count=int(count),
-            window_minutes=window_minutes,
-            first_seen=(first_seen or last_seen).isoformat(),
-            last_seen=(last_seen or first_seen).isoformat(),
-            link=f"/alerts/{alert_obj.id}",
-        )
-        attempts = await send_webhook(webhook_url=webhook_url, payload=payload)
+        try:
+            payload = build_webhook_payload(
+                alert_id=alert_obj.id,
+                rule={
+                    "id": rule_id,
+                    "name": rule_name,
+                    "severity": severity,
+                    "type": "threshold",
+                    "filter": (notify or {}).get("filter", {}),
+                    "group_by": group_by,
+                    "threshold": int((notify or {}).get("threshold", 5) or 5),
+                    "window_minutes": window_minutes,
+                },
+                tenant=tenant,
+                severity=severity,
+                group_value=str(group_value),
+                count=int(count),
+                window_minutes=window_minutes,
+                first_seen=(first_seen or last_seen).isoformat(),
+                last_seen=(last_seen or first_seen).isoformat(),
+                link=f"/alerts/{alert_obj.id}",
+            )
+            attempts = await send_webhook(webhook_url=webhook_url, payload=payload)
+        except Exception as exc:  # noqa: BLE001 - webhook must not block email
+            logger.exception("webhook delivery crashed: alert=%s", alert_obj.id)
+            attempts = [{
+                "attempt": 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": "failed",
+                "http_code": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }]
         notifications = append_notification(notifications, "webhook", attempts, webhook_url)
 
     settings = get_settings()
@@ -112,36 +199,58 @@ async def _deliver_notifications(
             f"First seen: {first_seen or last_seen}\n"
             f"Last seen: {last_seen or first_seen}\n"
         )
-        email_result = await send_email_notification(
-            recipient=email_recipient,
-            subject=subject,
-            html_body=html_body,
-            text_body=text_body,
+        try:
+            email_result = await send_email_notification(
+                recipient=email_recipient,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+            )
+        except Exception as exc:  # noqa: BLE001 - email must not block the alert
+            logger.exception("email delivery crashed: alert=%s", alert_obj.id)
+            email_result = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "attempts": [],
+            }
+
+        attempts = email_result.get("attempts") or []
+        notifications = append_notification(
+            notifications, "email", attempts, email_recipient
         )
-        notifications = append_notification(notifications, "email", [], email_recipient)
-        if notifications and notifications[-1]["channel"] == "email":
-            notifications[-1]["attempts"] = [{
-                "attempt": 1,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "status": email_result.get("status", "failed"),
-                "http_code": None,
-                "error": email_result.get("error"),
-                "message_id": email_result.get("message_id"),
-            }]
-            notifications[-1]["final_status"] = email_result.get("status", "failed")
+        notification = notifications[-1]
+        email_status = email_result.get("status") or notification["status"]
+        notification["status"] = email_status
+        notification["final_status"] = email_status
+        notification["error"] = email_result.get("error")
+        notification["sent_at"] = (
+            datetime.now(timezone.utc).isoformat()
+            if email_status == "sent"
+            else notification.get("sent_at")
+        )
+        await _persist_email_notification(
+            session,
+            alert_obj,
+            tenant=tenant,
+            subject=subject,
+            recipient=email_recipient,
+            result=email_result,
+        )
     elif email_recipient:
         # Recipient configured but invalid; record a safe failure without
         # leaking the value.
-        notifications = append_notification(notifications, "email", [], "<invalid-recipient>")
-        if notifications and notifications[-1]["channel"] == "email":
-            notifications[-1]["attempts"] = [{
+        notifications = append_notification(
+            notifications,
+            "email",
+            [{
                 "attempt": 1,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "status": "failed",
                 "http_code": None,
                 "error": "invalid_recipient",
-            }]
-            notifications[-1]["final_status"] = "failed"
+            }],
+            "<invalid-recipient>",
+        )
 
     alert_obj.notifications = notifications
     await session.flush()

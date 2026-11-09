@@ -58,6 +58,7 @@ os.environ["SYSLOG_ENABLED"] = "false"
 os.environ["DATABASE_POOL"] = "null"
 os.environ["ALERT_WEBHOOK_URL"] = "http://127.0.0.1:9/webhook"
 os.environ["WEBHOOK_RETRY_DELAYS"] = "0,0,0"
+os.environ["RESEND_RETRY_DELAYS"] = "0,0"
 
 
 ADMIN_EMAIL = _ADMIN_EMAIL
