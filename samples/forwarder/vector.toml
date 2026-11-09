@@ -1,0 +1,36 @@
+# Vector: forward local syslog to the SaaS HTTPS endpoint.
+#
+# Install Vector, then run:
+#   INGEST_API_KEY=<tenant key> SYSLOG_HTTP_URL=https://<project>.vercel.app/api/ingest/syslog \
+#     vector --config samples/forwarder/vector.toml
+#
+# Vector batches the messages; the endpoint accepts newline-delimited text or
+# {"lines": [...]} JSON, so this sink always sends JSON.
+
+[sources.local_syslog]
+type = "socket"
+mode = "udp"
+address = "0.0.0.0:514"
+
+[transforms.https_payload]
+type = "remap"
+inputs = ["local_syslog"]
+source = '''
+. = {"lines": [string!(.message)]}
+'''
+
+[sinks.logs_https]
+type = "http"
+inputs = ["https_payload"]
+uri = "${SYSLOG_HTTP_URL}"
+method = "post"
+encoding.codec = "json"
+compression = "gzip"
+
+[sinks.logs_https.request]
+headers.X-API-Key = "${INGEST_API_KEY}"
+headers.Content-Type = "application/json"
+
+[sinks.logs_https.batch]
+max_events = 500
+timeout_secs = 5

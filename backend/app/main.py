@@ -6,11 +6,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
+from app.core.limiting import limiter
 from app.core.database import init_db, close_db, EFFECTIVE_DB_TARGET
 from app.api.routes import (
     health,
@@ -50,9 +49,6 @@ structlog.configure(
 
 logger = structlog.get_logger()
 startup_logger = logging.getLogger("uvicorn.error")
-
-limiter = Limiter(key_func=get_remote_address)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -31,12 +31,49 @@ Because the API is proxied through Vercel, the browser sees a **same-origin**
 `/api/*`. Auth cookies therefore work with `Secure` + `SameSite=Lax`; no
 cross-site cookie workarounds are needed.
 
-## Why raw syslog is not available
+## Syslog: SaaS vs Appliance
 
-Render and Vercel only expose HTTP(S). The UDP/TCP syslog listener (host port
-514 by default, container port 5514) runs only in the Docker appliance. In SaaS
-mode set `SYSLOG_ENABLED=false` and send events to `POST /api/ingest` with an
-`X-API-Key` header.
+The Docker appliance runs a native UDP/TCP listener. It binds host port **514**
+(container port 5514) by default; on Docker Desktop/WSL2, or when host port 514
+is busy, set `SYSLOG_HOST_PORT=5514` in `.env` and send to `-P 5514`.
+
+Render and Vercel only expose HTTP(S), so SaaS mode keeps
+`SYSLOG_ENABLED=false` and uses `POST /api/ingest/syslog` instead. It accepts
+the same RFC3164, RFC5424, and key=value syslog lines as the listener:
+
+```bash
+curl -X POST https://<project>.vercel.app/api/ingest/syslog \
+  -H "Content-Type: text/plain" \
+  -H "X-API-Key: $INGEST_API_KEY" \
+  --data-binary @samples/syslog_firewall.log
+```
+
+or JSON:
+
+```bash
+curl -X POST https://<project>.vercel.app/api/ingest/syslog \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $INGEST_API_KEY" \
+  -d '{"lines": ["<190>Oct 30 22:15:01 router01 source=network action=ALLOW src=192.168.1.10 dst=1.1.1.1 msg=\"outbound https\""]}'
+```
+
+Response (HTTP 202):
+
+```json
+{"accepted": 1, "rejected": 0, "errors": []}
+```
+
+- Tenant is taken from the API key. A mismatched `tenant` in the body/query
+  returns **403**.
+- Default limits are 1 MiB body and 1000 lines; larger requests return **413**.
+- Each event is normalized through the same `parse_syslog_message` +
+  `IngestionService`/`NormalizationService` path as the native listener, and is
+  tagged `transport=http-syslog`.
+- The route is rate limited with the shared limiter
+  (`INGEST_RATE_LIMIT`, default `600/minute`).
+
+Forwarders that forward local syslog to the HTTPS endpoint are in
+`samples/forwarder/` (Vector recommended; rsyslog `omhttp` alternative).
 
 ## Prerequisites
 

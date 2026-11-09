@@ -16,6 +16,8 @@ from app.models.user import User
 from app.models.tenant import Tenant
 from app.services.ingest_service import IngestionService
 from app.integrations.queue import enqueue_alert_email
+from app.integrations.syslog import parse_syslog_message
+from app.core.limiting import limiter
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any
 import json
@@ -275,6 +277,144 @@ async def ingest_file(
 
 class AlertStatusUpdate(BaseModel):
     status: str
+
+
+class SyslogIngestResponse(BaseModel):
+    accepted: int
+    rejected: int
+    errors: List[dict] = []
+
+
+async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
+    """Read the request body, rejecting anything over ``max_bytes``."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Syslog body exceeds the {max_bytes} byte limit.",
+                )
+        except ValueError:
+            pass
+
+    chunks: List[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Syslog body exceeds the {max_bytes} byte limit.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.post(
+    "/ingest/syslog",
+    response_model=SyslogIngestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
+async def ingest_syslog_http(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    api_user: TokenPayload = Depends(verify_api_key),
+):
+    """Ingest newline-delimited syslog lines over HTTPS.
+
+    This is the SaaS counterpart to the UDP/TCP listener. It reuses the same
+    ``parse_syslog_message`` parser and ``IngestionService`` /
+    ``NormalizationService`` path; only the transport tag and tenant context
+    differ.
+    """
+    current_settings = get_settings()
+    body = await _read_limited_body(
+        request, current_settings.INGEST_HTTP_SYSLOG_MAX_BYTES
+    )
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="Empty syslog request body.")
+
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    text = body.decode("utf-8", errors="replace")
+
+    requested_tenant: Optional[str] = request.query_params.get("tenant")
+    lines: List[Any]
+    if content_type == "application/json" or text.lstrip().startswith("{"):
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid JSON syslog body.")
+        if not isinstance(payload, dict) or not isinstance(payload.get("lines"), list):
+            raise HTTPException(
+                status_code=400,
+                detail='JSON syslog body must be {"lines": ["<syslog line>", ...]}.',
+            )
+        requested_tenant = payload.get("tenant") or requested_tenant
+        lines = payload["lines"]
+    else:
+        lines = text.splitlines()
+
+    tenant = resolve_tenant(api_user, requested_tenant)
+
+    max_lines = current_settings.INGEST_HTTP_SYSLOG_MAX_LINES
+    if len(lines) > max_lines:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Syslog batch exceeds the {max_lines} line limit.",
+        )
+
+    remote_address = request.client.host if request.client else None
+    remote_port = request.client.port if request.client else None
+    context = {
+        "tenant": tenant,
+        "username": api_user.username,
+        "email": api_user.email,
+    }
+
+    accepted = 0
+    rejected = 0
+    errors: List[dict] = []
+    service = IngestionService(session)
+
+    for index, line in enumerate(lines):
+        if not isinstance(line, str):
+            rejected += 1
+            errors.append({"line": index, "error": "line must be a string"})
+            continue
+        if not line.strip():
+            continue
+
+        parsed = parse_syslog_message(line)
+        if not parsed:
+            rejected += 1
+            errors.append({"line": index, "error": "unable to parse syslog line"})
+            continue
+
+        event = dict(parsed)
+        tags = list(event.get("tags") or [])
+        if "transport=http-syslog" not in tags:
+            tags.append("transport=http-syslog")
+        event["tags"] = tags
+        event["remoteAddress"] = remote_address
+        event["remotePort"] = remote_port
+
+        source = event.get("source") or current_settings.SYSLOG_SOURCE
+        try:
+            await service.ingest(event, source, context)
+            accepted += 1
+        except ValidationError as exc:
+            await session.rollback()
+            rejected += 1
+            errors.append({"line": index, "error": exc.message})
+        except Exception as exc:  # noqa: BLE001 - one bad line must not abort the batch
+            await session.rollback()
+            rejected += 1
+            errors.append({"line": index, "error": f"{type(exc).__name__}: {exc}"})
+
+    return SyslogIngestResponse(accepted=accepted, rejected=rejected, errors=errors)
+
 
 @router.get("/get-alerts", response_model=dict)
 async def list_alerts(

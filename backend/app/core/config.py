@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     INGEST_BATCH_MAX_EVENTS: int = 1000
     INGEST_MAX_FILE_BYTES: int = 10_485_760
 
+    # Syslog-over-HTTPS ingestion limits (SaaS / behind a proxy).
+    INGEST_HTTP_SYSLOG_MAX_BYTES: int = 1_048_576
+    INGEST_HTTP_SYSLOG_MAX_LINES: int = 1000
+    INGEST_RATE_LIMIT: str = "600/minute"
+
 
     SYSLOG_ENABLED: bool = True
     SYSLOG_TENANT: str = "demoA"

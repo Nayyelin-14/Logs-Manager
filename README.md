@@ -105,6 +105,7 @@ service is asleep.
 | POST | `/ingest` | Ingest single event (exact assignment path) |
 | POST | `/ingest/batch` | Ingest batch of events |
 | POST | `/ingest/file` | File upload (JSON, NDJSON, CSV, CloudTrail) |
+| POST | `/api/ingest/syslog` | Syslog over HTTPS (text or `{"lines":[...]}`) for SaaS |
 | GET | `/api/events` | Search events with filters (from,to,tenant,source,q,...) |
 | GET | `/api/stats/top` | Top N values for a field |
 | GET | `/api/stats/timeline` | Event counts over time, split by source |
@@ -113,6 +114,19 @@ service is asleep.
 | GET | `/api/get-alerts` | List alerts (tenant-scoped) |
 | POST | `/api/rules/{id}/test` | Dry-run alert rule evaluation |
 | POST | `/api/auth/login` | JWT login (HttpOnly cookie) |
+
+### Syslog: SaaS vs Appliance
+
+The appliance accepts native **UDP/TCP syslog on host port 514** (container
+5514) with `SYSLOG_ENABLED=true`. On Docker Desktop/WSL2, or if 514 is busy,
+set `SYSLOG_HOST_PORT=5514` and send to `-P 5514`.
+
+Render/Vercel only expose HTTPS, so SaaS mode keeps `SYSLOG_ENABLED=false` and
+uses `POST /api/ingest/syslog`. It accepts newline-delimited `text/plain` or
+`{"lines": [...]}`, requires the tenant `X-API-Key`, and returns
+`202 {"accepted","rejected","errors"}`. Events are tagged
+`transport=http-syslog` and use the same parser/normalizer as the listener.
+See `samples/send_syslog_http.sh` and `samples/forwarder/`.
 
 ## Makefile targets
 

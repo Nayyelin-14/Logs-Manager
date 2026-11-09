@@ -18,6 +18,40 @@ the worker, the syslog listener, and the webhook receiver as separate Compose
 services. SaaS mode uses managed Neon and Upstash, embeds the worker in the web
 process, and disables raw syslog because Render and Vercel are HTTP-only.
 
+## Syslog: SaaS vs Appliance
+
+| | Appliance | SaaS |
+|---|---|---|
+| Transport | UDP/TCP syslog | HTTPS `POST /api/ingest/syslog` |
+| Host port | **514** by default (container 5514); set `SYSLOG_HOST_PORT=5514` on Docker Desktop/WSL2 | 443 only |
+| Listener | `SYSLOG_ENABLED=true` starts the native listener | `SYSLOG_ENABLED=false` |
+| Auth | tenant implied by the listener config | `X-API-Key` header scoped to one tenant |
+| Normalization | `parse_syslog_message` → `IngestionService`/`NormalizationService` | same parser and service path |
+| Event tag | none | `transport=http-syslog` |
+
+The HTTPS endpoint accepts either newline-delimited text:
+
+```http
+POST /api/ingest/syslog
+Content-Type: text/plain
+X-API-Key: <tenant key>
+
+<134>Oct 30 22:14:15 fw01 vendor=Fortinet ... msg="DNS query blocked"
+```
+
+or a JSON envelope:
+
+```json
+{"lines": ["<134>Oct 30 22:14:15 fw01 ...", "<190>Oct 30 22:15:01 router01 ..."]}
+```
+
+The tenant comes from the API key. If `tenant` is supplied in the query string
+or JSON body and does not match the key, the request returns **403**. Limits
+default to 1 MiB of body and 1000 lines; oversized requests return **413**.
+Successful requests return **202** with `{"accepted", "rejected", "errors"}`.
+Use `samples/forwarder/` (Vector or rsyslog) to forward device syslog to the
+SaaS endpoint.
+
 ## Mermaid architecture diagram
 
 ```mermaid
