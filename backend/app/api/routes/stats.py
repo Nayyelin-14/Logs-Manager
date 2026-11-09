@@ -43,7 +43,7 @@ class SourceHealth(BaseModel):
     last_event_at: Optional[str]
     status: str
 def _tenant_scope(current_user: TokenPayload, requested: Optional[str]) -> Optional[str]:
-    if current_user.role == "ADMIN":
+    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
         if requested is None or requested == "" or requested == "all":
             return None
         return requested

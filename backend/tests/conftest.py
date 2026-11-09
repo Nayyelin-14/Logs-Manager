@@ -180,11 +180,16 @@ def test_database():
 def client():
     from fastapi import Depends, FastAPI
     from fastapi.testclient import TestClient
+    from slowapi.errors import RateLimitExceeded
     from app.main import app
+    from app.main import _rate_limit_exceeded_handler
+    from app.core.limiting import limiter
     from app.api.routes.health import require_feature
 
     test_app = FastAPI()
     test_app.include_router(app.router)
+    test_app.state.limiter = limiter
+    test_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     @test_app.get("/features/test-flagged")
     async def test_flagged_route(_=Depends(require_feature("test_flag"))):
@@ -273,15 +278,18 @@ def feature_test_flag_enabled():
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
     from app.api.routes.auth import _FAILED_LOGIN_TRACKER, login_limiter
+    from app.core.limiting import limiter
 
     _FAILED_LOGIN_TRACKER.clear()
-    try:
-        login_limiter.reset()
-    except Exception:
-        pass
+    for rate_limiter in (login_limiter, limiter):
+        try:
+            rate_limiter.reset()
+        except Exception:
+            pass
     yield
     _FAILED_LOGIN_TRACKER.clear()
-    try:
-        login_limiter.reset()
-    except Exception:
-        pass
+    for rate_limiter in (login_limiter, limiter):
+        try:
+            rate_limiter.reset()
+        except Exception:
+            pass

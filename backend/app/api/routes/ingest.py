@@ -92,10 +92,41 @@ def as_validation_http_error(exc: ValidationError) -> HTTPException:
     return HTTPException(status_code=400, detail=exc.message)
 
 
+def is_platform_admin(current_user: TokenPayload) -> bool:
+    """An ADMIN without a tenant is a platform administrator.
+
+    Admins created inside a tenant are tenant-bound and must not manage other
+    tenants. VIEWERs are always bound to their own tenant.
+    """
+    return current_user.role == "ADMIN" and not (current_user.tenant or "").strip()
+
+
 def owns_tenant(current_user: TokenPayload, tenant: Optional[str]) -> bool:
-    if current_user.role == "ADMIN":
+    if is_platform_admin(current_user):
         return True
     return (current_user.tenant or "") == (tenant or "")
+
+
+def effective_read_tenant(
+    current_user: TokenPayload, requested: Optional[str]
+) -> Optional[str]:
+    """Resolve the tenant filter for read endpoints.
+
+    Platform admins may ask for a specific tenant or all tenants. Everyone
+    else, including tenant-bound admins, is restricted to their own tenant.
+    """
+    requested_tenant = (requested or "").strip()
+    if is_platform_admin(current_user):
+        return None if requested_tenant in ("", "all") else requested_tenant
+    return current_user.tenant
+
+
+def require_platform_admin(current_user: TokenPayload) -> None:
+    if not is_platform_admin(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Tenant management requires a platform administrator",
+        )
 
 
 
@@ -126,6 +157,7 @@ class IngestResponse(BaseModel):
 
 @router.post("/ingest", response_model=IngestResponse)
 @public_router.post("/ingest", response_model=IngestResponse)
+@limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
 async def ingest_single_event(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -186,22 +218,24 @@ async def ingest_single_event(
 
 @router.post("/ingest/batch", response_model=IngestResponse)
 @public_router.post("/ingest/batch", response_model=IngestResponse)
+@limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
 async def ingest_batch_events(
-    request: IngestBatchRequest,
+    request: Request,
+    body: IngestBatchRequest,
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
-    tenant = resolve_tenant(api_user, request.tenant)
-    if len(request.events) > settings.INGEST_BATCH_MAX_EVENTS:
+    tenant = resolve_tenant(api_user, body.tenant)
+    if len(body.events) > settings.INGEST_BATCH_MAX_EVENTS:
         raise HTTPException(
             status_code=413,
             detail=f"Batch exceeds the limit of {settings.INGEST_BATCH_MAX_EVENTS} events.",
         )
-    if not request.events:
+    if not body.events:
         raise HTTPException(status_code=400, detail="Batch must contain at least one event.")
 
 
-    for idx, event in enumerate(request.events):
+    for idx, event in enumerate(body.events):
         if not isinstance(event, dict):
             raise HTTPException(
                 status_code=400,
@@ -213,8 +247,8 @@ async def ingest_batch_events(
     service = IngestionService(session)
     try:
         result = await service.ingest_batch(
-            request.events,
-            request.source,
+            body.events,
+            body.source,
             {"tenant": tenant, "username": api_user.username, "email": api_user.email},
         )
     except ValidationError as e:
@@ -224,14 +258,16 @@ async def ingest_batch_events(
         success=result["ingested"] > 0,
         ingested=result["ingested"],
         rejected=result["failed"],
-        parsed=len(request.events),
+        parsed=len(body.events),
         alerts=result.get("alerts", []),
         errors=[r for r in result["results"] if not r.get("success")],
     )
 
 @router.post("/ingest/file", response_model=IngestResponse)
 @public_router.post("/ingest/file", response_model=IngestResponse)
+@limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
 async def ingest_file(
+    request: Request,
     file: UploadFile = File(...),
     source: Optional[str] = Form(None),
     tenant: Optional[str] = Form(None),
@@ -440,7 +476,7 @@ async def list_alerts(
 ):
     requested_tenant = (tenant or "").strip()
     if current_user.role == "ADMIN":
-        effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
+        effective_tenant = effective_read_tenant(current_user, requested_tenant)
     else:
         effective_tenant = current_user.tenant
 
@@ -640,6 +676,8 @@ async def update_alert_status(
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+    if (current_user.tenant or "").strip() and alert.tenant != current_user.tenant:
+        raise HTTPException(status_code=404, detail="Alert not found")
 
     alert.status = update.status
     await session.commit()
@@ -751,7 +789,7 @@ async def list_alert_rules(
 ):
     requested_tenant = (tenant or "").strip()
     if current_user.role == "ADMIN":
-        effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
+        effective_tenant = effective_read_tenant(current_user, requested_tenant)
     else:
         effective_tenant = current_user.tenant
 
@@ -975,7 +1013,7 @@ async def list_users(
     current_user: TokenPayload = Depends(require_admin),
 ):
     requested_tenant = (tenant or "").strip()
-    effective_tenant = None if requested_tenant in ("", "all") else requested_tenant
+    effective_tenant = effective_read_tenant(current_user, requested_tenant)
 
     query = select(User)
     if effective_tenant:
@@ -1160,9 +1198,7 @@ async def get_all_data(
     current_user: TokenPayload = Depends(require_admin),
 ):
     requested = (tenant or "").strip()
-    if current_user.role != "ADMIN":
-        requested = current_user.tenant or ""
-    effective_tenant = None if requested in ("", "all") else requested
+    effective_tenant = effective_read_tenant(current_user, requested)
 
     def tenant_filter(model):
         return [model.tenant == effective_tenant] if effective_tenant else []
@@ -1233,6 +1269,7 @@ async def create_tenant(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
+    require_platform_admin(current_user)
     from app.models.enums import Role
 
 
@@ -1285,6 +1322,7 @@ async def list_tenants(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
+    require_platform_admin(current_user)
     result = await session.execute(select(Tenant).order_by(Tenant.name))
     tenants = result.scalars().all()
     return [
@@ -1307,6 +1345,7 @@ async def update_tenant(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
+    require_platform_admin(current_user)
     result = await session.execute(select(Tenant).where(Tenant.name == name))
     tenant = result.scalar_one_or_none()
     if not tenant:
@@ -1333,6 +1372,7 @@ async def rotate_tenant_key(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
+    require_platform_admin(current_user)
     result = await session.execute(select(Tenant).where(Tenant.name == name))
     tenant = result.scalar_one_or_none()
     if not tenant:

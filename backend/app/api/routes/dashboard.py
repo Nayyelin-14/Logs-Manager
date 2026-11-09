@@ -49,7 +49,7 @@ async def get_dashboard_stats(
 ):
 
     requested_tenant = (tenant or "").strip()
-    if current_user.role == "ADMIN":
+    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
         tenant = None if requested_tenant in ("", "all") else requested_tenant
     else:
         tenant = current_user.tenant

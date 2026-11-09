@@ -13,6 +13,39 @@ from app.models.events import Event
 router = APIRouter()
 
 
+def _effective_tenant(current_user: "TokenPayload", requested: Optional[str]) -> Optional[str]:
+    """Resolve a read filter, respecting tenant-bound administrators."""
+    requested_tenant = (requested or "").strip()
+    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
+        return None if requested_tenant in ("", "all") else requested_tenant
+    return current_user.tenant
+
+
+def _event_payload(log: Event) -> dict:
+    return {
+        "id": log.id,
+        "timestamp": _iso_utc(log.ts),
+        "eventType": log.event_type,
+        "user": log.user_name,
+        "srcIp": log.src_ip,
+        "dstIp": log.dst_ip,
+        "description": log.raw.get("description") if isinstance(log.raw, dict) else None,
+        "severity": log.severity,
+        "severityLevel": _severity_level(log.severity),
+        "tenant": log.tenant,
+        "action": log.action if isinstance(log.action, str) else (log.action.value if log.action else None),
+        "source": log.source if isinstance(log.source, str) else (log.source.value if log.source else None),
+        "host": log.host,
+        "process": log.process,
+        "protocol": log.protocol,
+        "statusCode": log.status_code,
+        "priority": log.raw.get("priority") if isinstance(log.raw, dict) else None,
+        "sha256": log.raw.get("sha256") if isinstance(log.raw, dict) else None,
+        "raw": log.raw,
+        "createdAt": _iso_utc(log.ingested_at),
+    }
+
+
 def _iso_utc(value):
     if value is None:
         return None
@@ -67,12 +100,7 @@ async def search_logs(
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
     requested_tenant = (filters.tenant or "").strip()
-    if current_user.role == "ADMIN":
-        tenant = None if requested_tenant in ("", "all") else requested_tenant
-    else:
-
-
-        tenant = current_user.tenant
+    tenant = _effective_tenant(current_user, requested_tenant)
 
     query = select(Event)
     if tenant:
@@ -143,30 +171,7 @@ async def search_logs(
     next_cursor = logs[-1].id if has_next else None
 
 
-    log_dicts = []
-    for log in logs:
-        log_dicts.append({
-            "id": log.id,
-            "timestamp": _iso_utc(log.ts),
-            "eventType": log.event_type,
-            "user": log.user_name,
-            "srcIp": log.src_ip,
-            "dstIp": log.dst_ip,
-            "description": log.raw.get("description") if isinstance(log.raw, dict) else None,
-            "severity": log.severity,
-            "severityLevel": _severity_level(log.severity),
-            "tenant": log.tenant,
-            "action": log.action if isinstance(log.action, str) else (log.action.value if log.action else None),
-            "source": log.source if isinstance(log.source, str) else (log.source.value if log.source else None),
-            "host": log.host,
-            "process": log.process,
-            "protocol": log.protocol,
-            "statusCode": log.status_code,
-            "priority": log.raw.get("priority") if isinstance(log.raw, dict) else None,
-            "sha256": log.raw.get("sha256") if isinstance(log.raw, dict) else None,
-            "raw": log.raw,
-            "createdAt": _iso_utc(log.ingested_at),
-        })
+    log_dicts = [_event_payload(log) for log in logs]
 
     return {
         "logs": log_dicts,
@@ -174,6 +179,30 @@ async def search_logs(
         "prevCursor": None,
         "total": len(log_dicts),
     }
+
+
+@router.get("/events/{event_id}", response_model=dict)
+async def get_event(
+    event_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: "TokenPayload" = Depends(get_current_user),
+):
+    """Return one event, scoped to the caller's tenant.
+
+    A tenant mismatch returns 404 rather than 403 so the endpoint does not
+    reveal whether another tenant's event exists.
+    """
+    tenant = _effective_tenant(current_user, None)
+    query = select(Event).where(Event.id == event_id)
+    if tenant:
+        query = query.where(Event.tenant == tenant)
+
+    result = await session.execute(query)
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    return _event_payload(log)
 
 
 @router.delete("/delete-log/{log_id}", response_model=dict)
@@ -193,6 +222,8 @@ async def delete_log(
     )
     log = result.scalar_one_or_none()
     if not log:
+        return {"success": False, "message": "Log not found"}
+    if (current_user.tenant or "").strip() and log.tenant != current_user.tenant:
         return {"success": False, "message": "Log not found"}
 
 

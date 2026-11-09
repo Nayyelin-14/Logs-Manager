@@ -279,7 +279,7 @@ class TestTenantIsolation:
         tenant_names = [t.get("tenant") for t in tenants]
         assert tenant_names == ["demob"], f"expected [demob], got {tenant_names}"
 
-    def test_viewer_b_cannot_patch_demoa_alert(self, client):
+    def test_viewer_b_cannot_patch_demoa_alert(self, client, api_key):
         admin = _get_admin_client(client)
 
         admin.post("/api/rules", json={
@@ -288,7 +288,7 @@ class TestTenantIsolation:
             "conditions": [{"type": "source", "value": "ad"}, {"type": "event_type", "value": "LogonFailed"}],
         })
 
-        admin.post("/api/ingest", headers={"X-API-Key": "demoa-api-key-0123456789abcdef0123456789abcdef", "Content-Type": "application/json"}, json={
+        admin.post("/api/ingest", headers={"X-API-Key": api_key, "Content-Type": "application/json"}, json={
             "source": "ad",
             "tenant": "demoa",
             "event_type": "LogonFailed",
@@ -311,9 +311,9 @@ class TestTenantIsolation:
         res = client.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
         assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
 
-    def test_viewer_b_cannot_delete_demoa_log(self, client):
+    def test_viewer_b_cannot_delete_demoa_log(self, client, api_key):
         admin = _get_admin_client(client)
-        res = admin.post("/api/ingest", headers={"X-API-Key": "demoa-api-key-0123456789abcdef0123456789abcdef", "Content-Type": "application/json"}, json={
+        res = admin.post("/api/ingest", headers={"X-API-Key": api_key, "Content-Type": "application/json"}, json={
             "source": "api",
             "tenant": "demoa",
             "event_type": "test",
@@ -322,11 +322,11 @@ class TestTenantIsolation:
             "severity": 6,
         })
         assert res.status_code == 200
-        alert_id = res.json().get("alerts", [{}])[0].get("id")
-        assert alert_id is not None
+        event_id = res.json().get("eventId")
+        assert event_id is not None
 
         client = _get_viewer_b_client(client)
-        res = client.delete(f"/api/delete-log/{alert_id}")
+        res = client.delete(f"/api/delete-log/{event_id}")
         assert res.status_code == 403, f"expected 403, got {res.status_code}: {res.text}"
 
 
