@@ -100,8 +100,8 @@ services:
       - SYSLOG_TIMEZONE=UTC
       - INGEST_DEFAULT_TENANT=demoA
     ports:
-      - "0.0.0.0:514:5514/udp"
-      - "0.0.0.0:514:5514/tcp"
+      - "0.0.0.0:${SYSLOG_HOST_PORT:-514}:5514/udp"
+      - "0.0.0.0:${SYSLOG_HOST_PORT:-514}:5514/tcp"
     depends_on:
       db:
         condition: service_healthy
