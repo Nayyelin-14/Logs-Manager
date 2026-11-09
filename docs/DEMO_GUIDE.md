@@ -52,8 +52,9 @@ echo '<190>Aug 20 13:01:02 r1 if=ge-0/0/1 event=link-down \
 mac=aa:bb:cc:dd:ee:ff reason=carrier-loss' | nc 127.0.0.1 514
 ```
 
-Wait ~10 seconds, then open the UI at `https://localhost:443/` and verify the
-firewall/network events appear in the logs table.
+Wait ~10 seconds, then open the UI at `https://localhost:${HTTPS_PORT}/`
+(defaults to 443; the local `.env` uses 8443) and verify the firewall/network
+events appear in the logs table.
 
 ### 1b. HTTP POST /ingest (sample 4.3)
 
@@ -107,13 +108,24 @@ etc.).
 
 ## 2. Raw vs normalized (3 min)
 
-Click any row in the logs table → opens a drawer showing:
-- Normalized fields (ts, tenant, source, event_type, severity, action, outcome,
-  src_ip, user, host, etc.)
-- Raw JSON (the original message preserved in `raw`)
+Fetch one event's detail (normalized fields plus the original payload in `raw`):
+
+```bash
+curl -s -b /tmp/cookies "http://localhost:4500/api/get-logs?limit=1" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["logs"][0]["id"])'
+
+curl -s -b /tmp/cookies http://localhost:4500/api/events/<event-id> | python3 -m json.tool
+```
+
+Show the normalized fields (ts, tenant, source, event_type, severity, action,
+outcome, src_ip, user, host, etc.) and the preserved `raw` JSON. A tenant
+VIEWER or tenant-bound ADMIN gets HTTP 404 for another tenant's event, while a
+platform ADMIN (tenant `NULL`) can read any tenant.
 
 Demonstrate that a syslog message, an AWS CloudTrail record, and an AD event
 all look the same in normalized form, with the original preserved in `raw`.
+A row-click detail drawer in the web UI is a future enhancement; the API above
+is the supported path today.
 
 ---
 
