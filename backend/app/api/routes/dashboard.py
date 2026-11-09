@@ -136,6 +136,7 @@ async def get_dashboard_stats(
 
     events_by_tenant = await session.execute(
         select(Event.tenant, func.count().label("count"))
+        .where(Event.tenant == tenant if tenant else True)
         .where(Event.ts.between(start_date, end_date))
         .group_by(Event.tenant)
         .order_by(desc("count"))
