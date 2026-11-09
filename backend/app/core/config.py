@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     ALERT_EMAIL_RECIPIENTS: str = ""
 
+    # Email provider selection: "smtp" or "resend"
+    EMAIL_PROVIDER: str = "smtp"
+    # Master switch for outbound alert email. Disabled by default until
+    # a provider is configured.
+    EMAIL_ENABLED: bool = False
+    # Resend HTTPS API configuration (used when EMAIL_PROVIDER=resend)
+    RESEND_API_KEY: Optional[str] = None
+    ALERT_EMAIL_FROM: Optional[str] = None
+    ALERT_EMAIL_TO: Optional[str] = None
+
 
     INGEST_API_USERNAME: str = "log-forwarder"
     INGEST_DEFAULT_TENANT: str = "demoA"

@@ -92,7 +92,7 @@ def _stub_alert_delivery(monkeypatch):
         return {"status": "sent", "error": None}
 
     monkeypatch.setattr("app.services.alerting.alerter.send_webhook", fake_send_webhook)
-    monkeypatch.setattr("app.services.alerting.alerter.send_email", fake_send_email)
+    monkeypatch.setattr("app.services.alerting.alerter.send_email_notification", fake_send_email)
 
 
 def _connection_kwargs(database: str) -> dict:

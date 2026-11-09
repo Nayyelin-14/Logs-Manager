@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -10,11 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import Alert, AlertStatus
+from app.core.config import get_settings
 from app.services.notifier import (
     build_webhook_payload,
+    is_valid_email,
+    send_email_notification,
     send_webhook,
     append_notification,
-    send_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,19 +73,52 @@ async def _deliver_notifications(
         attempts = await send_webhook(webhook_url=webhook_url, payload=payload)
         notifications = append_notification(notifications, "webhook", attempts, webhook_url)
 
-    if email:
-        email_result = await send_email(
-            recipient=email,
-            subject=f"[ALERT] {rule_name} - {severity}",
-            body=f"Alert triggered for {group_by}={group_value} "
-            f"({count} events in {window_minutes} min) on tenant {tenant}",
-            smtp_host="",
-            smtp_port=587,
-            smtp_username=None,
-            smtp_password=None,
-            use_tls=True,
+    settings = get_settings()
+    email_recipient = (settings.ALERT_EMAIL_TO or "").strip() or (email or "").strip()
+
+    if email_recipient and is_valid_email(email_recipient):
+        subject = f"[{severity.upper()}] {rule_name}"
+        alert_description = alert_obj.description or rule_name
+        safe = {
+            "rule_name": html.escape(str(rule_name)),
+            "tenant": html.escape(str(tenant)),
+            "description": html.escape(str(alert_description)),
+            "group_by": html.escape(str(group_by)),
+            "group_value": html.escape(str(group_value)),
+        }
+        html_body = (
+            f"<h2>Security Alert: {safe['rule_name']}</h2>"
+            f"<p><b>Severity:</b> {severity.upper()}</p>"
+            f"<p><b>Tenant:</b> {safe['tenant']}</p>"
+            f"<p><b>Alert ID:</b> {alert_obj.id}</p>"
+            f"<p><b>Description:</b> {safe['description']}</p>"
+            f"<p><b>Group field:</b> {safe['group_by']}</p>"
+            f"<p><b>Group value:</b> {safe['group_value']}</p>"
+            f"<p><b>Event count:</b> {count}</p>"
+            f"<p><b>Window:</b> {window_minutes} minutes</p>"
+            f"<p><b>First seen:</b> {first_seen or last_seen}</p>"
+            f"<p><b>Last seen:</b> {last_seen or first_seen}</p>"
         )
-        notifications = append_notification(notifications, "email", [], email)
+        text_body = (
+            f"Security Alert: {rule_name}\n"
+            f"Severity: {severity.upper()}\n"
+            f"Tenant: {tenant}\n"
+            f"Alert ID: {alert_obj.id}\n"
+            f"Description: {alert_description}\n"
+            f"Group field: {group_by}\n"
+            f"Group value: {group_value}\n"
+            f"Event count: {count}\n"
+            f"Window: {window_minutes} minutes\n"
+            f"First seen: {first_seen or last_seen}\n"
+            f"Last seen: {last_seen or first_seen}\n"
+        )
+        email_result = await send_email_notification(
+            recipient=email_recipient,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+        )
+        notifications = append_notification(notifications, "email", [], email_recipient)
         if notifications and notifications[-1]["channel"] == "email":
             notifications[-1]["attempts"] = [{
                 "attempt": 1,
@@ -90,8 +126,22 @@ async def _deliver_notifications(
                 "status": email_result.get("status", "failed"),
                 "http_code": None,
                 "error": email_result.get("error"),
+                "message_id": email_result.get("message_id"),
             }]
             notifications[-1]["final_status"] = email_result.get("status", "failed")
+    elif email_recipient:
+        # Recipient configured but invalid; record a safe failure without
+        # leaking the value.
+        notifications = append_notification(notifications, "email", [], "<invalid-recipient>")
+        if notifications and notifications[-1]["channel"] == "email":
+            notifications[-1]["attempts"] = [{
+                "attempt": 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "status": "failed",
+                "http_code": None,
+                "error": "invalid_recipient",
+            }]
+            notifications[-1]["final_status"] = "failed"
 
     alert_obj.notifications = notifications
     await session.flush()
