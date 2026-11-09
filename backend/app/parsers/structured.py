@@ -61,6 +61,9 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
     ) or safe_string(pick(payload, ["eventType", "event_type"])) or "api_event"
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.API)
     status = safe_string(pick(event, ["status"])) or safe_string(pick(payload, ["status_code", "statusCode"]))
+    severity = safe_severity(pick(event, ["severity", "Severity"]))
+    if severity is None:
+        severity = safe_severity(pick(payload, ["severity", "Severity"]))
     action = safe_string(pick(event, ["action", "Action"])).upper() if safe_string(pick(event, ["action", "Action"])) else None
     outcome = determine_outcome(
         event_type=original_event_type,
@@ -78,6 +81,7 @@ def normalize_api(event: Dict[str, Any]) -> Dict[str, Any]:
         "canonical_event_type": canonical_event_type,
         "original_event_type": original_event_type,
         "event_subtype": safe_string(pick(event, ["eventSubtype", "event_subtype"])),
+        "severity": severity if severity is not None else 0,
         "user": safe_string(pick(event, ["user", "username", "user_name", "userId", "user_id"])),
         "src_ip": safe_string(pick(event, ["srcIp", "src_ip", "ip", "sourceIp", "source_ip", "clientIp", "client_ip"])),
         "src_port": safe_number(pick(event, ["srcPort", "src_port", "spt"])),

@@ -48,6 +48,7 @@ class TestEventDetail:
         assert body["id"] == event_id
         assert body["tenant"] == "demoa"
         assert body["eventType"] == "event-detail-test"
+        assert body["severity"] == 4
         assert "raw" in body
 
         _relogin(client, VIEWER_B_EMAIL, VIEWER_B_PASSWORD)
