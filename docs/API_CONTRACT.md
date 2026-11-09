@@ -108,7 +108,7 @@ All endpoints preserve:
 | **Path** | `/api/ingest/batch` |
 | **Auth** | API Key OR JWT |
 | **Content-Type** | `multipart/form-data` (file) OR `application/json` |
-| **File Field** | `file` (multer) |
+| **File Field** | `file` (FastAPI `UploadFile`) |
 | **JSON Body** | Array OR `{ events: [], source?, tenant? }` |
 | **Response (201/400)** | `{ success, total, ingested, failed, results: [{ index, success, eventId?, error? }] }` |
 | **Max File Size** | `INGEST_MAX_FILE_BYTES` (10MB) |
@@ -134,7 +134,7 @@ All endpoints preserve:
 **LogWithSeverityLevel:**
 ```json
 {
-  "id": "cuid...",
+  "id": "a1b2c3d4e5f67890...",
   "action": "DENY",
   "user": "alice",
   "srcIp": "203.0.113.77",
@@ -222,14 +222,14 @@ All endpoints preserve:
 **AlertWithRule:**
 ```json
 {
-  "id": "cuid...",
+  "id": "a1b2c3d4e5f67890...",
   "tenant": "demoA",
   "title": "Alert: Brute force - repeated failures",
   "description": "Repeated failed logins from 203.0.113.7 exceeded 5 attempts in 5 minutes.",
   "severity": "high",
   "status": "open",
   "triggeredAt": "2026-10-30T22:20:00.000Z",
-  "eventIds": ["event-cuid-1", "event-cuid-2"],
+  "eventIds": ["a1b2c3d4e5f67890...", "b2c3d4e5f67890a1..."],
   "rule": { "name": "Brute force - repeated failures", "description": "..." },
   "dedupeKey": "rule-id:repeated_failures:srcIp:203.0.113.7:ad_logon_failed"
 }
@@ -263,7 +263,7 @@ All endpoints preserve:
 **AlertRule:**
 ```json
 {
-  "id": "cuid...",
+  "id": "a1b2c3d4e5f67890...",
   "name": "Brute force - repeated failures",
   "description": "Triggers when one source IP fails to log in 5 times within 5 minutes.",
   "tenant": "demoA",
@@ -435,20 +435,19 @@ All error responses follow this format:
 // 4xx/5xx
 {
   "message": "Human-readable error message",
-  "error": "ERROR_CODE",  // e.g., "Invalid_Error", "unthenticated", "unauthorized"
-  "code": "prisma_error_code",  // optional, e.g., "P2002"
-  "meta": {}  // optional, Prisma meta
+  "error": "ERROR_CODE",  // e.g., "Invalid_Error", "unauthenticated", "unauthorized"
+  "code": null,           // optional provider/database code when available
+  "meta": {}              // optional context
 }
 ```
 
 **Common Error Codes:**
 - `Invalid_Error` — Validation failed
-- `unthenticated` — Not authenticated / token invalid
+- `unauthenticated` — Not authenticated / token invalid
 - `unauthorized` — Insufficient permissions
 - `userExist` — Email already registered
 - `existedRule` — Alert rule name exists in tenant
 - `overLimit` — Rate limit exceeded
-- `otpExpired` — OTP expired
 
 ---
 

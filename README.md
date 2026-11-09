@@ -160,13 +160,16 @@ cd backend && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
 | Backend API | 127.0.0.1:4500 | 4500 |
 | PostgreSQL | 127.0.0.1:55432 | 5432 |
 | Redis | 127.0.0.1:56379 | 6379 |
-| Syslog (UDP/TCP) | 127.0.0.1:514 | 5514 |
+| Syslog (UDP/TCP) | 0.0.0.0:514 | 5514 |
 | Webhook receiver | 127.0.0.1:8008 | 8000 |
 
 The React SPA is built into the Caddy image and served by Caddy at `/`; there is
 no separate frontend container or nginx process.
 
-Set `DB_HOST_PORT=5432` etc. to use standard ports if available.
+Set `DB_HOST_PORT=5432` etc. to use standard ports if available. The syslog
+host port defaults to **514** so `logger -n <host>` works out of the box. On
+Docker Desktop/WSL2, or if host port 514 is busy, set
+`SYSLOG_HOST_PORT=5514` in `.env` and send to `-P 5514` instead.
 
 ## Acceptance checklist (`make verify`)
 

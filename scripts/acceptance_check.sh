@@ -86,7 +86,7 @@ fi
 admin_login || true
 
 echo ""
-echo "[2] Syslog message on port 514 (UDP + TCP) visible via the API within 60s"
+echo "[2] Syslog message on port $SYSLOG_PORT (UDP + TCP) visible via the API within 60s"
 SYSLOG_MSG='<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg="DNS blocked" policy=Block-DNS'
 echo -n "$SYSLOG_MSG" | nc -u -w 1 "$SYSLOG_HOST" "$SYSLOG_PORT" >/dev/null 2>&1 || true
 sleep 1

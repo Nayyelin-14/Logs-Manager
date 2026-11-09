@@ -50,9 +50,23 @@ make seed
 # Access the system
 #   UI:        https://localhost:443/  (Caddy, self-signed cert locally)
 #   API:       http://localhost:4500
-#   Syslog:    UDP/TCP 127.0.0.1:514
+#   Syslog:    UDP/TCP <host-ip>:514 (default; container listens on 5514)
 #   API docs:  http://localhost:4500/docs
 ```
+
+> **Syslog port note:** The host port defaults to **514**, the standard
+> firewall/router syslog port, and Compose binds it on **0.0.0.0** so remote
+> devices can reach the appliance. The container always listens internally on
+> 5514; only the host mapping changes. Binding 514 requires the Docker daemon
+> to have permission for low ports (normally true when Docker runs as root).
+>
+> Use **5514** instead on Docker Desktop/WSL2, where low-port forwarding can
+> fail, or if host port 514 is already in use. Set the override in your local
+> `.env` (never commit it):
+> ```
+> SYSLOG_HOST_PORT=5514
+> ```
+> Then send with `logger -n <host> -P 5514`.
 
 > **Port conflicts:** If ports 80 or 443 are already in use on your host, override them in `.env`:
 > ```
@@ -124,8 +138,8 @@ After startup:
 | UI Dashboard | https://localhost:443/ |
 | API | http://localhost:4500 |
 | Swagger Docs | http://localhost:4500/docs |
-| Syslog UDP | 127.0.0.1:514 |
-| Syslog TCP | 127.0.0.1:514 |
+| Syslog UDP | <host-ip>:514 (default; container 5514) |
+| Syslog TCP | <host-ip>:514 (default; container 5514) |
  
  ## Environment Variables
  
@@ -145,6 +159,8 @@ After startup:
  
  # Syslog (optional, for receiving logs)
  SYSLOG_ENABLED=true
+ SYSLOG_BIND_IP=0.0.0.0
+ SYSLOG_HOST_PORT=514
  SYSLOG_UDP_PORT=5514
  SYSLOG_TCP_PORT=5514
  
@@ -181,7 +197,7 @@ LOGIN_LOCKOUT_MINUTES=15
  # Send sample syslog
  ./samples/send_syslog.sh udp samples/syslog_firewall.log
  
- # Or use logger
+ # Or use logger (host port 514 by default; use -P 5514 for the Docker Desktop override)
  logger -n 127.0.0.1 -P 514 \
    '<134>Oct 30 22:14:15 fw01 vendor=Demo product=Firewall action=DENY src=10.0.0.5 dst=8.8.8.8 spt=54321 dpt=53 proto=UDP msg="Blocked DNS query"'
  ```
@@ -267,8 +283,8 @@ docker compose -p lms_local -f docker-compose.yml exec -T db psql -U logs -d log
  # Check syslog listener
  docker compose -p lms_local -f docker-compose.yml logs backend | grep syslog
 
- # Verify port is listening
- ss -tuln | grep 514
+ # Verify port is listening (514 default, 5514 override)
+ ss -tuln | grep -E ':(514|5514)\b'
  ```
 
  ### Database connection issues

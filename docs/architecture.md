@@ -10,7 +10,7 @@ Compose) or as a zero-cost SaaS.
 
 | Mode | Hosting | Public entry point | Ingestion |
 |---|---|---|---|
-| Appliance | One VM or machine, Docker Compose | Caddy on 80/443 | Syslog 5514/514 and HTTP `/api/ingest` |
+| Appliance | One VM or machine, Docker Compose | Caddy on 80/443 | Syslog 514 (container 5514) and HTTP `/api/ingest` |
 | SaaS | Vercel (SPA) + Render (API) + Neon + Upstash | Vercel HTTPS, `/api/*` proxied to Render | HTTP `/api/ingest` only |
 
 Both modes run the same backend code. The appliance runs PostgreSQL, Redis,
@@ -32,7 +32,7 @@ graph TB
     AD[Active Directory<br/>Event 4624/4625]
 
     %% Ingest
-    ING[/ingest<br/>Syslog Listener<br/>UDP/TCP 5514]
+    ING[/ingest<br/>Syslog Listener<br/>UDP/TCP 514 host<br/>(5514 container)]
     HTTP[FastAPI<br/>POST /ingest<br/>X-API-Key / JWT]
 
     %% Normalize

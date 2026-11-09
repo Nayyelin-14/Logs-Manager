@@ -46,7 +46,7 @@ For backend-only development, start `db` and `redis` with Compose and run the Fa
 | Service | Port | Description |
 |---------|------|-------------|
 | Backend API | 4500 | FastAPI app with all routes |
-| Syslog Listener | 5514/UDP, 5514/TCP | RFC3164/RFC5424 syslog parser |
+| Syslog Listener | 514 host (5514 container) UDP/TCP | RFC3164/RFC5424 syslog parser |
 | PostgreSQL | 5432 (internal) | Events, users, rules, alerts |
 | Redis | 6379 (internal) | Cache, email queue (arq) |
 | Caddy | 443/HTTPS | Reverse proxy with TLS |
