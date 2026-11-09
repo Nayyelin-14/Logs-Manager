@@ -12,6 +12,21 @@ from app.services.alerting.alerter import create_or_update_alert
 logger = logging.getLogger(__name__)
 
 VALID_GROUP_BY = {"src_ip", "user_name", "host"}
+
+
+def _normalize_identifier(value: Any) -> str:
+    """Case- and separator-insensitive identifier for rule filters.
+
+    CrowdStrike emits ``MalwareDetected`` while seed rules use
+    ``malware_detected``; both must match. Underscores and hyphens are ignored.
+    """
+    return str(value or "").strip().lower().replace("_", "").replace("-", "")
+
+
+def _sql_normalized(column):
+    return func.lower(func.replace(func.replace(column, "_", ""), "-", ""))
+
+
 def _build_filter_conditions(rule: AlertRule) -> list:
     conditions: list = []
     filter_json = rule.filter or {}
@@ -42,7 +57,9 @@ def _build_filter_conditions(rule: AlertRule) -> list:
     if filter_json.get("source"):
         conditions.append(Event.source == filter_json["source"])
     if filter_json.get("event_type"):
-        conditions.append(Event.event_type == filter_json["event_type"])
+        value = _normalize_identifier(filter_json["event_type"])
+        if value:
+            conditions.append(_sql_normalized(Event.event_type) == value)
     severity_gte = filter_json.get("severity_gte")
     if severity_gte is not None:
         try:
