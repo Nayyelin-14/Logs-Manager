@@ -114,15 +114,23 @@ See `.env.example` for all required settings. Key variables:
   `Asia/Bangkok`. Unknown values fall back to UTC with a warning. RFC5424
   messages carry their own offset and are never affected.
 - `RETENTION_DAYS` - Raw-log retention window in days (default `7`)
-- `RETENTION_SCHEDULE` - Cron expression for the retention job (default `0 5 * * *`)
-- `SMTP_ENABLED` - `true`/`false` (email notifications)
+- `RETENTION_INTERVAL_MINUTES` - Interval between retention runs (default `60`)
+- `RETENTION_RUN_ON_STARTUP` - Run a purge when the app/worker starts (default `true`)
+- `RETENTION_SCHEDULE` - Legacy cron expression, retained for compatibility
+- `EMAIL_PROVIDER` - `resend` (recommended for SaaS) or `smtp`
+- `EMAIL_ENABLED` - Master switch for alert email delivery
+- `RESEND_API_KEY` / `ALERT_EMAIL_FROM` / `ALERT_EMAIL_TO` - Resend credentials
+- `ALERT_WEBHOOK_URL` - Optional global webhook used when seeding rules
+- `SMTP_ENABLED` - `true`/`false` (SMTP is skipped automatically on Render)
 - `CORS_ORIGINS` - Allowed origins for CORS
 
-> **Email delivery status: not enabled.** `SMTP_ENABLED=false` in both
-> `.env` and `docker-compose.yml`, and no SMTP credentials are configured.
-> Alert emails are enqueued to Redis but are not consumed/delivered by the
-> alert/retention worker; the `email_notifications` table stays empty.
-> Alerting itself is unaffected. There is no self-registration or OTP flow.
+> **Alert delivery.** Production uses Resend over HTTPS. Resend retries 429,
+> 5xx, and timeouts up to three times; authentication/validation failures are
+> not retried. Email failures never block alert creation or webhook delivery,
+> and attempts are recorded in `email_notifications`. Admins can verify the
+> configuration with `POST /api/alerts/test-notification`.
+> Retention runs at startup and then every `RETENTION_INTERVAL_MINUTES` inside
+> the embedded worker (or the web scheduler when no worker is embedded).
 
 ## Development
 
