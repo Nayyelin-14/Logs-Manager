@@ -9,9 +9,17 @@ from app.parsers.canonical import resolve_canonical_event_type, infer_source_fro
 def normalize_syslog(event: Dict[str, Any]) -> Dict[str, Any]:
     priority = safe_number(pick(event, ["priority", "pri", "PRI", "Priority"]))
     action = pick(event, ["action", "Action", "act", "disposition"])
-    original_event_type = safe_string(
+    explicit_event_type = safe_string(
         pick(event, ["eventType", "event_type", "event", "event_name"])
-    ) or get_firewall_event_type(action)
+    )
+    action_event_type = get_firewall_event_type(action)
+    # A mapped action (deny/allow) is the most reliable signal. A generic
+    # ``event=traffic`` label must not hide a deny or allow decision.
+    original_event_type = (
+        action_event_type
+        if action_event_type != "network_traffic"
+        else (explicit_event_type or action_event_type)
+    )
     canonical_event_type = resolve_canonical_event_type(original_event_type, Source.FIREWALL)
     status = safe_string(pick(event, ["status", "disposition"])) or safe_string(pick(event, ["result"]))
     outcome = determine_outcome(

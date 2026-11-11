@@ -37,8 +37,9 @@ const legend = [
 ];
 
 const rangeLabel = (range?: string) => {
-  if (range === "1d") return "Today";
+  if (range === "1d") return "Last 24 hours";
   if (range === "3d") return "Last 3 days";
+  if (range === "30d") return "Last 30 days";
   return "Last 7 days";
 };
 
@@ -131,25 +132,32 @@ export function ChartAreaInteractive({
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     if (range === "1d" || range === "today") {
-      const dayKey = today.toISOString().split("T")[0];
-      const hourly = Array.from({ length: 24 }, (_, hour) => {
-        const date = new Date(today);
-        date.setUTCHours(hour);
-        return { date: date.toISOString(), events: 0, triggeredAlerts: 0 };
-      });
+      // The API returns one bucket per UTC hour for this range. Build the same
+      // rolling 24-hour window so an event from yesterday evening is included.
+      const end = new Date(now);
+      end.setUTCMinutes(0, 0, 0);
+      const indexByHour = new Map<string, { date: string; events: number; triggeredAlerts: number }>();
+      for (let offset = 23; offset >= 0; offset--) {
+        const date = new Date(end);
+        date.setUTCHours(date.getUTCHours() - offset);
+        const key = date.toISOString().slice(0, 13);
+        indexByHour.set(key, { date: `${key}:00:00.000Z`, events: 0, triggeredAlerts: 0 });
+      }
       for (const item of eventsBySource ?? []) {
-        const date = new Date(item.timestamp);
-        if (date.toISOString().split("T")[0] === dayKey) hourly[date.getUTCHours()].events += item._count.id;
+        if (!item.timestamp) continue;
+        const point = indexByHour.get(new Date(item.timestamp).toISOString().slice(0, 13));
+        if (point) point.events += item._count.id;
       }
       for (const item of alertsByDay ?? []) {
-        const date = new Date(item.triggeredAt);
-        if (date.toISOString().split("T")[0] === dayKey) hourly[date.getUTCHours()].triggeredAlerts += item._count.id;
+        if (!item.triggeredAt) continue;
+        const point = indexByHour.get(new Date(item.triggeredAt).toISOString().slice(0, 13));
+        if (point) point.triggeredAlerts += item._count.id;
       }
-      return hourly;
+      return [...indexByHour.values()];
     }
 
-    let daysToSubtract = 0;
-    if (range === "7d") daysToSubtract = 6;
+    let daysToSubtract = 6;
+    if (range === "30d") daysToSubtract = 29;
     else if (range === "3d") daysToSubtract = 2;
 
     const startDate = new Date(today);
@@ -178,7 +186,7 @@ export function ChartAreaInteractive({
           <PanelEyebrow>Activity</PanelEyebrow>
       <PanelTitle className="mt-1">Historical Event &amp; Alert Telemetry</PanelTitle>
           <PanelDescription>
-            Daily event volume and triggered alerts · {rangeLabel(range)}
+            {range === "1d" || range === "today" ? "Hourly" : "Daily"} event volume and triggered alerts · {rangeLabel(range)}
           </PanelDescription>
         </PanelHeading>
         <div className="flex flex-wrap items-end justify-between gap-x-5 gap-y-3 md:justify-end">

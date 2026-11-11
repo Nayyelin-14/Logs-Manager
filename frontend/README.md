@@ -85,7 +85,7 @@ npm run dev
 ```
 
 Use `npm run lint`, `npx tsc -b`, and `npm run build` to run the frontend
-checks. The root `make check-frontend` target runs the same commands.
+checks. The root `make frontend-check` target runs the same commands.
 
 ## Folder Structure
 

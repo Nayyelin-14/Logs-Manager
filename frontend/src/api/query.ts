@@ -77,41 +77,53 @@ export const UsersInfiniteQueryWithFilters = (
 
 export const fetchDashboardStats = async (
   tenant?: string,
-  range?: string,
-  userId?: string
+  range?: string
 ): Promise<DashboardStats> => {
-  const params = new URLSearchParams();
-  if (tenant) params.append("tenant", tenant);
-  if (range) params.append("range", range);
-  if (userId) params.append("userId", userId);
-  const url = `/stats/summary?${params.toString()}`;
-  const response = await API.get(url);
-  const data = response.data;
-  // Also fetch stats/top for charts
-  const [topRes] = await Promise.all([
-    API.get(`/stats/top?field=src_ip&n=10${tenant ? `&tenant=${tenant}` : ""}`),
+  const dashboardParams = new URLSearchParams();
+  if (tenant) dashboardParams.append("tenant", tenant);
+  if (range) dashboardParams.append("range", range);
+
+  const summaryParams = new URLSearchParams();
+  if (tenant) summaryParams.append("tenant", tenant);
+
+  // `/dashboard` carries the full aggregate contract; `/stats/summary` supplies
+  // the workspace totals (failed logins, open alerts, active sources) that the
+  // dashboard header and analytics page share.
+  const [dashboardResponse, summaryResponse] = await Promise.all([
+    API.get(`/dashboard?${dashboardParams.toString()}`),
+    API.get(`/stats/summary?${summaryParams.toString()}`),
   ]);
+
+  const data = dashboardResponse.data ?? {};
+  const summary = summaryResponse.data ?? {};
+  const summaryTenants: { tenant: string }[] = (summary.tenants || []).map(
+    (name: string) => ({ tenant: name })
+  );
+
   return {
-    total_events: data.total_events,
-    failed_logins: data.failed_logins,
-    open_alerts: data.open_alerts,
-    active_sources: data.active_sources,
-    tenants: (data.tenants || []).map((t: string) => ({ tenant: t })),
-    // CamelCase aliases for frontend components
-    totalEvents: data.total_events,
-    topIPs: topRes.data.items || [],
-    topUsers: [],
-    topEventTypes: [],
-    severityCounts: [],
-    eventsByTenant: (data.tenants || []).map((t: string) => ({ tenant: t, count: 0 })),
-    alertCountsByStatus: [],
-    alertCountsBySeverity: [],
-    ruleCountsByEnabled: [],
-    sources: [],
-    recentAlert: [],
-    eventsBySource: [],
-    alertsByDay: [],
-    alertsRuleByDay: [],
+    ...data,
+    total_events: summary.total_events ?? data.totalEvents ?? 0,
+    failed_logins: summary.failed_logins ?? 0,
+    open_alerts: summary.open_alerts ?? 0,
+    active_sources: summary.active_sources ?? data.sources?.length ?? 0,
+    totalEvents: data.totalEvents ?? summary.total_events ?? 0,
+    tenants: (data.tenants?.length ? data.tenants : summaryTenants) as {
+      tenant: string;
+    }[],
+    topIPs: data.topIPs ?? [],
+    topUsers: data.topUsers ?? [],
+    topEventTypes: data.topEventTypes ?? [],
+    severityCounts: data.severityCounts ?? [],
+    eventsByTenant: data.eventsByTenant ?? [],
+    alertCountsByStatus: data.alertCountsByStatus ?? [],
+    alertCountsBySeverity: data.alertCountsBySeverity ?? [],
+    ruleCountsByEnabled: data.ruleCountsByEnabled ?? [],
+    sources: data.sources ?? [],
+    recentAlert: data.recentAlert ?? [],
+    eventsBySource: data.eventsBySource ?? [],
+    alertsByDay: data.alertsByDay ?? [],
+    alertsRuleByDay: data.alertsRuleByDay ?? [],
+    bucket: data.bucket ?? (range === "1d" ? "hour" : "day"),
   };
 };
 
@@ -121,7 +133,7 @@ export const useDashboardStats = (
   userId?: string
 ) => ({
   queryKey: ["dashboardStats", tenant ?? "all", range ?? "7d", userId ?? null],
-  queryFn: () => fetchDashboardStats(tenant, range, userId),
+  queryFn: () => fetchDashboardStats(tenant, range),
 });
 
 export const invalidateDashboardStats = async (
@@ -154,14 +166,22 @@ const fetchInfiniteLogsWithFilters = async ({
   if (filters) {
     const searchParams = new URLSearchParams();
     if (filters.tenant) searchParams.append("tenant", filters.tenant);
-    if (filters.source) searchParams.append("source", filters.source);
+    // The API stores normalized lowercase source values; the UI enum is
+    // uppercase, so normalize here instead of relying on the server to guess.
+    if (filters.source) searchParams.append("source", filters.source.toLowerCase());
     if (filters.eventType) searchParams.append("event_type", filters.eventType);
+    if (filters.severity) searchParams.append("severity", filters.severity.toLowerCase());
     if (filters.user) searchParams.append("user", filters.user);
     if (filters.srcIp) searchParams.append("src_ip", filters.srcIp);
     if (filters.date) {
-      const [from, to] = filters.date.split(" to ");
-      if (from) searchParams.append("from", from);
-      if (to) searchParams.append("to", to);
+      // A single calendar day is a UTC day; an explicit range uses from/to.
+      if (filters.date.includes(" to ")) {
+        const [from, to] = filters.date.split(" to ");
+        if (from) searchParams.append("from", from);
+        if (to) searchParams.append("to", to);
+      } else {
+        searchParams.append("date", filters.date);
+      }
     }
     if (filters.search) searchParams.append("q", filters.search);
     if (searchParams.toString()) {

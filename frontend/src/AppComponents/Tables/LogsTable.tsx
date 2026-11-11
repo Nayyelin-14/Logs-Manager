@@ -58,10 +58,14 @@ const sourceTone: Record<string, { dot: string; text: string; bg: string; border
 
 const fallbackSourceTone = { dot: "bg-ink-muted/70", text: "text-ink-muted", bg: "bg-surface-muted", border: "border-border/40" };
 
-const getSourceTone = (source: string | null) => (source ? sourceTone[source] ?? fallbackSourceTone : fallbackSourceTone);
+const getSourceTone = (source: string | null) =>
+  source
+    ? sourceTone[source.toUpperCase()] ?? fallbackSourceTone
+    : fallbackSourceTone;
 
 const getSeverityTone = (severity: string | null) => {
   switch (severity?.toLowerCase()) {
+    case "critical":
     case "high":
       return { label: "CRIT", className: "border-critical/25 bg-critical/10 text-critical", dot: "bg-critical" };
     case "medium":
@@ -134,7 +138,7 @@ const AllLogsTable = ({ tenant, range }: { tenant: string; range?: string }) => 
   const sources = useMemo(() => Object.values(Source), []);
 
   const metrics = useMemo(() => {
-    const highSeverity = events.filter((event) => event.severityLevel?.toLowerCase() === "high").length;
+    const highSeverity = events.filter((event) => ["high", "critical"].includes(event.severityLevel?.toLowerCase() ?? "")).length;
     const uniqueSources = new Set(events.map((event) => event.source).filter(Boolean)).size;
     const uniqueActors = new Set(events.map((event) => event.user).filter(Boolean)).size;
     const uniqueTenants = new Set(events.map((event) => event.tenant).filter(Boolean)).size;
@@ -255,9 +259,11 @@ const AllLogsTable = ({ tenant, range }: { tenant: string; range?: string }) => 
           >
             <Download className="size-3.5" /> Export
           </button>
-          <Button variant="signal" size="sm" onClick={() => setIsOpen(true)} className="h-9 gap-1.5 rounded-xl px-3.5">
-            <Plus className="size-3.5" /> Ingest Event
-          </Button>
+          {user?.role === "ADMIN" && (
+            <Button variant="signal" size="sm" onClick={() => setIsOpen(true)} className="h-9 gap-1.5 rounded-xl px-3.5">
+              <Plus className="size-3.5" /> Ingest Event
+            </Button>
+          )}
         </div>
       </div>
 

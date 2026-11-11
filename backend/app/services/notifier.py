@@ -10,12 +10,14 @@ from typing import Any, Optional
 import httpx
 
 from app.core.config import get_settings
+from app.core.webhook_security import WebhookUrlError, validate_webhook_url
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 WEBHOOK_TIMEOUT = 5.0
+WEBHOOK_MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB response body limit
 
 DEFAULT_RESEND_RETRY_DELAYS = (1.0, 2.0)
 RESEND_MAX_ATTEMPTS = 3
@@ -106,22 +108,68 @@ async def send_webhook(
     http_code: Optional[int] = None
     delays = _resolve_retry_delays(retry_delays)
 
+    # Validate the webhook destination against SSRF rules before every
+    # delivery attempt. This defends against DNS rebinding and
+    # time-of-check-time-of-use attacks where a hostname resolves to a
+    # public address at configuration time but a private address at
+    # connection time. Re-validating on each retry attempt narrows the
+    # window between validation and the actual connection.
     for attempt in range(1, retries + 1):
+        try:
+            validate_webhook_url(webhook_url)
+        except WebhookUrlError as exc:
+            # A destination that fails SSRF validation is a permanent
+            # configuration error, not a transient delivery failure. Record it
+            # once and stop: retrying cannot make a blocked URL safe.
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "timestamp": _now_iso(),
+                    "status": "failed",
+                    "http_code": None,
+                    "error": f"blocked destination: {exc}",
+                }
+            )
+            logger.error("webhook destination rejected: %s", exc)
+            return attempts
         record: dict[str, Any] = {
             "attempt": attempt,
             "timestamp": _now_iso(),
         }
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(webhook_url, json=payload)
+                # follow_redirects=False prevents redirect-based SSRF where
+                # an initial safe URL redirects to an internal destination.
+                # TLS certificate verification is enabled by default in httpx.
+                resp = await client.post(
+                    webhook_url,
+                    json=payload,
+                    follow_redirects=False,
+                )
             http_code = resp.status_code
+            # Enforce a response-size limit without buffering arbitrarily
+            # large bodies: read content in a bounded way.
+            body = resp.content
+            if len(body) > WEBHOOK_MAX_RESPONSE_BYTES:
+                record["status"] = "failed"
+                record["http_code"] = http_code
+                record["error"] = (
+                    f"response too large: {len(body)} bytes "
+                    f"(limit {WEBHOOK_MAX_RESPONSE_BYTES})"
+                )
+                last_error = record["error"]
+                attempts.append(record)
+                if attempt < retries:
+                    delay = delays[attempt - 1] if attempt - 1 < len(delays) else (2.0 ** attempt)
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(delay)
+                continue
             record["status"] = "sent" if resp.is_success else "failed"
             record["http_code"] = http_code
             record["error"] = None if resp.is_success else resp.text[:500]
             attempts.append(record)
             if resp.is_success:
-                logger.info("webhook delivered: url=%s attempt=%d http=%d",
-                            webhook_url, attempt, http_code)
+                logger.info("webhook delivered: attempt=%d http=%d", attempt, http_code)
                 return attempts
             last_error = resp.text[:200]
         except httpx.TimeoutException as exc:
@@ -130,14 +178,14 @@ async def send_webhook(
             record["error"] = f"timeout: {exc}"
             last_error = f"timeout: {exc}"
             attempts.append(record)
-            logger.warning("webhook timeout: url=%s attempt=%d", webhook_url, attempt)
+            logger.warning("webhook timeout: attempt=%d", attempt)
         except Exception as exc:
             record["status"] = "failed"
             record["http_code"] = None
             record["error"] = f"{type(exc).__name__}: {exc}"
             last_error = f"{type(exc).__name__}: {exc}"
             attempts.append(record)
-            logger.exception("webhook error: url=%s attempt=%d", webhook_url, attempt)
+            logger.exception("webhook error: attempt=%d", attempt)
 
 
         if attempt < retries:
@@ -145,8 +193,7 @@ async def send_webhook(
             import asyncio as _asyncio
             await _asyncio.sleep(delay)
 
-    logger.error("webhook failed after %d retries: url=%s last_error=%s",
-                 retries, webhook_url, last_error)
+    logger.error("webhook failed after %d retries: last_error=%s", retries, last_error)
     return attempts
 
 

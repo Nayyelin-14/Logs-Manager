@@ -1,8 +1,8 @@
 # SaaS Deployment Guide (Render + Vercel + Neon + Upstash)
 
 This guide deploys Log Manager as a public HTTPS SaaS at **$0/month** using
-free tiers only. It is separate from the single-machine appliance described in
-`docs/setup_appliance.md`.
+free tiers only. It is separate from the self-hosted Docker distribution
+described in `docs/setup_appliance.md`.
 
 ## What gets deployed
 
@@ -31,11 +31,17 @@ Because the API is proxied through Vercel, the browser sees a **same-origin**
 `/api/*`. Auth cookies therefore work with `Secure` + `SameSite=Lax`; no
 cross-site cookie workarounds are needed.
 
-## Syslog: SaaS vs Appliance
+## Syslog: SaaS vs self-hosted Docker
 
-The Docker appliance runs a native UDP/TCP listener. It binds host port **514**
+The Docker self-hosted distribution runs a native UDP/TCP listener in its
+dedicated ingest container. It binds host port **514**
 (container port 5514) by default; on Docker Desktop/WSL2, or when host port 514
 is busy, set `SYSLOG_HOST_PORT=5514` in `.env` and send to `-P 5514`.
+
+> Port 514 must only be reachable from trusted networks. Bind it to a private
+> interface (`SYSLOG_BIND_IP=<lan-ip>`), allowlist sources in the host firewall,
+> and optionally set `SYSLOG_ALLOWED_CIDRS`. Never publish 514 on the public
+> Internet. Render must keep `SYSLOG_ENABLED=false`; it has no native listener.
 
 Render and Vercel only expose HTTP(S), so SaaS mode keeps
 `SYSLOG_ENABLED=false` and uses `POST /api/ingest/syslog` instead. It accepts
@@ -63,6 +69,12 @@ Response (HTTP 202):
 {"accepted": 1, "rejected": 0, "errors": []}
 ```
 
+- Each request is committed as **one transaction**. A `503` means nothing was
+  persisted and the forwarder should retry; it is never returned as a false
+  `202`.
+- Parse/validation failures stay isolated per line: valid lines are stored and
+  reported in `accepted`, invalid lines appear in `errors` with their line
+  index.
 - Tenant is taken from the API key. A mismatched `tenant` in the body/query
   returns **403**.
 - Default limits are 1 MiB body and 1000 lines; larger requests return **413**.
@@ -72,8 +84,20 @@ Response (HTTP 202):
 - The route is rate limited with the shared limiter
   (`INGEST_RATE_LIMIT`, default `600/minute`).
 
+Status codes for forwarders:
+
+| Status | Meaning | Retry? |
+|---|---|---|
+| `202` | Handled; inspect per-line `accepted`/`rejected`/`errors` | No |
+| `503` | Transient storage failure; nothing persisted | Yes |
+| `500` | Unexpected failure; batch rolled back | Yes |
+| `400/401/403/413` | Permanent request/auth/limit problem | No |
+
 Forwarders that forward local syslog to the HTTPS endpoint are in
-`samples/forwarder/` (Vector recommended; rsyslog `omhttp` alternative).
+`samples/forwarder/` (Vector recommended; rsyslog `omhttp` alternative). Vector
+uses a bounded disk buffer and newline-delimited text; rsyslog uses `%rawmsg%`
+to preserve the device timestamp. See `samples/forwarder/README.md` for the
+retry/duplicate caveat for messages without an embedded timestamp.
 
 ## Prerequisites
 
@@ -461,7 +485,9 @@ bash scripts/smoke_saas.sh https://nayyelin-logs-api.onrender.com https://<proje
 - **Neon autosuspend:** the first query after idle can take a couple of seconds.
 - **512 MB RAM:** do not deploy a separate worker service or add another process
   to the Render service. The current configuration is sized for the free plan.
-- **No syslog:** use `POST /api/ingest`.
+- **No native syslog:** Render does not expose UDP/TCP. Send HTTP JSON to
+  `/api/ingest`, or HTTPS syslog lines to `/api/ingest/syslog` (for example via
+  the Vector or rsyslog forwarder in `samples/forwarder/`).
 - **Upstash command budget:** the health check uses Redis. If the daily command
   limit is a concern, point the Render health check at `/healthz` instead of
   `/ready`.
@@ -533,5 +559,5 @@ Then redeploy the Render service.
 4. Upstash: delete the Redis database.
 5. GitHub: remove the deploy secrets and the deploy hook.
 
-The Docker appliance remains available in `docker-compose.yml` and
-`docs/setup_appliance.md`.
+The Docker self-hosted distribution remains available in
+`docker-compose.yml` and `docs/setup_appliance.md`.

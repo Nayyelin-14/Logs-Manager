@@ -8,8 +8,10 @@ from typing import Optional, List, Dict, Any
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
 from app.core.security import TokenPayload
+from app.core.tenancy import resolve_read_tenant
 from app.models.events import Event
 from app.models.alert import Alert, AlertRule
+from app.models.tenant import Tenant
 
 router = APIRouter()
 
@@ -48,15 +50,13 @@ async def get_dashboard_stats(
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
 
-    requested_tenant = (tenant or "").strip()
-    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
-        tenant = None if requested_tenant in ("", "all") else requested_tenant
-    else:
-        tenant = current_user.tenant
+    tenant = resolve_read_tenant(current_user, tenant)
     range_days = {"1d": 1, "3d": 3, "7d": 7, "30d": 30}.get(range, 7)
 
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=range_days)
+    # A one-day window is only useful at hour resolution; wider windows use days.
+    bucket_unit = "hour" if range_days <= 1 else "day"
 
 
 
@@ -101,7 +101,7 @@ async def get_dashboard_stats(
     events_by_source = await session.execute(
         select(
             Event.tenant,
-            func.date_trunc("day", Event.ts).label("day"),
+            func.date_trunc(bucket_unit, Event.ts).label("day"),
             Event.source,
             func.count().label("count"),
         )
@@ -160,7 +160,7 @@ async def get_dashboard_stats(
     alerts_by_day = await session.execute(
         select(
             Alert.tenant,
-            func.date_trunc("day", Alert.triggered_at).label("day"),
+            func.date_trunc(bucket_unit, Alert.triggered_at).label("day"),
             func.count().label("count"),
         )
         .where(Alert.tenant == tenant if tenant else True)
@@ -171,7 +171,7 @@ async def get_dashboard_stats(
 
     alerts_rule_by_day = await session.execute(
         select(
-            func.date_trunc("day", Alert.triggered_at).label("day"),
+            func.date_trunc(bucket_unit, Alert.triggered_at).label("day"),
             AlertRule.name.label("rule_name"),
             func.count().label("count"),
         )
@@ -188,9 +188,17 @@ async def get_dashboard_stats(
         .group_by(AlertRule.enabled)
     )
 
-    tenants = await session.execute(
-        select(Event.tenant).distinct().where(Event.tenant == tenant if tenant else True)
-    )
+    if tenant:
+        tenant_rows = [(tenant,)]
+    else:
+        # Platform admins can switch between every provisioned tenant, even one
+        # with no events in the selected window.
+        tenant_result = await session.execute(
+            select(Tenant.name)
+            .where(Tenant.is_active == True)  # noqa: E712
+            .order_by(Tenant.name)
+        )
+        tenant_rows = [(row[0],) for row in tenant_result if row[0]]
 
     return {
         "totalEvents": total_events.scalar() or 0,
@@ -242,6 +250,8 @@ async def get_dashboard_stats(
         "alertCountsByStatus": [{"status": row[0], "count": row[1]} for row in alert_counts_by_status],
         "alertCountsBySeverity": [{"severity": row[0], "count": row[1]} for row in alert_counts_by_severity],
         "ruleCountsByEnabled": [{"enabled": row[0], "count": row[1]} for row in rule_counts],
-        "tenants": [{"tenant": t[0]} for t in tenants],
+        "tenants": [{"tenant": t[0]} for t in tenant_rows],
+        "bucket": bucket_unit,
+        "range": range,
         "tenant": tenant or "all",
     }

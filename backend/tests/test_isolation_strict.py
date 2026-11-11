@@ -166,6 +166,15 @@ from conftest import (
     VIEWER_B_PASSWORD,
 )
 
+def _login(test_client, email: str, password: str):
+    """Log in and attach the CSRF token the browser would read from its cookie."""
+    response = test_client.post("/api/auth/login", json={"email": email, "password": password})
+    token = response.cookies.get("XSRF-TOKEN")
+    if token:
+        test_client.headers["X-XSRF-TOKEN"] = token
+    return response
+
+
 @pytest.fixture(scope="module", autouse=True)
 def isolation_seed(test_database):
     asyncio.run(_seed_isolation_data())
@@ -193,10 +202,7 @@ def test_data():
 
 
 def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/get-logs?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -213,10 +219,7 @@ def test_1_viewer_b_get_logs_forced_to_own_tenant(test_client, test_data):
 
 
 def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/get-alerts?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -233,10 +236,7 @@ def test_2_viewer_b_get_alerts_forced_to_own_tenant(test_client, test_data):
 
 
 def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/dashboard?tenant=demoa")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -247,10 +247,7 @@ def test_3_viewer_b_dashboard_counts_demoB_only(test_client, test_data):
 
 
 def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     alert_id = SEED_DATA["demoA_alert_id"]
     response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "CLOSED"})
@@ -258,10 +255,7 @@ def test_4_viewer_b_patch_demoA_alert_403(test_client, test_data):
 
 
 def test_5_viewer_b_delete_demoA_log_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     log_id = SEED_DATA["demoA_log_id"]
     response = test_client.delete(f"/api/delete-log/{log_id}")
@@ -269,10 +263,7 @@ def test_5_viewer_b_delete_demoA_log_403(test_client, test_data):
 
 
 def test_6_viewer_b_delete_demoB_log_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     log_id = SEED_DATA["demoB_log_id"]
     response = test_client.delete(f"/api/delete-log/{log_id}")
@@ -280,10 +271,7 @@ def test_6_viewer_b_delete_demoB_log_403(test_client, test_data):
 
 
 def test_7_viewer_b_patch_demoB_alert_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     alert_id = SEED_DATA["demoB_alert_id"]
     response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "CLOSED"})
@@ -291,10 +279,7 @@ def test_7_viewer_b_patch_demoB_alert_403(test_client, test_data):
 
 
 def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     resp = test_client.get("/api/get-users")
     assert resp.status_code == 403, f"Expected 403 for viewer get-users, got {resp.status_code}"
@@ -323,6 +308,8 @@ def test_8_viewer_cannot_access_admin_endpoints(test_client, test_data):
 
 
 def test_10_register_returns_404(test_client):
+    test_client.cookies.clear()
+    test_client.headers.pop("X-XSRF-TOKEN", None)
     response = test_client.post("/api/auth/register", json={
         "username": "testuser",
         "email": "test@example.com",
@@ -334,10 +321,7 @@ def test_10_register_returns_404(test_client):
 
 
 def test_9_admin_patch_demoA_alert_200(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     alert_id = SEED_DATA["demoA_alert_id"]
     response = test_client.patch(f"/api/alerts/{alert_id}", json={"status": "resolved"})
@@ -345,10 +329,7 @@ def test_9_admin_patch_demoA_alert_200(test_client, test_data):
 
 
 def test_11_admin_delete_demoA_log_200(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     log_id = SEED_DATA["demoA_admin_delete_log_id"]
     response = test_client.delete(f"/api/delete-log/{log_id}")
@@ -356,10 +337,7 @@ def test_11_admin_delete_demoA_log_200(test_client, test_data):
 
 
 def test_12_admin_get_logs_all_tenants(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     response = test_client.get("/api/get-logs")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -373,10 +351,7 @@ def test_12_admin_get_logs_all_tenants(test_client, test_data):
 
 
 def test_22_admin_create_viewer_without_tenant_422(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     response = test_client.post("/api/create-user", json={
         "username": "newviewer",
@@ -389,10 +364,7 @@ def test_22_admin_create_viewer_without_tenant_422(test_client, test_data):
 
 
 def test_23_admin_create_admin_tenant_null(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     response = test_client.get("/api/auth/auth-check")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -405,10 +377,7 @@ def test_23_admin_create_admin_tenant_null(test_client, test_data):
 
 
 def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/dashboard")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -420,10 +389,7 @@ def test_13_viewer_b_dashboard_tenants_only_demoB(test_client, test_data):
 
 
 def test_14_admin_dashboard_tenants_both(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["admin_email"],
-        "password": test_data["admin_password"]
-    })
+    _login(test_client, test_data["admin_email"], test_data["admin_password"])
 
     response = test_client.get("/api/dashboard")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -436,30 +402,21 @@ def test_14_admin_dashboard_tenants_both(test_client, test_data):
 
 
 def test_15_viewer_b_get_all_data_demoB_only(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/get-all-data")
     assert response.status_code == 403, f"Expected 403, got {response.status_code}"
 
 
 def test_16_viewer_b_get_all_data_tenant_param_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/get-all-data?tenant=demoA")
     assert response.status_code == 403, f"Expected 403, got {response.status_code}"
 
 
 def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.get("/api/get-logs?tenant=all")
     assert response.status_code == 200, f"Expected 200 for ?tenant=all, got {response.status_code}"
@@ -477,10 +434,7 @@ def test_17_viewer_b_get_logs_tenant_all_and_DemoA(test_client, test_data):
 
 
 def test_18_viewer_a_only_sees_demoA(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_a_email"],
-        "password": test_data["viewer_a_password"]
-    })
+    _login(test_client, test_data["viewer_a_email"], test_data["viewer_a_password"])
 
     response = test_client.get("/api/get-logs")
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -538,10 +492,7 @@ def test_19_no_cookie_routes_return_401():
 
 
 def test_20_viewer_b_rule_id_routes_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     rule_id = SEED_DATA["demoA_rule_id"]
 
@@ -556,10 +507,7 @@ def test_20_viewer_b_rule_id_routes_403(test_client, test_data):
 
 
 def test_21_viewer_b_user_id_routes_403(test_client, test_data):
-    test_client.post("/api/auth/login", json={
-        "email": test_data["viewer_b_email"],
-        "password": test_data["viewer_b_password"]
-    })
+    _login(test_client, test_data["viewer_b_email"], test_data["viewer_b_password"])
 
     response = test_client.put("/api/update-user", json={
         "id": 999,

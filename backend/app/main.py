@@ -1,8 +1,11 @@
 import asyncio
+import hmac
 import logging
 import structlog
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
+from datetime import datetime, timezone
+from urllib.parse import urlparse
+from fastapi import FastAPI, Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -169,7 +172,13 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key", "Cookie"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-API-Key",
+        "X-XSRF-TOKEN",
+        "Cookie",
+    ],
     expose_headers=["Set-Cookie"],
 )
 
@@ -187,6 +196,102 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
+def _origin_base(origin: str) -> str | None:
+    """Return scheme://host:port for an origin string, or None if unparseable."""
+    try:
+        parsed = urlparse(origin)
+        if not parsed.scheme or not parsed.hostname:
+            return None
+        base = f"{parsed.scheme}://{parsed.hostname}"
+        if parsed.port:
+            base += f":{parsed.port}"
+        return base
+    except Exception:
+        return None
+
+
+def _is_trusted_origin(origin: str) -> bool:
+    base = _origin_base(origin)
+    if base is None:
+        return False
+    for trusted in settings.CORS_ORIGINS:
+        if _origin_base(trusted) == base:
+            return True
+    return False
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    """CSRF protection for cookie-authenticated state-changing requests.
+
+    Uses a double-submit cookie strategy: a non-HttpOnly ``XSRF-TOKEN`` cookie
+    is set on login; the browser's JavaScript reads it and sends it back as the
+    ``X-XSRF-TOKEN`` header. The server verifies header matches cookie using
+    constant-time comparison, so a cross-origin attacker cannot forge the header.
+
+    Origin/Referer validation is an additional layer on top of the double-submit
+    token check. The token check always runs for authenticated unsafe requests,
+    regardless of whether Origin or Referer is present. Missing Origin never
+    skips CSRF validation.
+
+    Exemptions:
+    - GET/HEAD/OPTIONS (safe methods)
+    - Requests with ``X-API-Key`` AND no ``accessToken`` cookie
+      (machine API-key auth only, not cookie sessions)
+    - ``POST /api/auth/login`` (entry point that sets the CSRF cookie)
+    """
+
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+
+    has_api_key = bool(request.headers.get("X-API-Key"))
+    has_access_token = bool(request.cookies.get("accessToken"))
+
+    # Machine API-key authentication is not vulnerable to browser CSRF,
+    # but only when no cookie session is also in use. If both are present,
+    # the cookie session takes precedence and CSRF applies.
+    if has_api_key and not has_access_token:
+        return await call_next(request)
+
+    # Login is the entry point; it sets the CSRF cookie.
+    if request.url.path == "/api/auth/login":
+        return await call_next(request)
+
+    # CSRF only protects authenticated cookie sessions.
+    if not has_access_token:
+        return await call_next(request)
+
+    # Double-submit cookie check — always required, regardless of Origin/Referer.
+    csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
+    csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
+    if (
+        not csrf_cookie
+        or not csrf_header
+        or not hmac.compare_digest(csrf_cookie, csrf_header)
+    ):
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "CSRF token missing or invalid"},
+        )
+
+    # Origin/Referer validation — additional layer, never a bypass.
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+
+    if origin:
+        if not _is_trusted_origin(origin):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Untrusted origin"},
+            )
+    elif referer:
+        if not _is_trusted_origin(referer):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Untrusted referer"},
+            )
+
+    return await call_next(request)
 
 
 

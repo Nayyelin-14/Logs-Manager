@@ -52,12 +52,14 @@ class TestSendWebhook:
 
     def test_send_webhook_success_first_attempt(self):
         async def run_test():
-            with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
+            with patch("app.services.notifier.validate_webhook_url"), \
+                 patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
                 mock_resp = AsyncMock()
                 mock_resp.is_success = True
                 mock_resp.status_code = 200
                 mock_resp.text = ""
+                mock_resp.content = b""
                 mock_client.__aenter__.return_value.post.return_value = mock_resp
                 mock_client_class.return_value = mock_client
 
@@ -75,12 +77,14 @@ class TestSendWebhook:
 
     def test_send_webhook_retries_on_failure(self):
         async def run_test():
-            with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
+            with patch("app.services.notifier.validate_webhook_url"), \
+                 patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
                 mock_resp = AsyncMock()
                 mock_resp.is_success = False
                 mock_resp.status_code = 500
                 mock_resp.text = "Internal Server Error"
+                mock_resp.content = b""
                 mock_client.__aenter__.return_value.post.return_value = mock_resp
                 mock_client_class.return_value = mock_client
 
@@ -101,11 +105,14 @@ class TestSendWebhook:
     def test_send_webhook_timeout_retry(self):
         async def run_test():
             import httpx
-            with patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
+            with patch("app.services.notifier.validate_webhook_url"), \
+                 patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
                 mock_client = AsyncMock()
+                success_resp = AsyncMock(is_success=True, status_code=200, text="")
+                success_resp.content = b""
                 mock_client.__aenter__.return_value.post.side_effect = [
                     httpx.TimeoutException("timeout"),
-                    AsyncMock(is_success=True, status_code=200, text=""),
+                    success_resp,
                 ]
                 mock_client_class.return_value = mock_client
 
@@ -118,6 +125,27 @@ class TestSendWebhook:
                 assert len(attempts) == 2
                 assert attempts[0]["status"] == "failed"
                 assert attempts[1]["status"] == "sent"
+
+    def test_send_webhook_blocked_destination_is_not_retried(self):
+        from app.core.webhook_security import WebhookUrlError
+
+        async def run_test():
+            with patch(
+                "app.services.notifier.validate_webhook_url",
+                side_effect=WebhookUrlError("private or reserved IP address"),
+            ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_class:
+                attempts = await send_webhook(
+                    webhook_url="http://127.0.0.1/alert",
+                    payload={"test": "data"},
+                    retries=3,
+                    retry_delays=(0.01, 0.01, 0.01),
+                )
+                mock_client_class.assert_not_called()
+                assert len(attempts) == 1
+                assert attempts[0]["status"] == "failed"
+                assert "blocked destination" in attempts[0]["error"]
+
+        asyncio.run(run_test())
 
         asyncio.run(run_test())
 

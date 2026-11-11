@@ -1,36 +1,60 @@
 # Vector: forward local syslog to the SaaS HTTPS endpoint.
 #
-# Install Vector, then run:
+# Install Vector 0.61+, then run:
 #   INGEST_API_KEY=<tenant key> SYSLOG_HTTP_URL=https://<project>.vercel.app/api/ingest/syslog \
-#     vector --config samples/forwarder/vector.toml
+#     vector --dangerously-allow-env-var-interpolation \
+#       --config samples/forwarder/vector.toml
 #
-# Vector batches the messages; the endpoint accepts newline-delimited text or
-# {"lines": [...]} JSON, so this sink always sends JSON.
+# Vector 0.61 disables environment-variable interpolation unless that flag (or
+# VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true) is set. Without it the
+# placeholders stay literal and the config fails validation.
+#
+# The sink sends newline-delimited raw Syslog text, which is exactly the
+# contract of POST /api/ingest/syslog for text/plain bodies. Do not wrap each
+# event in its own {"lines": [...]} object: Vector would then send one JSON
+# object per line and multi-message batches would be rejected.
+#
+# Durability: events are buffered on disk under Vector's data_dir (default
+# /var/lib/vector). Make sure that directory is writable and sized for at
+# least `max_size` bytes. When the buffer is full Vector blocks instead of
+# dropping, providing backpressure to the local syslog source.
 
 [sources.local_syslog]
 type = "socket"
 mode = "udp"
 address = "0.0.0.0:514"
 
-[transforms.https_payload]
-type = "remap"
-inputs = ["local_syslog"]
-source = '''
-. = {"lines": [string!(.message)]}
-'''
-
 [sinks.logs_https]
 type = "http"
-inputs = ["https_payload"]
+inputs = ["local_syslog"]
 uri = "${SYSLOG_HTTP_URL}"
 method = "post"
-encoding.codec = "json"
-compression = "gzip"
+encoding.codec = "text"
+# Vector 0.61+ rejects a fully templated URI because the destination host is
+# event-controlled unless a static authority is present. This config's URL is
+# supplied by the operator via SYSLOG_HTTP_URL, not by log events, so opt out
+# of the confinement check. Keep the environment-variable workflow intact.
+dangerously_allow_unconfined_template_resolution = true
+
+[sinks.logs_https.framing]
+method = "newline_delimited"
 
 [sinks.logs_https.request]
 headers.X-API-Key = "${INGEST_API_KEY}"
-headers.Content-Type = "application/json"
+headers.Content-Type = "text/plain; charset=utf-8"
+timeout_secs = 30
+# Vector retries 429, 5xx and connection/timeout failures with exponential
+# backoff. Total retry time is bounded; anything still failing remains in the
+# disk buffer for the next attempt/restart.
+retry_attempts = 10
+retry_initial_backoff_secs = 1
+retry_max_duration_secs = 300
 
 [sinks.logs_https.batch]
 max_events = 500
 timeout_secs = 5
+
+[sinks.logs_https.buffer]
+type = "disk"
+max_size = 268435488
+when_full = "block"

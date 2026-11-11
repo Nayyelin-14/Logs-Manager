@@ -67,11 +67,11 @@ Tests require Docker PostgreSQL and Redis (provided by the root `docker-compose.
 ```yaml
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     env: { POSTGRES_USER: logs, POSTGRES_PASSWORD: logs_dev_password, POSTGRES_DB: logs_manager_test }
     ports: ["5432:5432"]
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports: ["6379:6379"]
 steps:
   - cd backend && pip install -r requirements.txt

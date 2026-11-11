@@ -52,9 +52,18 @@ echo '<190>Aug 20 13:01:02 r1 if=ge-0/0/1 event=link-down \
 mac=aa:bb:cc:dd:ee:ff reason=carrier-loss' | nc 127.0.0.1 514
 ```
 
-Wait ~10 seconds, then open the UI at `https://localhost:${HTTPS_PORT}/`
-(defaults to 443; the local `.env` uses 8443) and verify the firewall/network
-events appear in the logs table.
+Wait ~10 seconds, then open the UI at `https://localhost/` (or
+`https://localhost:${HTTPS_PORT}/` if you changed the port) and verify the
+firewall/network events appear in the logs table.
+
+This is the native self-hosted path. In SaaS, demonstrate the same lines through
+the HTTPS endpoint instead:
+
+```bash
+SYSLOG_HTTP_URL=https://<project>.vercel.app/api/ingest/syslog \
+  INGEST_API_KEY='<demoa-api-key>' \
+  samples/send_syslog_http.sh samples/syslog_firewall.log
+```
 
 ### 1b. HTTP POST /ingest (sample 4.3)
 
@@ -226,18 +235,20 @@ curl -sSI https://<project>.vercel.app/
 curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/api/get-logs
 ```
 
-For an appliance with a domain, set `DOMAIN` and `CADDY_EMAIL` in `.env` and
-start the VM Compose file. Caddy requests a certificate once DNS points at the
-host:
+For a self-hosted appliance with a domain, set `DOMAIN`, `CADDY_EMAIL`, and
+`CADDY_BIND_IP=0.0.0.0` in `.env`, then start the standard Compose file. Caddy
+requests a certificate once DNS points at the host:
 
 ```bash
+CADDY_BIND_IP=0.0.0.0
 DOMAIN=logs.example.com
 CADDY_EMAIL=admin@example.com
-docker compose -p lms_vm -f docker-compose.vm.yml up -d
+make up
 ```
 
-For a local appliance without a domain, Caddy uses `tls internal` and the
-browser shows a self-signed certificate warning. Document that as expected.
+For a local appliance without a domain, Caddy uses an internal certificate and
+the browser shows a warning. Document that as expected. `docker-compose.vm.yml`
+is an internal deployment artifact and is not used for the self-hosted demo.
 
 ---
 

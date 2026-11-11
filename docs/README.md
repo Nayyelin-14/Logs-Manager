@@ -9,7 +9,7 @@ match the running codebase.
 | Document | Purpose |
 |---|---|
 | [`architecture.md`](architecture.md) | System architecture, components, data flow, ingestion pipeline, storage, worker, and tenant model |
-| [`setup_appliance.md`](setup_appliance.md) | Local/on-prem installation and operation using Docker Compose |
+| [`setup_appliance.md`](setup_appliance.md) | Self-hosted Docker installation on a laptop, appliance, or VM |
 | [`setup_saas.md`](setup_saas.md) | Zero-cost SaaS deployment on Render + Vercel + Neon + Upstash, including CI/CD |
 | [`DEMO_GUIDE.md`](DEMO_GUIDE.md) | Practical 30-minute assignment demonstration walkthrough |
 | [`API_CONTRACT.md`](API_CONTRACT.md) | Actual API endpoints, authentication, request/response formats, and examples |
@@ -19,7 +19,7 @@ match the running codebase.
 ## Canonical Workflow
 
 ```bash
-# 1. Start the stack (local appliance mode)
+# 1. Start the stack (self-hosted Docker mode)
 make up
 
 # 2. Seed demo data

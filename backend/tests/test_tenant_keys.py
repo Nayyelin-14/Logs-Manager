@@ -28,7 +28,10 @@ from conftest import (
     VIEWER_B_PASSWORD,
 )
 def login(client: TestClient, email: str, password: str) -> TestClient:
-    client.post("/api/auth/login", json={"email": email, "password": password})
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    token = response.cookies.get("XSRF-TOKEN")
+    if token:
+        client.headers["X-XSRF-TOKEN"] = token
     return client
 
 

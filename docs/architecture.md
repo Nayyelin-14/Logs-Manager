@@ -3,28 +3,36 @@
 ## Overview
 
 A log management system that ingests, normalizes, searches, visualizes, and alerts
-on events from multiple sources. Deployable as a single-node appliance (Docker
-Compose) or as a zero-cost SaaS.
+on events from multiple sources. Deployable as a self-hosted Docker distribution
+on one machine or VM, or as a zero-cost SaaS.
 
 ## Deployment modes
 
 | Mode | Hosting | Public entry point | Ingestion |
 |---|---|---|---|
-| Appliance | One VM or machine, Docker Compose | Caddy on 80/443 | Syslog 514 (container 5514) and HTTP `/api/ingest` |
-| SaaS | Vercel (SPA) + Render (API) + Neon + Upstash | Vercel HTTPS, `/api/*` proxied to Render | HTTP `/api/ingest` only |
+| Appliance / self-hosted Docker | One machine or VM, `docker-compose.yml` | **Caddy** on 80/443 (loopback by default; `CADDY_BIND_IP=0.0.0.0` for LAN/VM) | Native UDP/TCP Syslog via the `ingest` service, plus HTTP `/api/ingest` |
+| SaaS | Vercel (SPA) + Render (API) + Neon + Upstash | Vercel HTTPS, `/api/*` proxied to Render | HTTP `/api/ingest` and HTTPS `/api/ingest/syslog` only |
+| Local frontend dev | Vite dev server on 5173 | Vite proxy `/api` → local FastAPI | Same API as the appliance |
 
-Both modes run the same backend code. The appliance runs PostgreSQL, Redis,
-the worker, the syslog listener, and the webhook receiver as separate Compose
-services. SaaS mode uses managed Neon and Upstash, embeds the worker in the web
-process, and disables raw syslog because Render and Vercel are HTTP-only.
+Both modes run the same backend code. The self-hosted Docker distribution runs
+PostgreSQL, Redis, the worker, the dedicated Syslog listener, and the webhook
+receiver as separate Compose services. SaaS mode uses managed Neon and Upstash,
+embeds the worker in the web process, and disables raw Syslog because Render and
+Vercel are HTTP-only.
 
-## Syslog: SaaS vs Appliance
+`docker-compose.yml` is the only supported self-hosting entry point. A VM is
+just another machine running that same file with different environment values
+(`CADDY_BIND_IP`, `DOMAIN`, ports, secrets). `docker-compose.vm.yml` is an
+internal image-based deployment artifact and is not part of the user-facing
+self-hosting path.
 
-| | Appliance | SaaS |
+## Syslog: self-hosted Docker vs SaaS
+
+| | Self-hosted Docker | SaaS |
 |---|---|---|
 | Transport | UDP/TCP syslog | HTTPS `POST /api/ingest/syslog` |
 | Host port | **514** by default (container 5514); set `SYSLOG_HOST_PORT=5514` on Docker Desktop/WSL2 | 443 only |
-| Listener | `SYSLOG_ENABLED=true` starts the native listener | `SYSLOG_ENABLED=false` |
+| Listener | `SYSLOG_ENABLED=true` starts the native listener in the dedicated `ingest` container; the API container has it disabled | `SYSLOG_ENABLED=false` |
 | Auth | tenant implied by the listener config | `X-API-Key` header scoped to one tenant |
 | Normalization | `parse_syslog_message` → `IngestionService`/`NormalizationService` | same parser and service path |
 | Event tag | none | `transport=http-syslog` |
@@ -49,8 +57,25 @@ The tenant comes from the API key. If `tenant` is supplied in the query string
 or JSON body and does not match the key, the request returns **403**. Limits
 default to 1 MiB of body and 1000 lines; oversized requests return **413**.
 Successful requests return **202** with `{"accepted", "rejected", "errors"}`.
+
+The HTTPS batch is committed in **one transaction**. Parse/validation errors
+are isolated per line (valid lines are stored, invalid lines are reported in
+`errors`), but an infrastructure failure rolls the whole batch back and returns
+**503** (unexpected failures return **500**). Nothing is acknowledged as 202
+when the database failed, so a forwarder can safely retry a 5xx. Messages that
+carry no timestamp are stamped at ingestion time (existing semantics); retain
+the device timestamp in the forwarder (`%rawmsg%`, Vector's raw message) to keep
+retries idempotent. See `samples/forwarder/README.md`.
+
 Use `samples/forwarder/` (Vector or rsyslog) to forward device syslog to the
-SaaS endpoint.
+SaaS endpoint. Vector sends newline-delimited text, uses a bounded disk buffer,
+and retries 429/5xx/transport failures.
+
+Native port **514 must never be exposed to the public Internet**. Bind it to a
+private interface (`SYSLOG_BIND_IP`), allowlist sources in the host firewall,
+and optionally set `SYSLOG_ALLOWED_CIDRS`. The ingest container health check
+runs `SELECT 1` and verifies every enabled listener; a socket alone is not
+healthy when the database is unavailable.
 
 ## Mermaid architecture diagram
 
@@ -73,7 +98,7 @@ graph TB
     NORM[Normalization Layer<br/>Pydantic NormalizedEvent<br/>7 source mappers]
 
     %% Store
-    DB[(PostgreSQL 16<br/>events table<br/>JSONB + GIN indexes<br/>Retention ≥7 days)]
+    DB[(PostgreSQL 18<br/>events table<br/>JSONB + GIN indexes<br/>Retention ≥7 days)]
 
     %% Alert worker
     WORKER[Worker<br/>Alert sweep every 30s<br/>Retention hourly]
@@ -150,7 +175,10 @@ graph TB
   or JWT claim. Body `tenant` must match the credential's tenant (403 if mismatch, unless
   admin). API keys are created per tenant by admins and shown once.
 - **Syslog**: No tenant field in syslog. Tenant resolved via `SYSLOG_TENANT` env var
-  (default `demoA`) and `SYSLOG_SOURCE` env var (default `firewall`).
+  (default `demoA`) and `SYSLOG_SOURCE` env var (default `firewall`). This is a
+  single-tenant mapping for the whole native listener: every device reaching one
+  ingest container lands in the same tenant. Run separate containers with
+  different `SYSLOG_TENANT` values for multiple native-Syslog tenants.
 - **Simulator**: Uses `--tenants` flag and API key per tenant.
 
 **Query-time enforcement:**
@@ -181,7 +209,7 @@ the backend remains the authorization boundary.
 | Component | Choice | Rationale |
 |---|---|---|
 | Backend API | FastAPI (Python) | Type safety, auto OpenAPI docs, async, easy testing |
-| Database | PostgreSQL 16 | JSONB + GIN indexes, mature, single DB to operate |
+| Database | PostgreSQL 18 | JSONB + GIN indexes, mature, single DB to operate |
 | Syslog collector | Custom Python asyncio | Full control over parsing, easy to explain in interview |
 | Frontend | React 19 + Vite + TypeScript + Recharts | Modern, well-documented, chart library included |
 | Web server / reverse proxy / TLS | Caddy (appliance); Vercel + Render (SaaS) | Caddy serves the SPA and terminates TLS on one machine; Vercel serves the SPA and proxies `/api/*` to Render |
@@ -246,14 +274,17 @@ See `docs/schema.md` for the full field table and per-source mappings.
 
 ## Security
 
-- JWT access tokens (15 min) + refresh tokens (30 days) in HttpOnly, Secure,
-  SameSite=Lax cookies. SaaS mode serves the API through a same-origin Vercel
-  proxy, so cross-site cookie rules do not apply.
+- JWT access tokens (15 min) + refresh tokens (30 days) in HttpOnly,
+  SameSite=Lax cookies (`Secure` when `COOKIE_SECURE=true`). SaaS mode serves
+  the API through a same-origin Vercel proxy, so cross-site cookie rules do not
+  apply.
 - Passwords hashed with bcrypt.
 - API keys stored as SHA-256 hashes; plaintext shown once at creation.
 - Login rate limiting (slowapi), CORS restricted to configured origins.
 - No secrets logged; all config via environment variables.
-- SaaS mode backend refuses to start with default/empty JWT secrets.
+- SaaS mode backend rejects empty JWT secrets at settings validation. The
+  Render Blueprint generates strong values for both secrets; if you configure
+  Render manually, set them yourself.
 
 ## Scaling limits and future work
 
@@ -270,7 +301,7 @@ See `docs/schema.md` for the full field table and per-source mappings.
 ### PostgreSQL + JSONB/GIN instead of OpenSearch/ClickHouse
 
 **Why PostgreSQL:** A single relational database is far simpler to operate on a
-demo appliance (4 vCPU / 8 GB) than a Java-heavy search cluster. PostgreSQL 16
+demo appliance (4 vCPU / 8 GB) than a Java-heavy search cluster. PostgreSQL 18
 provides JSONB storage, GIN indexes for full-text search, and parameterized
 queries for tenant isolation—all sufficient for the assignment's scale
 (<1M events/day).

@@ -60,7 +60,7 @@ export function MultiSourceLogForm({
 
   const { mutate: createLog, isPending: logCreating } =
     useAppMutation<IngestResponse>({
-      endpoint: "/ingest",
+      endpoint: "/ingest/ui",
       method: "post",
       invalidateFn: async () => {
         await invalidateLogQueries();

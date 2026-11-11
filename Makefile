@@ -60,6 +60,18 @@ env:
 	@echo "Using .env (an existing file is never overwritten)"
 
 seed: env
+	@echo "Waiting for the backend API to become ready..."
+	@for attempt in $$(seq 1 60); do \
+		if $(COMPOSE_LOCAL) exec -T backend curl -fsS http://127.0.0.1:4500/healthz >/dev/null 2>&1; then \
+			echo "Backend is ready."; \
+			break; \
+		fi; \
+		if [ "$$attempt" -eq 60 ]; then \
+			echo "Backend did not become ready within 120s." >&2; \
+			exit 1; \
+		fi; \
+		sleep 2; \
+	done
 	$(COMPOSE_LOCAL) exec -T backend python scripts/seed_demo_data.py
 
 seeds: seed
@@ -159,8 +171,9 @@ lint:
 	@test -f docker-compose.vm.yml && echo "Compose (VM): OK" || (echo "Compose (VM): MISSING"; exit 1)
 	@test -f Caddyfile && echo "Caddyfile: OK" || (echo "Caddyfile: MISSING"; exit 1)
 
-verify:
-	@bash $(REPO_ROOT)/scripts/acceptance_check.sh
+verify: env
+	@set -a; . $(REPO_ROOT)/.env; set +a; \
+	bash $(REPO_ROOT)/scripts/acceptance_check.sh
 
 samples:
 	@ls -la $(REPO_ROOT)/samples/

@@ -7,7 +7,8 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.alert import AlertRule
-from app.models.events import Event
+from app.models.enums import Action
+from app.models.events import Event, OutcomeEnum
 from app.services.alerting.alerter import create_or_update_alert
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,20 @@ def _build_filter_conditions(rule: AlertRule) -> list:
                 if cfield:
                     filter_json[cfield] = cvalue
     if filter_json.get("outcome"):
-        conditions.append(Event.outcome == filter_json["outcome"])
+        outcome_val = str(filter_json["outcome"]).strip().lower()
+        # OutcomeEnum values: success, failure, unknown
+        valid_outcomes = {"success", "failure", "unknown"}
+        if outcome_val in valid_outcomes:
+            conditions.append(Event.outcome == outcome_val)
     if filter_json.get("action"):
-        conditions.append(Event.action == filter_json["action"])
+        # Normalize action values to lowercase for case-insensitive comparison
+        # against stored Event.action enum values (e.g. "DENY" vs "deny").
+        # Skip invalid enum values defensively so a malformed legacy/manual
+        # rule cannot crash alert evaluation.
+        action_value = str(filter_json["action"]).strip().lower()
+        valid_actions = {e.value for e in Action}
+        if action_value and action_value in valid_actions:
+            conditions.append(Event.action == action_value)
     if filter_json.get("source"):
         conditions.append(Event.source == filter_json["source"])
     if filter_json.get("event_type"):
@@ -64,6 +76,28 @@ def _build_filter_conditions(rule: AlertRule) -> list:
     if severity_gte is not None:
         try:
             conditions.append(Event.severity >= int(severity_gte))
+        except (ValueError, TypeError):
+            pass
+    # Additional field_value filters backed by Event model columns.
+    src_ip = filter_json.get("src_ip")
+    if src_ip:
+        conditions.append(Event.src_ip == src_ip)
+    dst_ip = filter_json.get("dst_ip")
+    if dst_ip:
+        conditions.append(Event.dst_ip == dst_ip)
+    user_name = filter_json.get("user_name")
+    if user_name:
+        conditions.append(Event.user_name == user_name)
+    host = filter_json.get("host")
+    if host:
+        conditions.append(Event.host == host)
+    process = filter_json.get("process")
+    if process:
+        conditions.append(Event.process == process)
+    status_code = filter_json.get("status_code")
+    if status_code is not None:
+        try:
+            conditions.append(Event.status_code == int(status_code))
         except (ValueError, TypeError):
             pass
     return conditions

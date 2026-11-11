@@ -195,6 +195,29 @@
           },
           "response": [],
           "description": "Requires X-API-Key. Select a JSON/JSONL/CSV/syslog file in Postman."
+        },
+        {
+          "name": "HTTPS syslog - POST /api/ingest/syslog",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/ingest/syslog",
+            "body": {
+              "mode": "raw",
+              "raw": "<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp msg=\"DNS blocked\" policy=Block-DNS"
+            }
+          },
+          "response": [],
+          "description": "SaaS HTTPS syslog ingestion. Requires X-API-Key; the tenant comes from that key. Accepts newline-delimited text/plain or {\"lines\":[...]} JSON. Native UDP/TCP Syslog is available only in self-hosted Docker, not Render."
         }
       ]
     },

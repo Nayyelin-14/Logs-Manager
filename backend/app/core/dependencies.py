@@ -4,6 +4,7 @@ from sqlalchemy import select
 from typing import Optional
 import hashlib
 import hmac
+import secrets
 import jwt
 from jwt import PyJWTError, ExpiredSignatureError
 from app.core.security import (
@@ -14,6 +15,7 @@ from app.core.security import (
 )
 from app.core.config import get_settings, Settings
 from app.core.database import get_session
+from app.core.exceptions import is_transient_db_error
 from app.models.user import User
 from app.models.tenant import Tenant
 
@@ -42,7 +44,17 @@ async def get_current_user(
             user = result.scalar_one_or_none()
             if not user or user.status != "ACTIVE":
                 raise HTTPException(status_code=401, detail="Account not active")
-            return TokenPayload.from_dict(payload)
+
+            # Never trust stale role/tenant claims from the token. Rebuild the
+            # authorization context from the current database row so demoted,
+            # deactivated or tenant-moved users lose old privileges immediately.
+            return TokenPayload(
+                user_id=user.id,
+                username=user.username,
+                email=user.email,
+                tenant=user.tenant,
+                role=user.role.value if hasattr(user.role, "value") else user.role,
+            )
         except ExpiredSignatureError:
             pass
         except PyJWTError:
@@ -60,7 +72,7 @@ async def get_current_user(
             username=user.username,
             email=user.email,
             tenant=user.tenant,
-            role=user.role,
+            role=user.role.value if hasattr(user.role, "value") else user.role,
         )
         new_access = create_access_token(new_payload)
         new_refresh = create_refresh_token(new_payload)
@@ -68,6 +80,16 @@ async def get_current_user(
         opts = settings.cookie_options()
         response.set_cookie("accessToken", new_access, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **opts)
         response.set_cookie("refreshToken", new_refresh, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, **opts)
+        # Keep the double-submit CSRF cookie alive for the whole session. Without
+        # this, the token would expire after the short access-token lifetime
+        # while the session itself is still valid, breaking every write.
+        csrf_token = request.cookies.get(settings.CSRF_COOKIE_NAME) or secrets.token_urlsafe(32)
+        response.set_cookie(
+            settings.CSRF_COOKIE_NAME,
+            csrf_token,
+            max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+            **settings.csrf_cookie_options(),
+        )
         return new_payload
 
     except ExpiredSignatureError:
@@ -110,11 +132,22 @@ async def verify_api_key(
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
-
-    result = await session.execute(
-        select(Tenant).where(Tenant.api_key_hash == key_hash, Tenant.is_active == True)
-    )
-    tenant_row = result.scalar_one_or_none()
+    try:
+        result = await session.execute(
+            select(Tenant).where(Tenant.api_key_hash == key_hash, Tenant.is_active == True)
+        )
+        tenant_row = result.scalar_one_or_none()
+    except Exception as exc:
+        # A database/infrastructure outage while validating the key is not an
+        # authentication failure. Report it as retryable so clients (Vector,
+        # rsyslog, scripts) retry instead of treating the key as invalid.
+        if is_transient_db_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database temporarily unavailable",
+                headers={"Retry-After": "5"},
+            ) from exc
+        raise
 
     if not tenant_row:
         raise HTTPException(status_code=401, detail="Invalid API key")

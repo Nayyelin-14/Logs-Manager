@@ -4,9 +4,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi import Limiter
 from pydantic import BaseModel, AfterValidator
-from typing import Annotated
+from typing import Annotated, Optional
 import re
 import time
+import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import get_settings
@@ -19,6 +20,7 @@ from app.core.security import (
     create_refresh_token,
 )
 from app.core.dependencies import get_current_user, require_admin
+from app.core.tenancy import resolve_read_tenant
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.enums import Role
@@ -105,6 +107,7 @@ def clear_auth_cookies(response: Response):
     opts = settings.cookie_options()
     response.delete_cookie("accessToken", **opts)
     response.delete_cookie("refreshToken", **opts)
+    response.delete_cookie(settings.CSRF_COOKIE_NAME, **settings.csrf_cookie_options())
 
 
 @router.post("/login")
@@ -175,6 +178,17 @@ async def login(
 
     set_auth_cookies(response, access_token, refresh_token)
 
+    # Set a non-HttpOnly CSRF token cookie so the browser's JavaScript can
+    # read it and send it back as the X-XSRF-TOKEN header on state-changing
+    # requests. SameSite/Secure attributes mirror the auth cookies.
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        settings.CSRF_COOKIE_NAME,
+        csrf_token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        **settings.csrf_cookie_options(),
+    )
+
     return {
         "message": f"Welcome back!!! {user.username}",
         "userData": {
@@ -227,8 +241,15 @@ async def auth_check(
 async def list_users_for_admin(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
+    tenant: Optional[str] = None,
 ):
-    result = await session.execute(select(User).order_by(User.id.desc()))
+    effective_tenant = resolve_read_tenant(current_user, tenant)
+
+    query = select(User).order_by(User.id.desc())
+    if effective_tenant:
+        query = query.where(User.tenant == effective_tenant)
+
+    result = await session.execute(query)
     users = result.scalars().all()
     users_payload = [{
         "id": u.id,

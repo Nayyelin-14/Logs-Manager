@@ -2,23 +2,40 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, func, desc, asc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import Optional, List, Set
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
 from app.core.security import TokenPayload
+from app.core.tenancy import is_platform_admin, resolve_read_tenant, tenant_key
 from app.models.events import Event
+from app.models.enums import Source
 
 router = APIRouter()
 
+VALID_SOURCES: Set[str] = {source.value for source in Source}
+VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+SORTABLE_FIELDS = {
+    "ts",
+    "severity",
+    "event_type",
+    "source",
+    "user_name",
+    "src_ip",
+    "dst_ip",
+    "ingested_at",
+}
+
 
 def _effective_tenant(current_user: "TokenPayload", requested: Optional[str]) -> Optional[str]:
-    """Resolve a read filter, respecting tenant-bound administrators."""
-    requested_tenant = (requested or "").strip()
-    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
-        return None if requested_tenant in ("", "all") else requested_tenant
-    return current_user.tenant
+    """Resolve a read filter, respecting tenant-bound administrators.
+
+    ``None`` means all tenants and is only possible for platform admins. A
+    non-platform account with no tenant receives 403 instead of an unscoped
+    query.
+    """
+    return resolve_read_tenant(current_user, requested)
 
 
 def _event_payload(log: Event) -> dict:
@@ -66,7 +83,36 @@ def _severity_level(value):
     return "low"
 
 
+def _parse_datetime(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
+    """Parse an ISO-8601 value or a plain ``YYYY-MM-DD`` date as UTC.
+
+    Date-only values are interpreted as the whole UTC day: ``start`` maps to
+    00:00:00Z and ``end`` (``end_of_day=True``) maps to the next day, so a
+    range like ``from=2026-11-09&to=2026-11-09`` includes all of that day.
+    """
+    if value is None or not str(value).strip():
+        return None
+    raw = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid date/time '{value}'. Use ISO-8601 (e.g. 2026-11-09 or 2026-11-09T00:00:00Z).",
+        )
+    date_only = len(raw) == 10 and raw[4] == "-" and raw[7] == "-"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    if date_only and end_of_day:
+        return parsed + timedelta(days=1)
+    return parsed
+
+
 class LogFilters(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     tenant: Optional[str] = None
     source: Optional[str] = None
     event_type: Optional[str] = None
@@ -79,7 +125,10 @@ class LogFilters(BaseModel):
     dst_ip: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    from_time: Optional[str] = Field(None, alias="from")
+    to_time: Optional[str] = Field(None, alias="to")
     search: Optional[str] = None
+    q: Optional[str] = None
     limit: int = 50
     cursor: Optional[str] = None
     sort_by: str = "ts"
@@ -106,13 +155,23 @@ async def search_logs(
     if tenant:
         query = query.where(Event.tenant == tenant)
 
+    if filters.source and str(filters.source).strip():
+        source = str(filters.source).strip().lower()
+        if source not in VALID_SOURCES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported source '{filters.source}'. "
+                    f"Valid sources: {', '.join(sorted(VALID_SOURCES))}."
+                ),
+            )
+        query = query.where(Event.source == source)
 
-    if filters.source:
-        query = query.where(Event.source == filters.source)
     event_type = filters.event_type or filters.eventType
-    if event_type:
-        query = query.where(Event.event_type == event_type)
-    if filters.severity:
+    if event_type and str(event_type).strip():
+        query = query.where(func.lower(Event.event_type) == str(event_type).strip().lower())
+
+    if filters.severity and str(filters.severity).strip():
         sev = str(filters.severity).strip().lower()
         ranges = {"low": (0, 3), "medium": (4, 6), "high": (7, 8), "critical": (9, 10)}
         if sev in ranges:
@@ -120,56 +179,74 @@ async def search_logs(
             query = query.where(Event.severity.between(low, high))
         elif sev.isdigit():
             query = query.where(Event.severity >= int(sev))
-    if filters.date:
-        try:
-            day = datetime.fromisoformat(filters.date).replace(tzinfo=timezone.utc)
-            query = query.where(Event.ts >= day)
-            query = query.where(Event.ts < day + timedelta(days=1))
-        except ValueError:
-            pass
-    if filters.action:
-        query = query.where(Event.action == filters.action)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported severity '{filters.severity}'. "
+                    "Use low, medium, high, critical, or a number 0-10."
+                ),
+            )
+
+    # A single calendar day remains the primary UI filter.
+    day = _parse_datetime(filters.date)
+    if day is not None:
+        query = query.where(Event.ts >= day)
+        query = query.where(Event.ts < day + timedelta(days=1))
+
+    # Accept both the explicit start/end pair and the concise from/to aliases.
+    start = _parse_datetime(filters.start_time) or _parse_datetime(filters.from_time)
+    end = _parse_datetime(filters.end_time) or _parse_datetime(filters.to_time, end_of_day=True)
+    if start is not None:
+        query = query.where(Event.ts >= start)
+    if end is not None:
+        query = query.where(Event.ts <= end)
+
+    if filters.action and str(filters.action).strip():
+        query = query.where(Event.action == str(filters.action).strip().lower())
     if filters.user:
         query = query.where(Event.user_name.ilike(f"%{filters.user}%"))
     if filters.src_ip:
         query = query.where(Event.src_ip == filters.src_ip)
     if filters.dst_ip:
         query = query.where(Event.dst_ip == filters.dst_ip)
-    if filters.start_time:
-        query = query.where(Event.ts >= filters.start_time)
-    if filters.end_time:
-        query = query.where(Event.ts <= filters.end_time)
-    if filters.search:
-        search_term = f"%{filters.search}%"
+
+    search_value = filters.search or filters.q
+    if search_value and str(search_value).strip():
+        search_term = f"%{str(search_value).strip()}%"
         query = query.where(
             or_(
                 Event.user_name.ilike(search_term),
                 Event.src_ip.ilike(search_term),
+                Event.dst_ip.ilike(search_term),
                 Event.event_type.ilike(search_term),
+                Event.host.ilike(search_term),
+                Event.process.ilike(search_term),
+                Event.rule_name.ilike(search_term),
             )
         )
 
-
-    sort_column = getattr(Event, filters.sort_by, Event.ts)
-    if filters.sort_order == "asc":
+    sort_column = getattr(Event, filters.sort_by, None)
+    if filters.sort_by not in SORTABLE_FIELDS or sort_column is None:
+        sort_column = Event.ts
+    if (filters.sort_order or "").lower() == "asc":
         query = query.order_by(asc(sort_column))
     else:
         query = query.order_by(desc(sort_column))
 
-
     if filters.cursor:
         query = query.where(Event.id > filters.cursor)
 
-    query = query.limit(filters.limit + 1)
+    limit = max(1, min(int(filters.limit or 50), 500))
+    query = query.limit(limit + 1)
     result = await session.execute(query)
     logs = result.scalars().all()
 
-    has_next = len(logs) > filters.limit
+    has_next = len(logs) > limit
     if has_next:
-        logs = logs[:filters.limit]
+        logs = logs[:limit]
 
     next_cursor = logs[-1].id if has_next else None
-
 
     log_dicts = [_event_payload(log) for log in logs]
 
@@ -215,7 +292,6 @@ async def delete_log(
     await require_admin(current_user)
 
     from app.models.events import Event as EventModel
-    from sqlalchemy import select
 
     result = await session.execute(
         select(EventModel).where(EventModel.id == log_id)
@@ -223,17 +299,16 @@ async def delete_log(
     log = result.scalar_one_or_none()
     if not log:
         return {"success": False, "message": "Log not found"}
-    if (current_user.tenant or "").strip() and log.tenant != current_user.tenant:
+    if not is_platform_admin(current_user) and tenant_key(log.tenant) != tenant_key(current_user.tenant):
         return {"success": False, "message": "Log not found"}
-
 
     log_data = {
         "id": str(log.id),
-        "source": log.source,
+        "source": log.source if isinstance(log.source, str) else log.source.value,
         "tenant": log.tenant,
         "event_type": log.event_type,
         "severity": log.severity,
-        "raw": log.raw
+        "raw": log.raw,
     }
 
     await session.delete(log)

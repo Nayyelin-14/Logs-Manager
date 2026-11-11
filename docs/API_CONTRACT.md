@@ -81,10 +81,10 @@ All endpoints preserve:
 |--------|---------|
 | **Method** | POST |
 | **Path** | `/api/ingest` |
-| **Auth** | API Key (`X-API-Key`) OR JWT cookies |
+| **Auth** | API Key (`X-API-Key`) |
 | **Request Body** | Single event object |
-| **Response (201/400)** | `{ success: boolean, eventId?: string, message?: string, alerts?: Alert[], ingested?: number, rejected?: number }` |
-| **Rate Limit** | `INGEST_RATE_LIMIT` per API key (default `600/minute`) |
+| **Response (200/400/422)** | `{ success: boolean, eventId?: string, message?: string, alerts?: Alert[], ingested?: number, rejected?: number }` |
+| **Rate Limit** | `INGEST_RATE_LIMIT` per authenticated session or client IP (default `600/minute`) |
 
 **Event Object Example:**
 ```json
@@ -100,22 +100,73 @@ All endpoints preserve:
 }
 ```
 
-### 3.2 POST `/api/ingest/batch` (Batch + File Upload)
+### 3.2 POST `/api/ingest/batch` (Batch)
 
 | Aspect | Contract |
 |--------|---------|
 | **Method** | POST |
 | **Path** | `/api/ingest/batch` |
-| **Auth** | API Key OR JWT |
-| **Content-Type** | `multipart/form-data` (file) OR `application/json` |
-| **File Field** | `file` (FastAPI `UploadFile`) |
+| **Auth** | API Key (`X-API-Key`) |
+| **Content-Type** | `application/json` |
 | **JSON Body** | Array OR `{ events: [], source?, tenant? }` |
-| **Response (201/400)** | `{ success, total, ingested, failed, results: [{ index, success, eventId?, error? }] }` |
-| **Max File Size** | `INGEST_MAX_FILE_BYTES` (10MB) |
+| **Response (200/400)** | `{ success, ingested, rejected, parsed, errors, alerts }` |
 | **Max Events** | `INGEST_BATCH_MAX_EVENTS` (1000) |
-| **Rate Limit** | `INGEST_RATE_LIMIT` per API key (default `600/minute`) |
+| **Rate Limit** | `INGEST_RATE_LIMIT` per authenticated session or client IP (default `600/minute`) |
 
 **Supported Formats:** JSON array, JSONL/NDJSON, CSV
+
+### 3.2.1 POST `/api/ingest/file` (File Upload)
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/ingest/file` |
+| **Auth** | API Key (`X-API-Key`) |
+| **Content-Type** | `multipart/form-data` |
+| **File Field** | `file` (FastAPI `UploadFile`); optional form fields `source`, `tenant` |
+| **Response (200/400)** | `{ success, ingested, rejected, parsed, format, errors, alerts }` |
+| **Max File Size** | `INGEST_MAX_FILE_BYTES` (10MB) |
+| **Supported Formats** | JSON array, JSONL/NDJSON, CSV, Syslog text, CloudTrail |
+
+### 3.3 POST `/api/ingest/syslog` (HTTPS Syslog)
+
+The HTTPS counterpart to the self-hosted native UDP/TCP listener. Hosted SaaS
+uses this endpoint because Render/Vercel do not expose raw Syslog ports.
+
+| Aspect | Contract |
+|--------|---------|
+| **Method** | POST |
+| **Path** | `/api/ingest/syslog` |
+| **Auth** | API Key (`X-API-Key`) only; JWT cookies are not accepted |
+| **Content-Type** | `text/plain` (newline-delimited syslog) or `application/json` |
+| **JSON Body** | `{ "lines": ["<syslog line>", "..."], "tenant": "optional" }` |
+| **Tenant** | Taken from the API key. A `tenant` in the query string or JSON body must match the key or the request returns **403**. |
+| **Response (202)** | `{ "accepted": number, "rejected": number, "errors": [{ "line": number, "error": string }] }` |
+| **Limits** | `INGEST_HTTP_SYSLOG_MAX_BYTES` (1 MiB) and `INGEST_HTTP_SYSLOG_MAX_LINES` (1000); larger requests return **413** |
+| **Rate Limit** | `INGEST_RATE_LIMIT` per authenticated session or client IP (default `600/minute`) |
+
+Events are parsed with the same `parse_syslog_message` path as the native
+listener and are tagged `transport=http-syslog`.
+
+**Text example:**
+```bash
+curl -X POST https://<project>.vercel.app/api/ingest/syslog \
+  -H "Content-Type: text/plain" \
+  -H "X-API-Key: <tenant-api-key>" \
+  --data-binary @samples/syslog_firewall.log
+```
+
+**JSON example:**
+```json
+{
+  "lines": [
+    "<190>Oct 30 22:15:01 router01 source=network action=ALLOW src=192.168.1.10 dst=1.1.1.1 msg=\"outbound https\""
+  ]
+}
+```
+
+Traditional devices that only speak Syslog can use the local Vector or rsyslog
+forwarder in `samples/forwarder/` to post their messages to this endpoint.
 
 ---
 
@@ -459,7 +510,9 @@ All error responses follow this format:
 | Access Token | `accessToken` | 900s (15m) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` (lax/none) | `/` |
 | Refresh Token | `refreshToken` | 2592000s (30d) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
 
-**Production:** `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` (cross-origin)
+**Production:** `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax` for the same-origin
+Vercel/Caddy proxy. Use `none` only when the browser calls the API directly
+from a different site.
 **Development:** `COOKIE_SECURE=false`, `COOKIE_SAME_SITE=lax`
 
 ---

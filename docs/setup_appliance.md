@@ -1,6 +1,10 @@
-# Appliance Setup Guide
- 
- This guide covers deploying Log Manager as an appliance on a single machine or VM.
+# Self-Hosted Docker Setup Guide (Laptop, Appliance, or VM)
+
+This guide covers running the complete application with `docker-compose.yml` on
+a single machine. The same file works on a laptop, an appliance host, or a VM;
+only environment settings such as `CADDY_BIND_IP`, `DOMAIN`, ports, and secrets
+change. `docker-compose.vm.yml` is an internal image-based deployment artifact
+and is not part of the self-hosting path.
  
  ## System Requirements
  
@@ -34,31 +38,46 @@ you accept swap, or use the SaaS mode in `docs/setup_saas.md` instead.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/logs-manager.git
-cd logs-manager
+git clone https://github.com/Nayyelin-14/Logs-Manager.git
+cd Logs-Manager
 
 # Copy environment template
 cp .env.example .env
-# Edit .env with your settings (passwords, secrets, DOMAIN)
+# Edit .env with your settings (passwords, secrets, DOMAIN, CADDY_BIND_IP)
 
 # Start the stack (standalone local Compose file)
 make up
 
-# Wait ~30s for services to become healthy
+# Wait for the backend readiness check, then seed
 make seed
 
 # Access the system
-#   UI:        https://localhost:443/  (Caddy, self-signed cert locally)
+#   UI:        https://localhost/
 #   API:       http://localhost:4500
 #   Syslog:    UDP/TCP <host-ip>:514 (default; container listens on 5514)
 #   API docs:  http://localhost:4500/docs
 ```
 
 > **Syslog port note:** The host port defaults to **514**, the standard
-> firewall/router syslog port, and Compose binds it on **0.0.0.0** so remote
-> devices can reach the appliance. The container always listens internally on
-> 5514; only the host mapping changes. Binding 514 requires the Docker daemon
-> to have permission for low ports (normally true when Docker runs as root).
+> firewall/router syslog port, and Compose binds it on **0.0.0.0** by default so
+> remote devices on the LAN can reach the appliance. The container always
+> listens internally on 5514; only the host mapping changes. Binding 514
+> requires the Docker daemon to have permission for low ports (normally true
+> when Docker runs as root).
+>
+> **Never expose port 514 directly to the public Internet.** Syslog UDP/TCP is
+> unauthenticated and unencrypted. On an Internet-facing host bind only a
+> private interface and allowlist the forwarding devices in the host firewall:
+> ```
+> # .env — bind the published port to a LAN address, not 0.0.0.0
+> SYSLOG_BIND_IP=10.0.0.5
+> # Optional application-level allowlist (comma-separated CIDRs)
+> SYSLOG_ALLOWED_CIDRS=10.0.0.0/8,192.168.10.0/24
+> ```
+> Devices outside those CIDRs are rejected before parsing. For ingestion from
+> untrusted networks use the HTTPS endpoint (`POST /api/ingest/syslog`) with a
+> Vector/rsyslog forwarder instead. See the forwarder docs for retry and
+> durability behavior.
 >
 > Use **5514** instead on Docker Desktop/WSL2, where low-port forwarding can
 > fail, or if host port 514 is already in use. Set the override in your local
@@ -74,6 +93,13 @@ make seed
 > HTTPS_PORT=8443
 > ```
 > Then access the UI at `https://localhost:8443/` and the HTTP redirect at `http://localhost:8088/`.
+
+> **LAN or VM access:** Caddy binds to `127.0.0.1` by default so a laptop is not
+> exposed to the network. To reach the UI/API from another machine, set
+> `CADDY_BIND_IP=0.0.0.0` and open ports 80/443. For public HTTPS, also set
+> `DOMAIN` to a DNS name that points at the host; Caddy obtains the certificate.
+> A LAN-only hostname/IP will use Caddy's internal certificate and show a browser
+> warning. The same `docker-compose.yml` is used in every case.
  
  ## Manual Deployment
  
@@ -103,7 +129,7 @@ docker compose -p lms_local -f docker-compose.yml up -d --build
 docker compose -p lms_local -f docker-compose.yml ps
 
 # Check API health
-curl -sk https://localhost:443/healthz
+curl -sk https://localhost/healthz
 
 # Or HTTP redirect to check Caddy
 curl -sI http://localhost:80/
@@ -135,7 +161,7 @@ After startup:
 
 | Service | URL |
 |---------|-----|
-| UI Dashboard | https://localhost:443/ |
+| UI Dashboard | https://localhost/ |
 | API | http://localhost:4500 |
 | Swagger Docs | http://localhost:4500/docs |
 | Syslog UDP | <host-ip>:514 (default; container 5514) |
@@ -155,14 +181,27 @@ After startup:
  
  # Ingestion
  INGEST_API_KEY=<32-char API key>
- INGEST_API_TENANT=demoA
+ INGEST_DEFAULT_TENANT=demoA
  
- # Syslog (optional, for receiving logs)
+ # Self-hosted edge binding (127.0.0.1 for laptop, 0.0.0.0 for LAN/VM)
+ CADDY_BIND_IP=127.0.0.1
+ DOMAIN=localhost
+
+ # Syslog (solely handled by the dedicated ingest container)
  SYSLOG_ENABLED=true
+ # Set to a private/LAN address; never publish 514 on a public interface.
  SYSLOG_BIND_IP=0.0.0.0
  SYSLOG_HOST_PORT=514
+ SYSLOG_TENANT=demoA
+ SYSLOG_SOURCE=firewall
  SYSLOG_UDP_PORT=5514
  SYSLOG_TCP_PORT=5514
+ # Optional comma-separated source CIDRs (empty = no app-level filter).
+ SYSLOG_ALLOWED_CIDRS=
+ SYSLOG_DB_RETRY_ATTEMPTS=3
+ SYSLOG_DB_RETRY_BACKOFF_SECS=0.25
+ SYSLOG_MAX_INFLIGHT=1000
+ INGEST_HEALTH_PORT=8090
  
 # Retention
 RETENTION_DAYS=7
@@ -280,12 +319,29 @@ docker compose -p lms_local -f docker-compose.yml exec -T db psql -U logs -d log
 
  ### Syslog not working
  ```bash
- # Check syslog listener
- docker compose -p lms_local -f docker-compose.yml logs backend | grep syslog
+ # Check the dedicated ingest container (the API does not open a Syslog port)
+ docker compose -p lms_local -f docker-compose.yml logs ingest
 
  # Verify port is listening (514 default, 5514 override)
  ss -tuln | grep -E ':(514|5514)\b'
+
+ # Health: checks SELECT 1 on PostgreSQL and every enabled listener.
+ # A socket alone is not considered healthy when the database is down.
+ docker inspect --format '{{json .State.Health}}' lms_local-ingest-1 | python3 -m json.tool
+
+ # Counters (received/accepted/invalid/denied/retried/dropped)
+ docker compose -p lms_local -f docker-compose.yml exec -T ingest \
+   python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8090/healthz').read().decode())"
+
+ # If SYSLOG_ENABLED=false, neither UDP nor TCP is expected to listen.
+ docker compose -p lms_local -f docker-compose.yml exec -T ingest \
+   python3 -c "import os; print('SYSLOG_ENABLED=' + os.environ.get('SYSLOG_ENABLED',''))"
  ```
+
+ > The listener retries only transient database errors (bounded, exponential
+ > backoff). Validation errors and messages from disallowed source CIDRs are
+ > dropped and counted; they are never retried. See `ingest/README.md` for the
+ > counter names and tenant limitation.
 
  ### Database connection issues
  ```bash

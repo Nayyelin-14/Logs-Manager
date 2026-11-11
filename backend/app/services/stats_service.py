@@ -5,7 +5,9 @@ from typing import Any, Optional
 
 from sqlalchemy import select, func, desc, asc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, status
 
+from app.core.tenancy import normalize_tenant
 from app.models.events import Event
 from app.models.alert import Alert
 
@@ -21,11 +23,19 @@ TOP_FIELD_WHITELIST: dict[str, Any] = {
 
 def _tenant_scope(current_user_role: str, current_user_tenant: Optional[str],
                   requested: Optional[str]) -> Optional[str]:
-    if current_user_role == "ADMIN":
-        if requested is None or requested == "" or requested == "all":
+    role = current_user_role.value if hasattr(current_user_role, "value") else current_user_role
+    own_tenant = (current_user_tenant or "").strip().lower()
+    if role == "ADMIN" and not own_tenant:
+        requested_tenant = (requested or "").strip().lower()
+        if requested_tenant in ("", "all"):
             return None
-        return requested
-    return current_user_tenant
+        return normalize_tenant(requested)
+    if not own_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is not assigned to a tenant",
+        )
+    return own_tenant
 
 
 def _parse_time_range(from_str: Optional[str], to_str: Optional[str]) -> tuple[datetime, datetime]:
