@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run verify:bundle",
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "test:api-base": "node --test scripts/apiBase.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

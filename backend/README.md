@@ -8,8 +8,9 @@
 ## Overview
 
 Log Manager is a mini SIEM system that supports multiple data sources,
-normalization, search, dashboard, alerting, and deployment in both
-appliance (Docker Compose) and SaaS (cloud VM with HTTPS) modes.
+normalization, search, dashboard, alerting, and deployment in two independent
+modes: self-hosted Docker (Caddy + local PostgreSQL/Redis) and hosted SaaS
+(Vercel + Render + Neon + Upstash).
 
 ## Architecture
 
@@ -36,7 +37,7 @@ make seed
 
 # 3. Verify
 make test            # backend pytest suite
-make check-frontend  # frontend typecheck, lint, and build
+make frontend-check  # frontend typecheck, lint, and build
 ```
 
 For backend-only development, start `db` and `redis` with Compose and run the FastAPI app on port 4500. See `docs/setup_appliance.md` for detailed steps.
@@ -46,11 +47,11 @@ For backend-only development, start `db` and `redis` with Compose and run the Fa
 | Service | Port | Description |
 |---------|------|-------------|
 | Backend API | 4500 | FastAPI app with all routes |
-| Syslog Listener | 514 host (5514 container) UDP/TCP | RFC3164/RFC5424 syslog parser |
+| Syslog Ingest | 514 host (5514 container) UDP/TCP | Dedicated RFC3164/RFC5424 listener |
 | PostgreSQL | 5432 (internal) | Events, users, rules, alerts |
 | Redis | 6379 (internal) | Cache, email queue (arq) |
-| Caddy | 443/HTTPS | Reverse proxy with TLS |
-| Frontend | 8080 | React UI (separate service) |
+| Caddy | 80/443 | Serves the built React SPA, proxies API, terminates TLS |
+| Worker | internal | Alert sweep and retention |
 
 ## API Endpoints
 
@@ -73,8 +74,9 @@ For backend-only development, start `db` and `redis` with Compose and run the Fa
 - `GET /api/sources/health` - Per-source health (admin only)
 - `GET /api/dashboard` - Dashboard statistics
 
-All ingestion routes are rate limited per API key with `INGEST_RATE_LIMIT`
-(default `600/minute`); exceeded requests return HTTP 429 with `Retry-After`.
+All ingestion routes are rate limited by session identity or client IP with
+`INGEST_RATE_LIMIT` (default `600/minute`); exceeded requests return HTTP 429
+with `Retry-After`.
 
 ### Alerts & Rules
 - `GET /api/get-alerts` - List alerts (tenant-scoped)
@@ -107,10 +109,10 @@ See `.env.example` for all required settings. Key variables:
 - `REDIS_URL` - Redis connection for arq email queue
 - `ACCESS_TOKEN_SECRET` - JWT access token signing key
 - `REFRESH_TOKEN_SECRET` - JWT refresh token signing key
-- `COOKIE_SECURE` - `true` for HTTPS SaaS, `false` for HTTP appliance
-- `COOKIE_SAME_SITE` - `lax` for appliance, `none` for HTTPS SaaS
-- `INGEST_API_KEY` - Machine ingestion API key prefix
-- `INGEST_API_TENANT` - Default tenant for ingestion
+- `COOKIE_SECURE` - `true` for HTTPS-only access, `false` for direct local HTTP
+- `COOKIE_SAME_SITE` - `lax` for same-origin Caddy/Vercel proxy
+- `INGEST_API_KEY` - Machine ingestion API key used when seeding `demoa`
+- `INGEST_DEFAULT_TENANT` - Fallback tenant for ingestion
 - `SYSLOG_ENABLED` - `true`/`false` (start syslog listener)
 - `SYSLOG_TENANT` - Default tenant for syslog messages
 - `SYSLOG_SOURCE` - Default source for syslog messages

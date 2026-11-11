@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, ExternalLink, Radio, RefreshCcw, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { Activity, ArrowRight, ExternalLink, Radio, RefreshCcw, SlidersHorizontal, TriangleAlert, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { GradientAreaChart } from "../AppComponents/Charts/GradientAreaChart";
@@ -13,7 +13,11 @@ import { useUserStore } from "../store/userStore";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import type { DashboardStats } from "../types/types";
 
-const rangeLabel = (range: string) => range === "1d" ? "Today" : range === "3d" ? "Last 3 days" : "Last 7 days";
+const rangeLabel = (range: string) =>
+  range === "1d" ? "Last 24 hours"
+    : range === "3d" ? "Last 3 days"
+    : range === "30d" ? "Last 30 days"
+    : "Last 7 days";
 const severityOrder = ["critical", "high", "medium", "low"];
 const severityColors: Record<string, string> = { critical: "#f87171", high: "#f97316", medium: "#fbbf24", low: "#34d399" };
 const relativeTime = (value?: string | null) => {
@@ -24,17 +28,44 @@ const relativeTime = (value?: string | null) => {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return `${Math.floor(seconds / 86400)}d ago`;
 };
-const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const pad = (value: number) => String(value).padStart(2, "0");
+const dayKey = (date: Date) =>
+  `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+const hourKey = (date: Date) =>
+  `${dayKey(date)}T${pad(date.getUTCHours())}:00`;
 
 function EventPulse({ data, range }: { data: DashboardStats; range: string }) {
+  const hourly = (data.bucket ?? (range === "1d" ? "hour" : "day")) === "hour";
   const points = useMemo(() => {
-    const dayCount = range === "1d" ? 1 : range === "3d" ? 3 : 7;
+    if (hourly) {
+      // Last 24 UTC hours, aligned with the API's hour buckets.
+      const end = new Date();
+      end.setUTCMinutes(0, 0, 0);
+      const index = new Map<string, { date: string; events: number; alerts: number }>();
+      for (let offset = 23; offset >= 0; offset--) {
+        const date = new Date(end);
+        date.setUTCHours(date.getUTCHours() - offset);
+        const key = hourKey(date);
+        index.set(key, { date: key, events: 0, alerts: 0 });
+      }
+      for (const event of data.eventsBySource ?? []) {
+        const point = index.get(hourKey(new Date(event.timestamp)));
+        if (point) point.events += event._count.id;
+      }
+      for (const alert of data.alertsByDay ?? []) {
+        const point = index.get(hourKey(new Date(alert.triggeredAt)));
+        if (point) point.alerts += alert._count.id;
+      }
+      return [...index.values()];
+    }
+
+    const dayCount = range === "3d" ? 3 : range === "30d" ? 30 : 7;
     const end = new Date();
-    end.setHours(0, 0, 0, 0);
+    end.setUTCHours(0, 0, 0, 0);
     const indexByDay = new Map<string, { date: string; events: number; alerts: number }>();
     for (let offset = dayCount - 1; offset >= 0; offset--) {
       const date = new Date(end);
-      date.setDate(date.getDate() - offset);
+      date.setUTCDate(date.getUTCDate() - offset);
       const key = dayKey(date);
       indexByDay.set(key, { date: key, events: 0, alerts: 0 });
     }
@@ -49,17 +80,25 @@ function EventPulse({ data, range }: { data: DashboardStats; range: string }) {
       if (point) point.alerts += alert._count.id;
     }
     return [...indexByDay.values()];
-  }, [data.eventsBySource, data.alertsByDay, range]);
+  }, [data.eventsBySource, data.alertsByDay, hourly, range]);
 
   const dayEvents = points.at(-1)?.events ?? 0;
   const hasEvents = points.some((point) => point.events > 0 || point.alerts > 0);
+  const xTickFormatter = (value: string) =>
+    hourly
+      ? `${new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}Z`
+      : new Date(`${value}T12:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  const tooltipLabelFormatter = (value: string) =>
+    hourly
+      ? `${new Date(value).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`
+      : new Date(`${value}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
 
   return <div className="min-w-0 px-5 pt-5 pb-4 sm:px-6 sm:pt-6">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <div className="flex items-center gap-2 text-xs font-medium text-ink-muted"><span className="inline-flex size-6 items-center justify-center rounded-sm bg-brand-soft text-brand"><Radio className="size-3.5" /></span>Event volume <span className="text-ink-muted/50">/</span> {rangeLabel(range)}</div>
         <p className="mt-3 flex items-baseline gap-2"><span className="font-mono text-[40px] leading-none font-medium tracking-[-0.055em] text-ink tabular-nums sm:text-[48px]">{data.totalEvents.toLocaleString()}</span><span className="text-sm text-ink-muted">events</span></p>
-        <p className="mt-2 text-xs text-ink-muted">{dayEvents.toLocaleString()} observed today · grouped by event day</p>
+        <p className="mt-2 text-xs text-ink-muted">{dayEvents.toLocaleString()} in the latest {hourly ? "hour" : "day"} · grouped by event time</p>
       </div>
       <div className="flex items-center gap-4 pt-1.5">
         <span className="inline-flex items-center gap-1.5 text-xs text-ink-muted"><i className="size-1.5 rounded-full bg-brand" />Events</span>
@@ -75,12 +114,12 @@ function EventPulse({ data, range }: { data: DashboardStats; range: string }) {
           { dataKey: "events", label: "Events", color: "var(--brand)" },
           { dataKey: "alerts", label: "Detections", color: "var(--chart-2)", kind: "line", yAxisId: "right" },
         ]}
-        xTickFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        xTickFormatter={xTickFormatter}
         yTickFormatter={(value) => Number(value).toLocaleString()}
-        tooltipLabelFormatter={(value) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+        tooltipLabelFormatter={tooltipLabelFormatter}
       /> : <div className="flex h-full items-center justify-center border-y border-dashed border-border/80 text-xs text-ink-muted">No activity recorded in this window</div>}
     </div>
-    <div className="mt-2 flex items-center justify-between border-t border-border/70 pt-3 text-xs text-ink-muted"><span>Daily event volume</span><span>Detection count uses the right-side scale</span></div>
+    <div className="mt-2 flex items-center justify-between border-t border-border/70 pt-3 text-xs text-ink-muted"><span>{hourly ? "Hourly" : "Daily"} event volume</span><span>Detection count uses the right-side scale</span></div>
   </div>;
 }
 
@@ -132,6 +171,50 @@ function RuleReadout({ data, created, range }: { data: DashboardStats; created: 
   </section>;
 }
 
+function TopUsers({ users }: { users: DashboardStats["topUsers"] }) {
+  const visible = (users ?? []).filter((item) => item.user).slice(0, 5);
+  const maximum = Math.max(...visible.map((item) => item.count), 1);
+  return visible.length ? (
+    <div className="space-y-3">
+      {visible.map((item, index) => (
+        <div key={`${item.user}-${index}`} className="rounded-xl bg-surface-muted/55 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate font-mono text-xs font-semibold text-ink">{item.user}</span>
+            <span className="rounded bg-surface px-2 py-0.5 font-mono text-xs text-ink-muted">{item.count.toLocaleString()} events</span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(4, item.count / maximum * 100)}%`, background: "linear-gradient(90deg, var(--chart-1), color-mix(in srgb, var(--chart-1) 35%, transparent))" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <p className="rounded-xl bg-surface-muted/55 p-4 text-xs text-ink-muted">User activity appears as identity events are recorded.</p>
+  );
+}
+
+function TopEventTypes({ types }: { types: DashboardStats["topEventTypes"] }) {
+  const visible = (types ?? []).filter((item) => item.type).slice(0, 5);
+  const maximum = Math.max(...visible.map((item) => item.count), 1);
+  return visible.length ? (
+    <div className="space-y-3">
+      {visible.map((item, index) => (
+        <div key={`${item.type}-${index}`} className="rounded-xl bg-surface-muted/55 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate font-mono text-xs font-semibold text-ink">{item.type}</span>
+            <span className="rounded bg-surface px-2 py-0.5 font-mono text-xs text-ink-muted">{item.count.toLocaleString()} events</span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(4, item.count / maximum * 100)}%`, background: "linear-gradient(90deg, var(--chart-2), color-mix(in srgb, var(--chart-2) 35%, transparent))" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <p className="rounded-xl bg-surface-muted/55 p-4 text-xs text-ink-muted">Event types appear as normalized events are recorded.</p>
+  );
+}
+
 function TopIps({ ips }: { ips: DashboardStats["topIPs"] }) {
   const visible = ips.slice(0, 4);
   const maximum = Math.max(...visible.map((ip) => ip.count), 1);
@@ -173,7 +256,7 @@ const DashboardStatsPage = () => {
       <div className="flex flex-wrap items-center gap-2">
         {user?.role === "ADMIN" && <Select value={tenant} onValueChange={setTenant}><SelectTrigger className="w-[155px]" aria-label="Filter tenant"><SelectValue placeholder="All tenants" /></SelectTrigger><SelectContent align="end"><SelectItem value="all">All tenants</SelectItem>{data.tenants?.map((item) => <SelectItem key={item.tenant} value={item.tenant}>{item.tenant}</SelectItem>)}</SelectContent></Select>}
         <div className="inline-flex rounded-xl bg-surface-muted p-1" role="group" aria-label="Time range">
-          {[{ value: "1d", label: "24h" }, { value: "3d", label: "3d" }, { value: "7d", label: "7d" }].map((option) => <Button key={option.value} type="button" size="sm" variant={range === option.value ? "signal" : "ghost"} className="h-8 px-3 text-xs" aria-pressed={range === option.value} onClick={() => setRange(option.value)}>{option.label}</Button>)}
+          {[{ value: "1d", label: "24h" }, { value: "3d", label: "3d" }, { value: "7d", label: "7d" }, { value: "30d", label: "30d" }].map((option) => <Button key={option.value} type="button" size="sm" variant={range === option.value ? "signal" : "ghost"} className="h-8 px-3 text-xs" aria-pressed={range === option.value} onClick={() => setRange(option.value)}>{option.label}</Button>)}
         </div>
       </div>
     </header>
@@ -203,6 +286,17 @@ const DashboardStatsPage = () => {
         <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-3 text-xs text-ink-muted"><span>{recentLogs.length ? `Showing ${recentLogs.length} latest events` : "Event activity will appear here"}</span><Link to="/logs" className="inline-flex items-center gap-1 text-brand hover:underline">View full event stream <ArrowRight className="size-3" /></Link></div>
       </div>
       <div className="rounded-2xl border border-border/50 bg-card p-5 shadow-sm sm:p-6 lg:col-span-4"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-ink">Top Source IPs</h2><p className="mt-1 text-xs text-ink-muted">Highest event volume in this period</p></div><span className="flex size-8 items-center justify-center rounded-xl bg-critical/10 text-critical"><Activity className="size-4" /></span></div><TopIps ips={data.topIPs} /><p className="mt-4 border-t border-border/40 pt-3 text-xs leading-4 text-ink-muted">Volume context from recorded events; threat-intelligence matches are not available here.</p></div>
+    </section>
+
+    <section aria-label="Top identities and event types" className="grid items-start gap-5 lg:grid-cols-2">
+      <div className="rounded-2xl border border-border/50 bg-card p-5 shadow-sm sm:p-6">
+        <div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-ink">Top Users</h2><p className="mt-1 text-xs text-ink-muted">Identities with the highest event volume</p></div><span className="flex size-8 items-center justify-center rounded-xl bg-chart-1/10 text-chart-1"><UsersRound className="size-4" /></span></div>
+        <TopUsers users={data.topUsers} />
+      </div>
+      <div className="rounded-2xl border border-border/50 bg-card p-5 shadow-sm sm:p-6">
+        <div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-ink">Top Event Types</h2><p className="mt-1 text-xs text-ink-muted">Normalized event types in this period</p></div><span className="flex size-8 items-center justify-center rounded-xl bg-chart-2/10 text-chart-2"><Activity className="size-4" /></span></div>
+        <TopEventTypes types={data.topEventTypes} />
+      </div>
     </section>
   </div>;
 };

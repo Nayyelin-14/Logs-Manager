@@ -405,6 +405,121 @@ class IngestionService:
                     entry.pop("eventId", None)
         return inserted
 
+    async def ingest_batch_atomic(
+        self,
+        events: List[tuple[int, Dict[str, Any]]],
+        source: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        pre_rejected: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Ingest a batch in one transaction.
+
+        ``events`` is ``(original_line_index, raw_event)`` so per-line errors
+        keep their position in the caller's input. Preparation/validation is
+        isolated per line, but persistence is all-or-nothing: a database error
+        rolls the whole batch back and is re-raised so the transport can return
+        a 5xx and the forwarder can retry without duplicating committed rows.
+
+        Unlike :meth:`ingest_batch`, this method never falls back to per-event
+        inserts, because that would turn an infrastructure failure into a
+        partial success.
+        """
+        results: Dict[str, Any] = {
+            "ingested": 0,
+            "failed": len(pre_rejected or []),
+            "rejected": len(pre_rejected or []),
+            "duplicates": 0,
+            "persisted": 0,
+            "alerts": [],
+            "results": list(pre_rejected or []),
+        }
+
+        context = context or {}
+        tenant = context.get("tenant")
+
+        prepared: list[tuple[int, Event]] = []
+        for idx, event_data in events:
+            try:
+                event_source = event_data.get("source") or source
+                resolved_source = resolve_source(event_source, event_data)
+                normalized = self.normalizer.normalize_event(event_data, resolved_source)
+
+                context_tenant = context.get("tenant")
+                if context_tenant:
+                    normalized["tenant"] = context_tenant
+
+                validated, validation_error = validate_normalized(normalized)
+                if validation_error is not None:
+                    raise ValidationError(
+                        f"Normalization validation failed: {validation_error['error']}"
+                    )
+
+                event_tenant = tenant or validated.get("tenant") or settings.INGEST_DEFAULT_TENANT
+                if not event_tenant or not str(event_tenant).strip():
+                    raise ValidationError("Tenant could not be determined for this event.")
+                event_tenant = str(event_tenant).strip().lower()
+
+                event = self._build_event(event_data, validated, resolved_source, event_tenant)
+                prepared.append((idx, event))
+            except Exception as e:
+                message = getattr(e, "message", None) or str(e)
+                results["failed"] += 1
+                results["rejected"] += 1
+                results["results"].append({
+                    "index": idx,
+                    "success": False,
+                    "error": message,
+                })
+
+        existing_keys: set[tuple[Any, Any]] = set()
+        keys = list({(event.id, event.ts) for _, event in prepared if event.id})
+        if keys:
+            existing_rows = await self.session.execute(
+                select(Event.id, Event.ts).where(tuple_(Event.id, Event.ts).in_(keys))
+            )
+            existing_keys = {(row[0], row[1]) for row in existing_rows}
+
+        created_events: list[Event] = []
+        seen_keys: set[tuple[Any, Any]] = set()
+        for idx, event in prepared:
+            key = (event.id, event.ts)
+            duplicate = key in existing_keys or key in seen_keys
+            seen_keys.add(key)
+            if duplicate:
+                results["duplicates"] += 1
+            else:
+                created_events.append(event)
+            results["ingested"] += 1
+            results["results"].append({
+                "index": idx,
+                "success": True,
+                "eventId": event.id,
+                "duplicate": duplicate,
+            })
+
+        try:
+            if created_events:
+                self.session.add_all(created_events)
+                await self.session.flush()
+
+            if created_events:
+                results["alerts"] = await self.alerting_engine.evaluate_batch(created_events)
+
+            if created_events:
+                try:
+                    await enqueue_cache_invalidation("logs:*")
+                except Exception as exc:
+                    logger.warning("cache invalidation enqueue failed: %s", exc)
+
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
+        results["persisted"] = len(created_events)
+        results["results"].sort(key=lambda entry: entry.get("index", 0))
+        return results
+
     async def ingest_file(
         self,
         content: bytes,

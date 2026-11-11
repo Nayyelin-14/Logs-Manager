@@ -75,6 +75,23 @@ def check_render() -> bool:
         if item and "value" in item and "generateValue" not in item:
             fail(f"render.yaml must not hardcode {key}")
             return False
+
+    # The frontend talks to the backend through a same-origin Vercel proxy, but
+    # browsers still attach the Vercel Origin to writes. The CSRF middleware
+    # rejects untrusted origins, so the exact production origin must be allowed.
+    saas_origin = "https://logs-manager.vercel.app"
+    cors = env.get("CORS_ORIGINS")
+    try:
+        cors_origins = json.loads(cors.get("value", "[]")) if cors else []
+    except (TypeError, json.JSONDecodeError):
+        fail("render.yaml CORS_ORIGINS must be a JSON list")
+        return False
+    if saas_origin not in cors_origins:
+        fail(f"render.yaml CORS_ORIGINS must include {saas_origin}")
+        return False
+    if "*" in cors_origins:
+        fail("render.yaml CORS_ORIGINS must not contain a wildcard with credentials")
+        return False
     return True
 
 

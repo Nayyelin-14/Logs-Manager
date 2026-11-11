@@ -59,6 +59,7 @@ export interface DashboardStats {
   ruleCountsByEnabled: { enabled: boolean; count: number }[];
   sources: SourceData[];
   recentAlert: AlertTableProps[];
+  bucket?: "hour" | "day";
 }
 export interface PaginatedAlertsResponse {
   alerts: (AlertTableProps & { description: string; eventIds: string[]; rule: { name: string; description: string | null } })[];

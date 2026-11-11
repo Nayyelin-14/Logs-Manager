@@ -43,7 +43,11 @@ const intervals = Array.from({ length: 8 }, (_, index) => {
   const start = index * 3;
   return { start, end: start + 3, label: start + "-" + (start + 3) };
 });
-const rangeLabel = (range: string) => range === "1d" ? "Today" : range === "3d" ? "Last 3 days" : "Last 7 days";
+const rangeLabel = (range: string) =>
+  range === "1d" ? "Last 24 hours"
+    : range === "3d" ? "Last 3 days"
+    : range === "30d" ? "Last 30 days"
+    : "Last 7 days";
 
 type ActivityCell = { day: number; interval: number; count: number };
 
@@ -154,7 +158,7 @@ export default function AnalyticsPage() {
             </Select>
           )}
           <div className="inline-flex rounded-xl bg-rail p-1" role="group" aria-label="Analytics time range">
-            {[{ value: "1d", label: "Today" }, { value: "3d", label: "3 days" }, { value: "7d", label: "7d" }].map((option) => (
+            {[{ value: "1d", label: "24h" }, { value: "3d", label: "3 days" }, { value: "7d", label: "7d" }, { value: "30d", label: "30d" }].map((option) => (
               <Button key={option.value} type="button" size="sm" variant={range === option.value ? "signal" : "ghost"} className="h-8 px-3 text-xs" aria-pressed={range === option.value} onClick={() => setRange(option.value)}>
                 {option.label}
               </Button>

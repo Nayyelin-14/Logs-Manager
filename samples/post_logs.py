@@ -89,7 +89,9 @@ def main():
 
     is_batch = args.batch or len(events) > 1
     endpoint = f"{args.url.rstrip('/')}/ingest" + ("/batch" if is_batch else "")
-    payload = events if is_batch else events[0]
+    # The documented batch contract is an object; the API also accepts a bare
+    # array, but send the wrapped form so older servers keep working.
+    payload = {"events": events} if is_batch else events[0]
 
     if not is_batch and not payload.get("source"):
         payload["source"] = args.source or "api"

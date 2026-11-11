@@ -1,3 +1,9 @@
+# INTERNAL DEPLOYMENT-ONLY COMPOSE FILE.
+#
+# This file is used by the project's own GHCR/image-based deployment pipeline.
+# It is NOT the self-hosting entry point and ordinary users must not use it.
+# Self-hosting uses docker-compose.yml, which builds every application image
+# locally and requires no registry credentials.
 name: lms_vm
 
 services:
@@ -50,7 +56,7 @@ services:
       - INGEST_DEFAULT_TENANT=demoA
       - INGEST_BATCH_MAX_EVENTS=1000
       - INGEST_MAX_FILE_BYTES=10485760
-      - SYSLOG_ENABLED=true
+      - SYSLOG_ENABLED=false
       - SYSLOG_TENANT=demoA
       - SYSLOG_SOURCE=firewall
       - SYSLOG_USERNAME=syslog
@@ -98,10 +104,16 @@ services:
       - SYSLOG_UDP_PORT=5514
       - SYSLOG_TCP_PORT=5514
       - SYSLOG_TIMEZONE=UTC
+      - SYSLOG_BIND_IP=${SYSLOG_CONTAINER_BIND_IP:-0.0.0.0}
+      - SYSLOG_ALLOWED_CIDRS=${SYSLOG_ALLOWED_CIDRS:-}
+      - SYSLOG_DB_RETRY_ATTEMPTS=${SYSLOG_DB_RETRY_ATTEMPTS:-3}
+      - SYSLOG_DB_RETRY_BACKOFF_SECS=${SYSLOG_DB_RETRY_BACKOFF_SECS:-0.25}
+      - SYSLOG_MAX_INFLIGHT=${SYSLOG_MAX_INFLIGHT:-1000}
+      - INGEST_HEALTH_PORT=8090
       - INGEST_DEFAULT_TENANT=demoA
     ports:
-      - "0.0.0.0:${SYSLOG_HOST_PORT:-514}:5514/udp"
-      - "0.0.0.0:${SYSLOG_HOST_PORT:-514}:5514/tcp"
+      - "${SYSLOG_BIND_IP:-0.0.0.0}:${SYSLOG_HOST_PORT:-514}:5514/udp"
+      - "${SYSLOG_BIND_IP:-0.0.0.0}:${SYSLOG_HOST_PORT:-514}:5514/tcp"
     depends_on:
       db:
         condition: service_healthy

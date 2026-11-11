@@ -14,7 +14,7 @@ Full-Stack Developer (Intern) practical assignment.
 | Postgres JSONB + GIN storage, dashboard with Top IP/User/Event Type, timeline | ✅ |
 | ≥1 alert rule with UI + webhook notification | ✅ |
 | Admin/Viewer RBAC with tenant data isolation | Implemented |
-| Appliance (Docker Compose) + SaaS (Render + Vercel + Neon + Upstash) | Implemented |
+| Self-hosted Docker (Caddy + local services) + SaaS (Render + Vercel + Neon + Upstash) | Implemented |
 | HTTPS (Caddy on the appliance; managed TLS on Vercel/Render) | Implemented |
 | Retention ≥7 days (deletion + cleanup-ready) | Implemented |
 | Tests, docs, Postman collection, samples + sender scripts | Implemented |
@@ -37,29 +37,40 @@ need Docker PostgreSQL/Redis and a running Compose stack.
 | `.env.example` | `.env.example` | All required settings |
 | `Makefile` | `Makefile` | up, down, seed, demo, test, lint, verify, reset |
 
-## Quick start (Docker appliance)
+## Quick start (self-hosted Docker)
 
 ```bash
 # Clone the repository
-git clone <this-repo>
+git clone https://github.com/Nayyelin-14/Logs-Manager.git
 cd Logs-Manager
 
 # Create .env from template
 cp .env.example .env
-# Edit .env with your settings (passwords, secrets, DOMAIN)
+# Edit .env with your settings (passwords, secrets, DOMAIN, CADDY_BIND_IP)
 
 # Start the stack (one command)
 make up
 
-# Wait ~30s for services to become healthy, then seed demo data
+# Wait for the backend health check, then seed demo data
 make seed
 
 # Access the system
-#   UI:        https://localhost:443/ (via Caddy, self-signed cert locally)
-#   API:       http://localhost:4500 (direct) or https://localhost:443/api/ (via Caddy)
+#   UI:        https://localhost/ (via Caddy; local certificate warning is expected)
+#   API:       http://localhost:4500 (direct) or https://localhost/api/ (via Caddy)
 #   Syslog:    udp/tcp 127.0.0.1:514
 #   API docs:  http://localhost:4500/docs
 ```
+
+`docker-compose.yml` is the only supported self-hosting entry point. It builds
+the application images locally and uses local PostgreSQL/Redis, so it needs no
+SaaS account, registry credentials, or hosted service. `docker-compose.vm.yml`
+is an internal deployment artifact used by the project's own image-based
+pipeline; ordinary self-hosters should not use it.
+
+To expose the self-hosted stack to a LAN or a VM, set `CADDY_BIND_IP=0.0.0.0`
+in `.env`. For public HTTPS, also set `DOMAIN` to a DNS name that points at the
+host and open ports 80/443. Caddy handles certificate issuance; a LAN-only host
+will use Caddy's internal certificate and show a browser warning.
 
 Demo logins (after `make seed`):
 
@@ -94,9 +105,25 @@ Browser → Vercel (SPA + /api/* proxy) → Render (FastAPI + worker)
 Full click-by-click instructions, CI/CD secrets, and troubleshooting:
 `docs/setup_saas.md`.
 
-SaaS limitations: the free Render service sleeps after 15 minutes idle, raw
-syslog is unavailable (use `POST /api/ingest`), and the worker pauses while the
-service is asleep.
+SaaS limitations: the free Render service sleeps after 15 minutes idle, native
+UDP/TCP syslog is unavailable on Render, and the worker pauses while the
+service is asleep. Use `POST /api/ingest/syslog` for HTTPS syslog ingestion.
+
+## Local frontend development (Vite only)
+
+For UI work you can run the frontend without rebuilding the Caddy image:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite serves the SPA on `http://localhost:5173` and proxies `/api` to
+`http://127.0.0.1:4500` (override with `VITE_DEV_API_TARGET`). This is a
+development convenience only: the self-hosted Docker stack still serves the built SPA
+through **Caddy**, and the Vite proxy is not part of the production bundle or
+the Docker runtime.
 
 ## Key endpoints
 
@@ -116,24 +143,34 @@ service is asleep.
 | POST | `/api/rules/{id}/test` | Dry-run alert rule evaluation |
 | POST | `/api/auth/login` | JWT login (HttpOnly cookie) |
 
-### Syslog: SaaS vs Appliance
+### Syslog: SaaS vs self-hosted Docker
 
-The appliance accepts native **UDP/TCP syslog on host port 514** (container
-5514) with `SYSLOG_ENABLED=true`. On Docker Desktop/WSL2, or if 514 is busy,
-set `SYSLOG_HOST_PORT=5514` and send to `-P 5514`.
+Self-hosted Docker accepts native **UDP/TCP syslog on host port 514**
+(container 5514) through the dedicated `ingest` service. On Docker Desktop/WSL2,
+or if 514 is busy, set `SYSLOG_HOST_PORT=5514` and send to `-P 5514`.
 
-Render/Vercel only expose HTTPS, so SaaS mode keeps `SYSLOG_ENABLED=false` and
-uses `POST /api/ingest/syslog`. It accepts newline-delimited `text/plain` or
-`{"lines": [...]}`, requires the tenant `X-API-Key`, and returns
-`202 {"accepted","rejected","errors"}`. Events are tagged
-`transport=http-syslog` and use the same parser/normalizer as the listener.
-See `samples/send_syslog_http.sh` and `samples/forwarder/`.
+> Port 514 is unauthenticated. Never expose it to the public Internet: bind it
+> to a private address (`SYSLOG_BIND_IP`), allowlist sources in the firewall,
+> and optionally set `SYSLOG_ALLOWED_CIDRS`. The container health check runs
+> `SELECT 1` and verifies every enabled listener.
+
+Render/Vercel only expose HTTPS, so the hosted SaaS disables the native listener
+(`SYSLOG_ENABLED=false`) and uses `POST /api/ingest/syslog`. It accepts
+newline-delimited `text/plain` or `{"lines": [...]}`, requires a tenant
+`X-API-Key`, and returns `202 {"accepted","rejected","errors"}`. A batch is
+committed in one transaction: transient storage failures return `503` (nothing
+persisted, safe to retry), while parse/validation failures stay isolated per
+line in the `202` body. Events are tagged `transport=http-syslog` and use the
+same parser/normalizer as the native listener. Traditional devices that only
+speak Syslog use the local Vector or rsyslog forwarder in `samples/forwarder/`
+to send those messages to the HTTPS endpoint (Vector uses a bounded disk buffer
+and retries 429/5xx). See `samples/send_syslog_http.sh`.
 
 ## Makefile targets
 
 | Target | Description |
 |---|---|
-| `make up` | Start all services (appliance mode) |
+| `make up` | Start all services (self-hosted Docker) |
 | `make down` | Stop and remove Docker Compose stack |
 | `make seed` | Seed tenants, users, logs, alert rules |
 | `make demo` | Run bruteforce simulator (triggers alerts) |
@@ -141,7 +178,7 @@ See `samples/send_syslog_http.sh` and `samples/forwarder/`.
 | `make lint` | File size check + validation |
 | `make verify` | Run acceptance checklist (PASS/FAIL per item) |
 | `make maintenance` | Run retention maintenance once |
-| `make shell` | Shell into backend container |
+| `make backend-shell` | Shell into backend container |
 | `make saas-check` | Validate `render.yaml` and `frontend/vercel.json` |
 | `make saas-smoke` | Smoke test a deployed SaaS URL |
 | `make set-password` | Set an existing user password against any database |
@@ -170,8 +207,8 @@ cd backend && TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 \
 
 | Service | Host Port | Internal Port |
 |---|---|---|
-| Caddy HTTP | 127.0.0.1:80 | 80 |
-| Caddy HTTPS | 127.0.0.1:443 | 443 (TCP/UDP) |
+| Caddy HTTP | ${CADDY_BIND_IP:-127.0.0.1}:80 | 80 |
+| Caddy HTTPS | ${CADDY_BIND_IP:-127.0.0.1}:443 | 443 (TCP/UDP) |
 | Backend API | 127.0.0.1:4500 | 4500 |
 | PostgreSQL | 127.0.0.1:55432 | 5432 |
 | Redis | 127.0.0.1:56379 | 6379 |
@@ -185,6 +222,9 @@ Set `DB_HOST_PORT=5432` etc. to use standard ports if available. The syslog
 host port defaults to **514** so `logger -n <host>` works out of the box. On
 Docker Desktop/WSL2, or if host port 514 is busy, set
 `SYSLOG_HOST_PORT=5514` in `.env` and send to `-P 5514` instead.
+
+Caddy binds to `127.0.0.1` by default. Set `CADDY_BIND_IP=0.0.0.0` to make the
+UI/API reachable from the LAN or a VM; combine it with `DOMAIN` for public TLS.
 
 ## Acceptance checklist (`make verify`)
 
@@ -202,7 +242,7 @@ Docker Desktop/WSL2, or if host port 514 is busy, set
 
 - `docs/README.md` — Documentation index and navigation
 - `docs/architecture.md` — Mermaid diagram, data flow, tenant model, tech choices
-- `docs/setup_appliance.md` — Appliance deployment steps
+- `docs/setup_appliance.md` — Self-hosted Docker deployment (laptop, appliance, or VM)
 - `docs/setup_saas.md` — Zero-cost SaaS deployment (Render + Vercel + Neon + Upstash)
 - `docs/DEMO_GUIDE.md` — 30-minute demo script
 - `docs/schema.md` — Common schema field reference

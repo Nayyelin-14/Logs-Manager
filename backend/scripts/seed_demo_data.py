@@ -73,11 +73,13 @@ async def seed_demo_data():
 
 
             configured_key = os.environ.get("INGEST_API_KEY")
+            demoa_key_created = False
             if configured_key:
                 demoa_key = configured_key
                 demoa_hash = hashlib.sha256(configured_key.encode()).hexdigest()
             else:
                 demoa_key, demoa_hash = generate_api_key()
+                demoa_key_created = True
             demoa_result = await session.execute(
                 select(Tenant).where(Tenant.name == "demoa")
             )
@@ -91,6 +93,7 @@ async def seed_demo_data():
                 )
                 session.add(demoa_tenant)
                 await session.flush()
+                demoa_key_created = True
             elif configured_key:
                 demoa_tenant.api_key_hash = demoa_hash
                 demoa_tenant.is_active = True
@@ -98,6 +101,7 @@ async def seed_demo_data():
 
 
             demob_key, demob_hash = generate_api_key()
+            demob_key_created = False
             demob_result = await session.execute(
                 select(Tenant).where(Tenant.name == "demob")
             )
@@ -111,7 +115,8 @@ async def seed_demo_data():
                 )
                 session.add(demob_tenant)
                 await session.flush()
-            print(f"  demob tenant created (API key shown once only!)")
+                demob_key_created = True
+            print("  demob tenant ready")
 
             await session.commit()
 
@@ -164,9 +169,15 @@ async def seed_demo_data():
             print("Database commit complete.")
 
 
-            print("\n=== API KEYS (save these!) ===")
-            print(f"demoa: {demoa_key}")
-            print(f"demob: {demob_key}")
+            print("\n=== API KEYS ===")
+            if demoa_key_created or configured_key:
+                print(f"demoa: {demoa_key}")
+            else:
+                print("demoa: existing key unchanged")
+            if demob_key_created:
+                print(f"demob: {demob_key}")
+            else:
+                print("demob: existing key unchanged")
 
 
 
@@ -282,8 +293,13 @@ async def seed_demo_data():
 
 
 
+            # IngestionService stores the supplied raw payload under the
+            # normalized event's ``raw`` key, so the seed marker is nested.
             existing_result = await session.execute(
-                text("SELECT id FROM events WHERE raw->>'_seed' = 'true' LIMIT 1")
+                text(
+                    "SELECT id FROM events "
+                    "WHERE raw->'raw'->>'_seed' = 'true' LIMIT 1"
+                )
             )
             already_seeded = existing_result.scalars().first() is not None
             if already_seeded:
@@ -363,9 +379,10 @@ async def seed_demo_data():
 
         except Exception as e:
             await session.rollback()
-            print(f"Seed error: {e}")
+            print(f"Seed error: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
+            raise
 
 
 async def main():

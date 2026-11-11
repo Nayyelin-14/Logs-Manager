@@ -9,15 +9,28 @@ import { useUserStore } from "../../store/userStore";
  * instead of using hooks.
  */
 
-export const dashboardLoader = async () => {
-  // Auth check and data fetching done client-side in Dashboard_stats component
+export const authLoader = async () => {
+  const user = useUserStore.getState().user;
+
+  if (!user) {
+    return redirect("/login");
+  }
+
   return null;
 };
+
+// Kept as an alias so existing routes that only need authentication keep
+// working while the data fetching stays client-side.
+export const dashboardLoader = authLoader;
 
 export const managementLoader = async () => {
   const user = useUserStore.getState().user;
 
-  if (user?.role !== "ADMIN") {
+  if (!user) {
+    return redirect("/login");
+  }
+
+  if (user.role !== "ADMIN") {
     return redirect("/dashboard");
   }
 

@@ -61,6 +61,6 @@ services:
       - key: ALERT_SWEEP_INTERVAL
         value: "60"
       - key: CORS_ORIGINS
-        value: "[]"
+        value: '["https://logs-manager.vercel.app"]'
       - key: ALLOWED_HOSTS
         value: '["*.onrender.com","*.vercel.app","localhost","127.0.0.1"]'

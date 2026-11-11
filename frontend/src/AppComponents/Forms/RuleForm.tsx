@@ -135,16 +135,46 @@ export function AlertRuleForm({
   });
 
   function onSubmit(data: AlertRuleFormValues) {
-    // Remove field from conditions when type is not field_value (backend validates field against supported list)
+    const toNumber = (value?: string) => {
+      if (value === undefined || value === "") return undefined;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    // Send the condition in the shape the API persists: numeric threshold and
+    // window, canonical group_by names, and no unused field key.
     const cleanedData = {
       ...data,
       conditions: data.conditions.map((c) => {
-        if (c.type !== "field_value") {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { field, ...rest } = c;
-          return rest;
+        const condition: Record<string, unknown> = {
+          type: c.type,
+          value: c.value,
+          threshold: toNumber(c.threshold),
+          windowSeconds: toNumber(c.windowSeconds),
+          groupBy:
+            c.groupBy === "srcIp"
+              ? "src_ip"
+              : c.groupBy === "user"
+                ? "user_name"
+                : c.groupBy,
+        };
+        if (c.type === "field_value" && c.field) {
+          // Map frontend field names to backend column names so the evaluator
+          // can apply the filter correctly.
+          const fieldMap: Record<string, string> = {
+            srcIp: "src_ip",
+            dstIp: "dst_ip",
+            user: "user_name",
+            host: "host",
+            process: "process",
+            status: "status_code",
+            action: "action",
+            source: "source",
+          };
+          const frontendField: string = c.field;
+          condition.field = fieldMap[frontendField] ?? frontendField;
         }
-        return c;
+        return condition;
       }),
     };
     createRule(cleanedData, { onSuccess: () => setOpen(false) });

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = False
     COOKIE_SAME_SITE: str = "lax"
 
+    # CSRF protection for cookie-authenticated state-changing requests.
+    CSRF_TOKEN_NAME: str = "XSRF-TOKEN"
+    CSRF_HEADER_NAME: str = "X-XSRF-TOKEN"
+    CSRF_COOKIE_NAME: str = "XSRF-TOKEN"
+
 
     SMTP_ENABLED: bool = False
     OTP_EMAIL_ENABLED: bool = True
@@ -64,10 +69,18 @@ class Settings(BaseSettings):
     INGEST_BATCH_MAX_EVENTS: int = 1000
     INGEST_MAX_FILE_BYTES: int = 10_485_760
 
+    # Maximum total request body size for JSON ingestion (/ingest, /ingest/batch,
+    # /ingest/ui). Rejected with 413 before expensive parsing.
+    INGEST_MAX_BODY_BYTES: int = 1_048_576
+
+    # Maximum size of an individual raw event payload within a batch request.
+    INGEST_MAX_RAW_EVENT_BYTES: int = 65_536
+
     # Syslog-over-HTTPS ingestion limits (SaaS / behind a proxy).
     INGEST_HTTP_SYSLOG_MAX_BYTES: int = 1_048_576
     INGEST_HTTP_SYSLOG_MAX_LINES: int = 1000
     INGEST_RATE_LIMIT: str = "600/minute"
+    INGEST_UI_RATE_LIMIT: str = "60/minute"
 
 
     SYSLOG_ENABLED: bool = True
@@ -77,7 +90,20 @@ class Settings(BaseSettings):
     SYSLOG_UDP_PORT: int = 5514
     SYSLOG_TCP_PORT: int = 5514
 
-
+    # Native listener bind address. Use a private interface address (for example
+    # 10.0.0.5) to keep port 514 off public interfaces. Compose maps host ports
+    # separately via SYSLOG_BIND_IP.
+    SYSLOG_BIND_IP: str = "0.0.0.0"
+    # Optional comma-separated CIDR allowlist for native syslog sources.
+    # Empty means "no source filtering" (rely on firewall rules).
+    SYSLOG_ALLOWED_CIDRS: str = ""
+    # Bounded retry for transient database failures in the native listener.
+    SYSLOG_DB_RETRY_ATTEMPTS: int = 3
+    SYSLOG_DB_RETRY_BACKOFF_SECS: float = 0.25
+    # Upper bound on concurrent in-flight UDP datagrams.
+    SYSLOG_MAX_INFLIGHT: int = 1000
+    # Local-only health endpoint used by the container health check.
+    INGEST_HEALTH_PORT: int = 8090
 
 
     SYSLOG_TIMEZONE: str = "UTC"
@@ -133,9 +159,6 @@ class Settings(BaseSettings):
 
     def cookie_options(self) -> dict:
 
-
-
-
         secure = self.COOKIE_SECURE or self.APP_ENV == "production"
         same_site = self.COOKIE_SAME_SITE or ("none" if secure else "lax")
         return {
@@ -144,6 +167,19 @@ class Settings(BaseSettings):
             "samesite": same_site,
             "path": "/",
         }
+
+    def csrf_cookie_options(self) -> dict:
+        """Cookie options for the CSRF token (non-HttpOnly so JS can read it)."""
+
+        secure = self.COOKIE_SECURE or self.APP_ENV == "production"
+        same_site = self.COOKIE_SAME_SITE or ("none" if secure else "lax")
+        return {
+            "httponly": False,
+            "secure": secure,
+            "samesite": same_site,
+            "path": "/",
+        }
+
 
 @lru_cache
 def get_settings() -> Settings:

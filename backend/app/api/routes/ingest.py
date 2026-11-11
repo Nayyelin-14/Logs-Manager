@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc, or_
@@ -8,9 +8,19 @@ from datetime import datetime, timedelta, timezone
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant, verify_api_key, require_admin
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ValidationError, is_transient_db_error
+from app.core.rule_validation import (
+    VALID_RULE_TYPES,
+    VALID_SEVERITIES,
+    validate_cooldown_range,
+    validate_filter_dict,
+    validate_threshold_range,
+    validate_window_minutes_range,
+)
 from app.core.security import TokenPayload
+from app.core.tenancy import is_platform_admin, normalize_tenant, resolve_read_tenant, tenant_key
 from app.models.events import Event
+from app.models.enums import Role, Status
 from app.models.alert import Alert, AlertRule, EmailNotification, EmailType, EmailStatus
 from app.models.user import User
 from app.models.tenant import Tenant
@@ -23,12 +33,15 @@ from app.services.notifier import (
 from app.integrations.queue import enqueue_alert_email
 from app.integrations.syslog import parse_syslog_message
 from app.core.limiting import limiter
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Any
 import json
+import logging
 import secrets
 import hashlib
 import uuid
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -67,11 +80,30 @@ _MEANINGFUL_FIELDS = {
 }
 
 
-def _is_meaningless_event(event_data: dict) -> bool:
-    data_keys = {k.lower() for k in event_data.keys()}
+def _normalized_field_key(key: Any) -> str:
+    return str(key or "").lower().replace("_", "").replace("-", "")
 
-    data_keys -= {"source", "tenant", "@timestamp", "timestamp", "tags", "raw"}
-    return not bool(data_keys & _MEANINGFUL_FIELDS)
+
+_MEANINGFUL_FIELDS_NORMALIZED = {_normalized_field_key(field) for field in _MEANINGFUL_FIELDS}
+_IGNORED_FIELDS_NORMALIZED = {
+    _normalized_field_key(field)
+    for field in ("source", "tenant", "@timestamp", "timestamp", "tags", "raw")
+}
+
+
+def _is_meaningless_event(event_data: dict) -> bool:
+    """True when an event carries no fields that can produce a log entry.
+
+    Keys are compared without case, underscores, or hyphens so the UI's
+    camelCase payload and the machine API's snake_case payload behave the same.
+    """
+    for key, value in event_data.items():
+        normalized = _normalized_field_key(key)
+        if normalized in _IGNORED_FIELDS_NORMALIZED:
+            continue
+        if normalized in _MEANINGFUL_FIELDS_NORMALIZED and value not in (None, "", [], {}):
+            return False
+    return True
 
 
 def _validate_timestamp(value: Any, field_name: str = "@timestamp") -> None:
@@ -88,6 +120,26 @@ def _validate_timestamp(value: Any, field_name: str = "@timestamp") -> None:
         )
 
 
+def _parse_date_filter(value: str, field_name: str) -> datetime:
+    """Parse a UI date filter as a midnight-UTC timestamp.
+
+    The date picker sends ``YYYY-MM-DD``; ISO datetimes are also accepted.
+    """
+    raw = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field_name} '{value}'. Use YYYY-MM-DD.",
+        )
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
 def as_validation_http_error(exc: ValidationError) -> HTTPException:
     return HTTPException(status_code=400, detail=exc.message)
 
@@ -98,13 +150,13 @@ def is_platform_admin(current_user: TokenPayload) -> bool:
     Admins created inside a tenant are tenant-bound and must not manage other
     tenants. VIEWERs are always bound to their own tenant.
     """
-    return current_user.role == "ADMIN" and not (current_user.tenant or "").strip()
+    return current_user.role == "ADMIN" and not tenant_key(current_user.tenant)
 
 
 def owns_tenant(current_user: TokenPayload, tenant: Optional[str]) -> bool:
     if is_platform_admin(current_user):
         return True
-    return (current_user.tenant or "") == (tenant or "")
+    return tenant_key(current_user.tenant) == tenant_key(tenant)
 
 
 def effective_read_tenant(
@@ -113,12 +165,10 @@ def effective_read_tenant(
     """Resolve the tenant filter for read endpoints.
 
     Platform admins may ask for a specific tenant or all tenants. Everyone
-    else, including tenant-bound admins, is restricted to their own tenant.
+    else, including tenant-bound admins and viewers without a tenant, is
+    restricted to their own tenant; a missing tenant is a 403, never "all".
     """
-    requested_tenant = (requested or "").strip()
-    if is_platform_admin(current_user):
-        return None if requested_tenant in ("", "all") else requested_tenant
-    return current_user.tenant
+    return resolve_read_tenant(current_user, requested)
 
 
 def require_platform_admin(current_user: TokenPayload) -> None:
@@ -127,6 +177,84 @@ def require_platform_admin(current_user: TokenPayload) -> None:
             status_code=403,
             detail="Tenant management requires a platform administrator",
         )
+
+
+async def _require_active_tenant(session: AsyncSession, tenant_name: str) -> Tenant:
+    """Return the tenant row, rejecting unknown or inactive tenants."""
+
+    result = await session.execute(select(Tenant).where(Tenant.name == tenant_name))
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tenant '{tenant_name}' not found",
+        )
+    if not tenant.is_active:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tenant '{tenant_name}' is not active",
+        )
+    return tenant
+
+
+async def resolve_ui_ingest_tenant(
+    current_user: TokenPayload,
+    requested: Optional[str],
+    session: AsyncSession,
+) -> str:
+    """Resolve the tenant for a session-authenticated UI ingest.
+
+    Tenant-bound administrators can only write to their own tenant; a requested
+    tenant that differs is rejected instead of silently rewritten. Platform
+    administrators (ADMIN with no tenant) must name an existing, active tenant.
+    Empty, reserved ("all", "*") and malformed values are rejected.
+    """
+    requested_tenant: Optional[str] = None
+    if requested is not None and str(requested).strip():
+        requested_tenant = normalize_tenant(requested)
+
+    own_tenant = tenant_key(current_user.tenant)
+
+    if own_tenant:
+        if requested_tenant and requested_tenant != own_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Cannot ingest into tenant '{requested}'. "
+                    f"Your account is scoped to '{own_tenant}'."
+                ),
+            )
+        target_tenant = normalize_tenant(own_tenant)
+    else:
+        if not requested_tenant:
+            raise HTTPException(
+                status_code=422,
+                detail="tenant is required for an administrator without a tenant scope.",
+            )
+        target_tenant = requested_tenant
+
+    await _require_active_tenant(session, target_tenant)
+    return target_tenant
+
+
+def _validated_role(value: str) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized not in {role.value for role in Role}:
+        raise HTTPException(
+            status_code=422,
+            detail="role must be ADMIN or VIEWER",
+        )
+    return normalized
+
+
+def _validated_status(value: str) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized not in {member.value for member in Status}:
+        raise HTTPException(
+            status_code=422,
+            detail="status must be ACTIVE, INACTIVE, or FREEZE",
+        )
+    return normalized
 
 
 
@@ -141,6 +269,26 @@ class IngestEventRequest(BaseModel):
 
 class IngestBatchRequest(BaseModel):
     events: List[dict]
+    source: Optional[str] = None
+    tenant: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_bare_array(cls, value: Any) -> Any:
+        """Accept both ``{"events": [...]}`` and a bare JSON array.
+
+        The documented batch contract is the wrapped object, but several
+        senders (and the sample script) post a bare array. Supporting both
+        removes a confusing 422 without changing machine authentication.
+        """
+        if isinstance(value, list):
+            return {"events": value}
+        return value
+
+
+class UIIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     source: Optional[str] = None
     tenant: Optional[str] = None
 
@@ -164,7 +312,7 @@ async def ingest_single_event(
     api_user: TokenPayload = Depends(verify_api_key),
 ):
 
-    body = await request.body()
+    body = await _read_limited_body(request, settings.INGEST_MAX_BODY_BYTES)
     if not body:
         raise HTTPException(
             status_code=400,
@@ -221,34 +369,69 @@ async def ingest_single_event(
 @limiter.limit(lambda: get_settings().INGEST_RATE_LIMIT)
 async def ingest_batch_events(
     request: Request,
-    body: IngestBatchRequest,
     session: AsyncSession = Depends(get_session),
     api_user: TokenPayload = Depends(verify_api_key),
 ):
-    tenant = resolve_tenant(api_user, body.tenant)
-    if len(body.events) > settings.INGEST_BATCH_MAX_EVENTS:
+    body = await _read_limited_body(request, settings.INGEST_MAX_BODY_BYTES)
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty request body.")
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON or non-UTF8 encoding in request body.",
+        )
+    # Accept both {"events": [...]} and a bare JSON array.
+    if isinstance(payload, list):
+        payload = {"events": payload}
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Request body must be a JSON object.",
+        )
+
+    events = payload.get("events")
+    source = payload.get("source")
+    tenant = payload.get("tenant")
+
+    if not isinstance(events, list):
+        raise HTTPException(
+            status_code=400, detail="Batch 'events' must be a list of event objects."
+        )
+    if len(events) > settings.INGEST_BATCH_MAX_EVENTS:
         raise HTTPException(
             status_code=413,
             detail=f"Batch exceeds the limit of {settings.INGEST_BATCH_MAX_EVENTS} events.",
         )
-    if not body.events:
+    if not events:
         raise HTTPException(status_code=400, detail="Batch must contain at least one event.")
 
-
-    for idx, event in enumerate(body.events):
+    for idx, event in enumerate(events):
         if not isinstance(event, dict):
             raise HTTPException(
                 status_code=400,
                 detail=f"Batch event at index {idx} must be a JSON object.",
             )
+        # Validate individual raw payload size.
+        raw = json.dumps(event, default=str).encode("utf-8")
+        if len(raw) > settings.INGEST_MAX_RAW_EVENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Batch event at index {idx} exceeds the "
+                    f"{settings.INGEST_MAX_RAW_EVENT_BYTES} byte raw payload limit."
+                ),
+            )
         ts_value = event.get("@timestamp") or event.get("timestamp")
         _validate_timestamp(ts_value, f"events[{idx}].@timestamp")
 
+    tenant = resolve_tenant(api_user, tenant)
     service = IngestionService(session)
     try:
         result = await service.ingest_batch(
-            body.events,
-            body.source,
+            events,
+            source,
             {"tenant": tenant, "username": api_user.username, "email": api_user.email},
         )
     except ValidationError as e:
@@ -258,7 +441,7 @@ async def ingest_batch_events(
         success=result["ingested"] > 0,
         ingested=result["ingested"],
         rejected=result["failed"],
-        parsed=len(body.events),
+        parsed=len(events),
         alerts=result.get("alerts", []),
         errors=[r for r in result["results"] if not r.get("success")],
     )
@@ -312,6 +495,82 @@ async def ingest_file(
     )
 
 
+@router.post("/ingest/ui", response_model=IngestResponse)
+@limiter.limit(lambda: get_settings().INGEST_UI_RATE_LIMIT)
+async def ingest_ui_event(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenPayload = Depends(require_admin),
+):
+    """Ingest one event from the signed-in admin UI.
+
+    This is deliberately separate from ``/ingest``: machine senders keep using
+    an API key, while the browser uses its normal session. The tenant always
+    comes from the authenticated account (or an explicit value that a platform
+    admin is allowed to choose), never from an untrusted client default.
+    """
+    body = await _read_limited_body(request, settings.INGEST_MAX_BODY_BYTES)
+    if not body:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty request body. Send a JSON object with at least one event field.",
+        )
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON or non-UTF8 encoding in request body.",
+        )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Request body must be a JSON object.",
+        )
+
+    tenant = await resolve_ui_ingest_tenant(
+        current_user, payload.get("tenant"), session
+    )
+
+    event_data = {k: v for k, v in payload.items() if k not in ("source", "tenant")}
+    source = event_data.pop("source", None)
+
+    if _is_meaningless_event(event_data):
+        raise HTTPException(
+            status_code=422,
+            detail="Event has no meaningful fields. Provide at least one of: "
+                   "event_type, user, ip, src_ip, host, action, severity, source, etc.",
+        )
+
+    _validate_timestamp(
+        event_data.get("@timestamp") or event_data.get("timestamp"),
+        "@timestamp",
+    )
+
+    service = IngestionService(session)
+    try:
+        result = await service.ingest(
+            event_data,
+            source,
+            {
+                "tenant": tenant,
+                "username": current_user.username,
+                "email": current_user.email,
+            },
+        )
+    except ValidationError as e:
+        raise as_validation_http_error(e)
+
+    return IngestResponse(
+        success=True,
+        eventId=result["event"].id,
+        message="Event ingested",
+        alerts=result["alerts"],
+        ingested=1,
+        parsed=1,
+    )
+
+
 
 
 
@@ -333,14 +592,21 @@ class SyslogIngestResponse(BaseModel):
 
 
 async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
-    """Read the request body, rejecting anything over ``max_bytes``."""
+    """Read the request body, rejecting anything over ``max_bytes``.
+
+    Reads the ASGI request stream in chunks and rejects the request with 413
+    as soon as the running total exceeds ``max_bytes``. Bodies larger than the
+    limit are never fully buffered. Works for chunked requests and requests
+    without a trustworthy Content-Length header. Chunks are accumulated only
+    up to the limit, so memory usage is bounded by ``max_bytes``.
+    """
     content_length = request.headers.get("content-length")
     if content_length:
         try:
             if int(content_length) > max_bytes:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"Syslog body exceeds the {max_bytes} byte limit.",
+                    detail=f"Request body exceeds the {max_bytes} byte limit.",
                 )
         except ValueError:
             pass
@@ -352,7 +618,7 @@ async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
         if total > max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Syslog body exceeds the {max_bytes} byte limit.",
+                detail=f"Request body exceeds the {max_bytes} byte limit.",
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -420,23 +686,22 @@ async def ingest_syslog_http(
         "email": api_user.email,
     }
 
-    accepted = 0
-    rejected = 0
-    errors: List[dict] = []
-    service = IngestionService(session)
-
+    events: List[tuple[int, Dict[str, Any]]] = []
+    pre_rejected: List[dict] = []
     for index, line in enumerate(lines):
         if not isinstance(line, str):
-            rejected += 1
-            errors.append({"line": index, "error": "line must be a string"})
+            pre_rejected.append({"index": index, "success": False, "error": "line must be a string"})
             continue
         if not line.strip():
             continue
 
-        parsed = parse_syslog_message(line)
+        parsed = None
+        try:
+            parsed = parse_syslog_message(line)
+        except Exception as exc:  # noqa: BLE001 - isolate a broken line
+            logger.warning("syslog line %d could not be parsed: %s", index, exc)
         if not parsed:
-            rejected += 1
-            errors.append({"line": index, "error": "unable to parse syslog line"})
+            pre_rejected.append({"index": index, "success": False, "error": "unable to parse syslog line"})
             continue
 
         event = dict(parsed)
@@ -446,21 +711,59 @@ async def ingest_syslog_http(
         event["tags"] = tags
         event["remoteAddress"] = remote_address
         event["remotePort"] = remote_port
+        events.append((index, event))
 
-        source = event.get("source") or current_settings.SYSLOG_SOURCE
-        try:
-            await service.ingest(event, source, context)
-            accepted += 1
-        except ValidationError as exc:
-            await session.rollback()
-            rejected += 1
-            errors.append({"line": index, "error": exc.message})
-        except Exception as exc:  # noqa: BLE001 - one bad line must not abort the batch
-            await session.rollback()
-            rejected += 1
-            errors.append({"line": index, "error": f"{type(exc).__name__}: {exc}"})
+    service = IngestionService(session)
+    try:
+        results = await service.ingest_batch_atomic(
+            events,
+            current_settings.SYSLOG_SOURCE,
+            context,
+            pre_rejected=pre_rejected,
+        )
+    except Exception as exc:  # noqa: BLE001 - map infra failure to a retryable 5xx
+        await session.rollback()
+        transient = is_transient_db_error(exc)
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE if transient else status.HTTP_500_INTERNAL_SERVER_ERROR
+        logger.error(
+            "syslog HTTPS ingest failed for tenant %s (transient=%s): %s: %s",
+            tenant,
+            transient,
+            type(exc).__name__,
+            exc,
+        )
+        # Nothing was persisted: the batch transaction was rolled back. Keep the
+        # existing response shape so forwarders can parse it while still
+        # treating the request as a retryable failure.
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "accepted": 0,
+                "rejected": len(events) + len(pre_rejected),
+                "errors": [
+                    {
+                        "line": None,
+                        "error": (
+                            "temporary storage failure; retry this request"
+                            if transient
+                            else "ingestion failed"
+                        ),
+                    }
+                ],
+            },
+            headers={"Retry-After": "5"} if transient else None,
+        )
 
-    return SyslogIngestResponse(accepted=accepted, rejected=rejected, errors=errors)
+    errors = [
+        {"line": entry.get("index"), "error": entry.get("error")}
+        for entry in results.get("results", [])
+        if not entry.get("success", False)
+    ]
+    return SyslogIngestResponse(
+        accepted=results.get("ingested", 0),
+        rejected=results.get("failed", 0),
+        errors=errors,
+    )
 
 
 @router.get("/get-alerts", response_model=dict)
@@ -475,10 +778,7 @@ async def list_alerts(
     current_user: TokenPayload = Depends(get_current_user),
 ):
     requested_tenant = (tenant or "").strip()
-    if current_user.role == "ADMIN":
-        effective_tenant = effective_read_tenant(current_user, requested_tenant)
-    else:
-        effective_tenant = current_user.tenant
+    effective_tenant = effective_read_tenant(current_user, requested_tenant)
 
     query = select(Alert).options(selectinload(Alert.rule))
     if effective_tenant:
@@ -676,7 +976,7 @@ async def update_alert_status(
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    if (current_user.tenant or "").strip() and alert.tenant != current_user.tenant:
+    if not is_platform_admin(current_user) and tenant_key(alert.tenant) != tenant_key(current_user.tenant):
         raise HTTPException(status_code=404, detail="Alert not found")
 
     alert.status = update.status
@@ -689,83 +989,244 @@ async def update_alert_status(
 
 
 
+VALID_CONDITION_TYPES = {
+    "event_type",
+    "severity_min",
+    "field_value",
+    "threshold_count",
+    "repeated_failures",
+}
+
+_GROUP_BY_ALIASES = {
+    "srcip": "src_ip",
+    "src_ip": "src_ip",
+    "user": "user_name",
+    "username": "user_name",
+    "user_name": "user_name",
+    "host": "host",
+    "hostname": "host",
+}
+
+_FIELD_ALIASES = {
+    "action": "action",
+    "eventtype": "event_type",
+    "event_type": "event_type",
+    "severity": "severity",
+    "srcip": "src_ip",
+    "src_ip": "src_ip",
+    "dstip": "dst_ip",
+    "dst_ip": "dst_ip",
+    "user": "user_name",
+    "username": "user_name",
+    "user_name": "user_name",
+    "host": "host",
+    "hostname": "host",
+    "process": "process",
+    "status": "status",
+}
+
+
+def _coerce_int(value: Any, field_name: str, *, minimum: int = 1, maximum: Optional[int] = None) -> Optional[int]:
+    """Coerce a form string/number into an int, rejecting bad values as 422."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise HTTPException(status_code=422, detail=f"{field_name} must be an integer.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail=f"{field_name} must be an integer.")
+    if number < minimum:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be at least {minimum}.")
+    if maximum is not None and number > maximum:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be at most {maximum}.")
+    return number
+
+
+def _canonical_group_by(value: Any) -> Optional[str]:
+    if value is None or str(value).strip() == "":
+        return None
+    key = str(value).strip().lower()
+    canonical = _GROUP_BY_ALIASES.get(key) or _GROUP_BY_ALIASES.get(key.replace("_", ""))
+    if canonical is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid groupBy field: {value}. Use src_ip, user_name, or host.",
+        )
+    return canonical
+
+
+def _canonical_rule_field(value: Any) -> Optional[str]:
+    if value is None or str(value).strip() == "":
+        return None
+    key = str(value).strip().lower()
+    return _FIELD_ALIASES.get(key) or _FIELD_ALIASES.get(key.replace("_", "")) or key
+
+
+def _normalize_rule_conditions(conditions: Any) -> tuple[dict, str, Optional[int], Optional[int]]:
+    """Validate one UI condition and return it plus derived rule settings.
+
+    The browser sends ``threshold``/``windowSeconds`` as strings and uses
+    ``groupBy`` values such as ``srcIp``. Older senders may also send a single
+    condition object or a ``threshold_count`` condition. All of those normalize
+    to the stored contract: camelCase condition fields plus canonical
+    ``group_by`` (``src_ip``/``user_name``/``host``).
+    """
+    if isinstance(conditions, dict):
+        conditions = [conditions]
+    if not isinstance(conditions, list) or len(conditions) != 1:
+        raise HTTPException(status_code=422, detail="Exactly one condition required")
+
+    raw = conditions[0]
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="Condition must be a JSON object")
+
+    cond_type = str(raw.get("type") or "").strip()
+    if cond_type not in VALID_CONDITION_TYPES:
+        raise HTTPException(status_code=422, detail=f"Unknown condition type: {cond_type}")
+
+    # Reject blank/null/whitespace condition values (H-2)
+    raw_value = raw.get("value")
+    if isinstance(raw_value, bool):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Condition value must not be a boolean.",
+        )
+    if raw_value is None or str(raw_value).strip() == "":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Condition value must not be empty or whitespace",
+        )
+
+    threshold = _coerce_int(raw.get("threshold"), "threshold", minimum=1)
+    window_seconds = _coerce_int(
+        raw.get("windowSeconds", raw.get("window_seconds")),
+        "windowSeconds",
+        minimum=1,
+        maximum=86400,
+    )
+    group_by = _canonical_group_by(raw.get("groupBy", raw.get("group_by")))
+    field = _canonical_rule_field(raw.get("field"))
+    value = raw.get("value")
+    value = None if value is None or str(value).strip() == "" else str(value)
+
+    condition: Dict[str, Any] = {"type": cond_type}
+    if field:
+        condition["field"] = field
+    if value is not None:
+        condition["value"] = value
+    if threshold is not None:
+        condition["threshold"] = threshold
+    if window_seconds is not None:
+        condition["windowSeconds"] = window_seconds
+    if group_by is not None:
+        condition["groupBy"] = group_by
+
+    return condition, (group_by or "src_ip"), threshold, window_seconds
+
+
+def _derive_rule_settings(
+    condition: Dict[str, Any],
+    *,
+    group_by: str,
+    threshold: Optional[int],
+    window_seconds: Optional[int],
+    filter_json: Optional[Dict[str, Any]] = None,
+    rule_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the persisted top-level rule fields the evaluator reads."""
+    cond_type = condition["type"]
+    value = condition.get("value")
+    derived_filter: Dict[str, Any] = dict(filter_json or {})
+
+    if cond_type == "event_type" and value:
+        derived_filter["event_type"] = value
+    elif cond_type == "severity_min" and value:
+        derived_filter["severity_gte"] = _coerce_int(value, "value", minimum=0, maximum=10)
+    elif cond_type == "field_value" and value:
+        field = condition.get("field")
+        if field:
+            derived_filter[field] = value
+    elif cond_type in ("repeated_failures", "threshold_count"):
+        if value:
+            derived_filter["event_type"] = value
+        else:
+            derived_filter.setdefault("outcome", "failure")
+            derived_filter.setdefault("action", "login")
+
+    derived_type = rule_type or (
+        "repeated_failures"
+        if cond_type in ("repeated_failures", "threshold_count")
+        else "threshold"
+    )
+    if derived_type not in ("threshold", "repeated_failures"):
+        raise HTTPException(
+            status_code=422,
+            detail="rule_type must be 'threshold' or 'repeated_failures'.",
+        )
+
+    normalized_threshold = threshold if threshold is not None else 5
+    window_minutes = max(1, int((window_seconds or 300) / 60))
+    return {
+        "rule_type": derived_type,
+        "filter": derived_filter,
+        "group_by": group_by,
+        "threshold": normalized_threshold,
+        "window_minutes": window_minutes,
+    }
+
+
+def _rule_payload(rule: AlertRule) -> Dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "description": rule.description,
+        "tenant": rule.tenant,
+        "enabled": rule.enabled,
+        "severity": rule.severity,
+        "conditions": rule.conditions,
+        "rule_type": rule.rule_type,
+        "filter": rule.filter or {},
+        "group_by": rule.group_by,
+        "threshold": rule.threshold,
+        "window_minutes": rule.window_minutes,
+        "cooldown_minutes": rule.cooldown_minutes,
+        "notify": rule.notify or {},
+        "createdAt": rule.created_at.isoformat() if rule.created_at else None,
+        "updatedAt": rule.updated_at.isoformat() if rule.updated_at else None,
+    }
+
+
 class AlertRuleCreate(BaseModel):
     name: str
     tenant: str
     description: Optional[str] = None
-    conditions: List[dict]
+    conditions: Any
     enabled: bool = True
     severity: str = "medium"
-
-    @field_validator("conditions")
-    @classmethod
-    def validate_conditions(cls, v: List[dict]) -> List[dict]:
-        if not v or len(v) != 1:
-            raise ValueError("Exactly one condition required")
-
-        condition = v[0]
-        cond_type = condition.get("type")
-        valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
-        if cond_type not in valid_types:
-            raise ValueError(f"Unknown condition type: {cond_type}")
-
-
-        threshold = condition.get("threshold")
-        if threshold is not None and threshold < 1:
-            raise ValueError("threshold must be at least 1")
-
-
-        window = condition.get("windowSeconds")
-        if window is not None:
-            if window < 1:
-                raise ValueError("windowSeconds must be at least 1")
-            if window > 86400:
-                raise ValueError("windowSeconds must be at most 86400")
-
-
-        group_by = condition.get("groupBy")
-        if group_by is not None and group_by not in ("src_ip", "user", "host"):
-            raise ValueError(f"Invalid groupBy field: {group_by}")
-
-        return v
+    rule_type: Optional[str] = None
+    filter: Optional[Dict[str, Any]] = None
+    group_by: Optional[str] = None
+    threshold: Optional[Any] = None
+    window_minutes: Optional[Any] = None
+    cooldown_minutes: Optional[Any] = None
+    notify: Optional[Dict[str, Any]] = None
 
 
 class AlertRuleUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    conditions: Optional[List[dict]] = None
+    tenant: Optional[str] = None
+    conditions: Optional[Any] = None
     enabled: Optional[bool] = None
     severity: Optional[str] = None
-
-    @field_validator("conditions", mode="before")
-    @classmethod
-    def validate_conditions(cls, v: Optional[List[dict]]) -> Optional[List[dict]]:
-        if v is not None:
-            if not v or len(v) != 1:
-                raise ValueError("Exactly one condition required")
-
-            condition = v[0]
-            cond_type = condition.get("type")
-            valid_types = ["event_type", "severity_min", "field_value", "threshold_count", "repeated_failures"]
-            if cond_type not in valid_types:
-                raise ValueError(f"Unknown condition type: {cond_type}")
-
-            threshold = condition.get("threshold")
-            if threshold is not None and threshold < 1:
-                raise ValueError("threshold must be at least 1")
-
-            window = condition.get("windowSeconds")
-            if window is not None:
-                if window < 1:
-                    raise ValueError("windowSeconds must be at least 1")
-                if window > 86400:
-                    raise ValueError("windowSeconds must be at most 86400")
-
-            group_by = condition.get("groupBy")
-            if group_by is not None and group_by not in ("src_ip", "user", "host"):
-                raise ValueError(f"Invalid groupBy field: {group_by}")
-
-        return v
+    rule_type: Optional[str] = None
+    filter: Optional[Dict[str, Any]] = None
+    group_by: Optional[str] = None
+    threshold: Optional[Any] = None
+    window_minutes: Optional[Any] = None
+    cooldown_minutes: Optional[Any] = None
+    notify: Optional[Dict[str, Any]] = None
 
 class AlertRuleResponse(BaseModel):
     id: str
@@ -788,10 +1249,7 @@ async def list_alert_rules(
     current_user: TokenPayload = Depends(require_admin),
 ):
     requested_tenant = (tenant or "").strip()
-    if current_user.role == "ADMIN":
-        effective_tenant = effective_read_tenant(current_user, requested_tenant)
-    else:
-        effective_tenant = current_user.tenant
+    effective_tenant = effective_read_tenant(current_user, requested_tenant)
 
     query = select(AlertRule)
     if effective_tenant:
@@ -818,52 +1276,150 @@ async def list_alert_rules(
     next_cursor = rules[-1].id if has_next else None
 
     return {
-        "rules": [{
-            "id": r.id,
-            "name": r.name,
-            "description": r.description,
-            "tenant": r.tenant,
-            "enabled": r.enabled,
-            "severity": r.severity,
-            "conditions": r.conditions,
-            "createdAt": r.created_at.isoformat() if r.created_at else None,
-            "updatedAt": r.updated_at.isoformat() if r.updated_at else None,
-        } for r in rules],
+        "rules": [_rule_payload(r) for r in rules],
         "hasNextPage": has_next,
         "newCursor": next_cursor,
     }
 
-@router.post("/create-alertRule", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_alert_rule(
-    rule: AlertRuleCreate,
-    session: AsyncSession = Depends(get_session),
-    current_user: TokenPayload = Depends(require_admin),
-):
+# create-alertRule moved to rules.py - duplicate removed from ingest.py
+    # Validate name (H-11).
+    stripped_name = (rule.name or "").strip()
+    if len(stripped_name) < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="rule name must not be empty or whitespace",
+        )
+    if len(stripped_name) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="rule name must be at most 100 characters",
+        )
+
+    # Validate severity (H-11).
+    normalized_severity = (rule.severity or "medium").strip().lower()
+    if normalized_severity not in VALID_SEVERITIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid severity: {rule.severity}. "
+                f"Supported values: {', '.join(sorted(VALID_SEVERITIES))}"
+            ),
+        )
+
+    # Validate conditions are present (H-2).
+    if not rule.conditions or len(rule.conditions) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exactly one condition is required",
+        )
+
+    # Validate filter dict if provided (H-2).
+    if rule.filter is not None:
+        rule.filter = validate_filter_dict(rule.filter)
+
+    # Validate rule type (H-6).
+    rule_type = rule.rule_type or "threshold"
+    if rule_type not in VALID_RULE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported rule type: {rule_type}. "
+                f"Supported types: {', '.join(sorted(VALID_RULE_TYPES))}"
+            ),
+        )
+
+    # Validate numeric ranges (H-2).
+    if rule.threshold is not None:
+        rule.threshold = validate_threshold_range(rule.threshold)
+    if rule.window_minutes is not None:
+        rule.window_minutes = validate_window_minutes_range(rule.window_minutes)
+    if rule.cooldown_minutes is not None:
+        rule.cooldown_minutes = validate_cooldown_range(rule.cooldown_minutes)
+
+    # Validate tenant exists and is active (H-11).
+    # Platform admins must explicitly name a valid, active tenant.
+    # Tenant-bound admins are restricted to their own tenant by owns_tenant below.
+    if not rule.tenant or not rule.tenant.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="tenant is required",
+        )
+    normalized_tenant = normalize_tenant(rule.tenant)
+
+    if is_platform_admin(current_user):
+        # Platform admin: tenant must exist and be active.
+        result = await session.execute(
+            select(Tenant).where(Tenant.name == normalized_tenant, Tenant.is_active == True)  # noqa: E712
+        )
+        tenant_row = result.scalar_one_or_none()
+        if not tenant_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant '{normalized_tenant}' not found or not active",
+            )
+
+    # Tenant-bound admin: restricted to their own tenant.
     if not owns_tenant(current_user, rule.tenant):
-        raise HTTPException(status_code=403, detail="Cannot create rule for different tenant")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create rule for different tenant",
+        )
+
+    # Check for duplicate name within tenant scope (H-11).
+    result = await session.execute(
+        select(AlertRule).where(
+            AlertRule.name == stripped_name,
+            AlertRule.tenant == normalized_tenant,
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Rule with name '{stripped_name}' already exists in tenant '{normalized_tenant}'",
+        )
+
+    condition, group_by, threshold, window_seconds = _normalize_rule_conditions(rule.conditions)
+    explicit_group_by = _canonical_group_by(rule.group_by) if rule.group_by else None
+    settings = _derive_rule_settings(
+        condition,
+        group_by=explicit_group_by or group_by,
+        threshold=_coerce_int(rule.threshold, "threshold", minimum=1) if rule.threshold not in (None, "") else threshold,
+        window_seconds=window_seconds,
+        filter_json=rule.filter,
+        rule_type=rule.rule_type,
+    )
+    # Validate the built filter dict (H-2).
+    settings["filter"] = validate_filter_dict(settings["filter"])
+    if rule.window_minutes not in (None, ""):
+        settings["window_minutes"] = _coerce_int(rule.window_minutes, "window_minutes", minimum=1)
+    cooldown_minutes = (
+        _coerce_int(rule.cooldown_minutes, "cooldown_minutes", minimum=0)
+        if rule.cooldown_minutes not in (None, "")
+        else None
+    )
 
     new_rule = AlertRule(
         id=uuid.uuid4().hex[:25],
-        name=rule.name,
+        name=stripped_name,
         description=rule.description,
-        tenant=rule.tenant,
+        tenant=normalized_tenant,
         enabled=rule.enabled,
-        severity=rule.severity,
-        conditions=rule.conditions,
+        severity=normalized_severity,
+        conditions=[condition],
+        rule_type=settings["rule_type"],
+        filter=settings["filter"],
+        group_by=settings["group_by"],
+        threshold=settings["threshold"],
+        window_minutes=settings["window_minutes"],
+        cooldown_minutes=cooldown_minutes,
+        notify=rule.notify or {},
     )
 
     session.add(new_rule)
     await session.commit()
     await session.refresh(new_rule)
 
-    return {"message": "Alert rule created", "createdRule": {
-        "id": new_rule.id,
-        "name": new_rule.name,
-        "tenant": new_rule.tenant,
-        "enabled": new_rule.enabled,
-        "severity": new_rule.severity,
-        "conditions": new_rule.conditions,
-    }}
+    return {"message": "use POST /api/rules/create-alertRule instead", "createdRule": None}
 
 @router.put("/update-rule/{rule_id}", response_model=dict)
 async def update_alert_rule(
@@ -879,33 +1435,152 @@ async def update_alert_rule(
     if not existing or not owns_tenant(current_user, existing.tenant):
         raise HTTPException(status_code=404, detail="Rule not found")
 
+    # Reject tenant changes (H-11).
+    update_tenant = getattr(rule, "tenant", None)
+    if update_tenant is not None and update_tenant.strip() != existing.tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change rule tenant",
+        )
 
-    if rule.name and rule.name != existing.name:
+    # ---- H-2/H-6/H-11: Explicit validation layer ----
+    # Validate name if provided (H-11).
+    if rule.name is not None:
+        stripped_name = rule.name.strip()
+        if len(stripped_name) < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="rule name must not be empty or whitespace",
+            )
+        if len(stripped_name) > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="rule name must be at most 100 characters",
+            )
+        # Check for duplicate name within tenant scope (H-11).
         result = await session.execute(
             select(AlertRule).where(
-                AlertRule.name == rule.name,
+                AlertRule.name == stripped_name,
                 AlertRule.tenant == existing.tenant,
-                AlertRule.id != rule_id
+                AlertRule.id != rule_id,
             )
         )
         if result.scalar_one_or_none():
-            raise HTTPException(status_code=409, detail="Rule with this name already exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Rule with name '{stripped_name}' already exists in tenant '{existing.tenant}'",
+            )
+        existing.name = stripped_name
 
-    update_data = rule.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(existing, key, value)
+    if rule.description is not None:
+        existing.description = rule.description
+
+    # Validate severity if provided (H-11).
+    if rule.severity is not None:
+        normalized_severity = rule.severity.strip().lower()
+        if normalized_severity not in VALID_SEVERITIES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Invalid severity: {rule.severity}. "
+                    f"Supported values: {', '.join(sorted(VALID_SEVERITIES))}"
+                ),
+            )
+        existing.severity = normalized_severity
+
+    # Validate rule type if provided (H-6).
+    if rule.rule_type is not None:
+        normalized_rule_type = rule.rule_type.strip().lower()
+        if normalized_rule_type not in VALID_RULE_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Unsupported rule type: {rule.rule_type}. "
+                    f"Supported types: {', '.join(sorted(VALID_RULE_TYPES))}"
+                ),
+            )
+        existing.rule_type = normalized_rule_type
+
+    # Validate numeric ranges if provided (H-2).
+    if rule.cooldown_minutes not in (None, ""):
+        existing.cooldown_minutes = validate_cooldown_range(
+            _coerce_int(rule.cooldown_minutes, "cooldown_minutes", minimum=0)
+        )
+    if rule.threshold not in (None, ""):
+        existing.threshold = validate_threshold_range(
+            _coerce_int(rule.threshold, "threshold", minimum=1)
+        )
+    if rule.window_minutes not in (None, ""):
+        existing.window_minutes = validate_window_minutes_range(
+            _coerce_int(rule.window_minutes, "window_minutes", minimum=1)
+        )
+
+    # Validate filter dict if provided (H-2).
+    if rule.filter is not None:
+        rule.filter = validate_filter_dict(rule.filter)
+
+    if rule.enabled is not None:
+        existing.enabled = rule.enabled
+    if rule.notify is not None:
+        existing.notify = rule.notify
+
+    explicit_group_by = _canonical_group_by(rule.group_by) if rule.group_by else None
+    explicit_threshold = (
+        _coerce_int(rule.threshold, "threshold", minimum=1)
+        if rule.threshold not in (None, "")
+        else None
+    )
+
+    if rule.conditions is not None:
+        # Validate conditions are present and not blank (H-2).
+        if not rule.conditions or len(rule.conditions) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exactly one condition is required",
+            )
+        condition, group_by, threshold, window_seconds = _normalize_rule_conditions(
+            rule.conditions
+        )
+        settings = _derive_rule_settings(
+            condition,
+            group_by=explicit_group_by or group_by,
+            threshold=explicit_threshold or threshold,
+            window_seconds=window_seconds,
+            filter_json=rule.filter,
+            rule_type=rule.rule_type,
+        )
+        # Validate the built filter dict (H-2).
+        settings["filter"] = validate_filter_dict(settings["filter"])
+        if rule.window_minutes not in (None, ""):
+            settings["window_minutes"] = _coerce_int(
+                rule.window_minutes, "window_minutes", minimum=1
+            )
+        existing.conditions = [condition]
+        existing.rule_type = settings["rule_type"]
+        existing.filter = settings["filter"]
+        existing.group_by = settings["group_by"]
+        existing.threshold = settings["threshold"]
+        existing.window_minutes = settings["window_minutes"]
+    else:
+        # Metadata-only edits keep the existing condition but allow
+        # explicit top-level overrides.
+        if rule.filter is not None:
+            existing.filter = rule.filter
+        if rule.rule_type is not None:
+            existing.rule_type = rule.rule_type
+        if explicit_group_by is not None:
+            existing.group_by = explicit_group_by
+        if explicit_threshold is not None:
+            existing.threshold = explicit_threshold
+        if rule.window_minutes not in (None, ""):
+            existing.window_minutes = _coerce_int(
+                rule.window_minutes, "window_minutes", minimum=1
+            )
 
     await session.commit()
     await session.refresh(existing)
 
-    return {"message": "Alert rule updated", "rule": {
-        "id": existing.id,
-        "name": existing.name,
-        "tenant": existing.tenant,
-        "enabled": existing.enabled,
-        "severity": existing.severity,
-        "conditions": existing.conditions,
-    }}
+    return {"message": "Alert rule updated", "rule": _rule_payload(existing)}
 
 @router.patch("/rules/{rule_id}/enabled", response_model=dict)
 async def toggle_rule_enabled(
@@ -1007,6 +1682,9 @@ class UserResponse(BaseModel):
 async def list_users(
     tenant: Optional[str] = None,
     search: Optional[str] = None,
+    role: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    date: Optional[str] = None,
     limit: int = 25,
     cursor: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
@@ -1018,6 +1696,33 @@ async def list_users(
     query = select(User)
     if effective_tenant:
         query = query.where(User.tenant == effective_tenant)
+
+    if role and role.strip():
+        role_value = role.strip().upper()
+        if role_value not in ("ADMIN", "VIEWER"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unsupported role '{role}'. Use ADMIN or VIEWER.",
+            )
+        query = query.where(User.role == role_value)
+
+    if status_filter and status_filter.strip():
+        status_value = status_filter.strip().upper()
+        if status_value not in ("ACTIVE", "INACTIVE", "FREEZE"):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported status '{status_filter}'. "
+                    "Use ACTIVE, INACTIVE, or FREEZE."
+                ),
+            )
+        query = query.where(User.status == status_value)
+
+    if date and date.strip():
+        start = _parse_date_filter(date, "date")
+        query = query.where(User.create_at >= start)
+        query = query.where(User.create_at < start + timedelta(days=1))
+
     if search:
         search_term = f"%{search}%"
         query = query.where(
@@ -1068,8 +1773,14 @@ async def create_user(
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    if not owns_tenant(current_user, tenant):
+    target_tenant = normalize_tenant(tenant)
+    if not is_platform_admin(current_user) and target_tenant != tenant_key(current_user.tenant):
         raise HTTPException(status_code=403, detail="Cannot create user for different tenant")
+
+    await _require_active_tenant(session, target_tenant)
+
+    role_value = _validated_role(role)
+    status_value = _validated_status(status)
 
     from app.core.security import hash_password
 
@@ -1081,9 +1792,9 @@ async def create_user(
     user = User(
         username=username,
         email=email,
-        tenant=tenant,
-        role=role,
-        status=status,
+        tenant=target_tenant,
+        role=role_value,
+        status=status_value,
         password=hashed,
     )
 
@@ -1118,19 +1829,40 @@ async def update_user(
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
 
+    is_self = user.id == current_user.user_id
+    current_tenant = tenant_key(user.tenant)
+    target_tenant: Optional[str] = None
 
-    if user.id == current_user.user_id:
-        if role is not None and role != "ADMIN":
+    if tenant is not None:
+        requested_tenant = tenant_key(tenant)
+        if is_self and requested_tenant != current_tenant:
+            raise HTTPException(status_code=403, detail="Cannot change your own tenant")
+        if not is_platform_admin(current_user) and requested_tenant != current_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail="Tenant-bound administrators cannot change a user's tenant",
+            )
+        if requested_tenant != current_tenant:
+            target_tenant = normalize_tenant(tenant)
+            await _require_active_tenant(session, target_tenant)
+        elif current_tenant:
+            # Keep the canonical value when the caller re-sends the same tenant.
+            target_tenant = normalize_tenant(tenant)
+
+    role_value = _validated_role(role) if role is not None else None
+    status_value = _validated_status(status) if status is not None else None
+
+    if is_self:
+        if role_value is not None and role_value != "ADMIN":
             raise HTTPException(status_code=403, detail="Cannot change your own role from ADMIN")
-        if status is not None and status != "ACTIVE":
+        if status_value is not None and status_value != "ACTIVE":
             raise HTTPException(status_code=403, detail="Cannot deactivate yourself")
 
-
-    if role is not None and user.role == "ADMIN" and role != "ADMIN":
+    if role_value is not None and user.role == "ADMIN" and role_value != "ADMIN":
         admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
         if admin_count.scalar() <= 1:
             raise HTTPException(status_code=403, detail="Cannot demote the last active admin")
-    if status is not None and user.role == "ADMIN" and user.status == "ACTIVE" and status != "ACTIVE":
+    if status_value is not None and user.role == "ADMIN" and user.status == "ACTIVE" and status_value != "ACTIVE":
         admin_count = await session.execute(select(func.count()).select_from(User).where(User.role == "ADMIN", User.status == "ACTIVE"))
         if admin_count.scalar() <= 1:
             raise HTTPException(status_code=403, detail="Cannot deactivate the last active admin")
@@ -1139,12 +1871,12 @@ async def update_user(
         user.username = username
     if email is not None:
         user.email = email
-    if tenant is not None:
-        user.tenant = tenant
-    if role is not None:
-        user.role = role
-    if status is not None:
-        user.status = status
+    if target_tenant is not None:
+        user.tenant = target_tenant
+    if role_value is not None:
+        user.role = role_value
+    if status_value is not None:
+        user.status = status_value
 
     await session.commit()
     await session.refresh(user)

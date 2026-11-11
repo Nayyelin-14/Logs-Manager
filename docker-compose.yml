@@ -11,9 +11,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     ports:
-      - "127.0.0.1:${HTTP_PORT:-80}:80"
-      - "127.0.0.1:${HTTPS_PORT:-443}:443"
-      - "127.0.0.1:${HTTPS_PORT:-443}:443/udp"
+      - "${CADDY_BIND_IP:-127.0.0.1}:${HTTP_PORT:-80}:80"
+      - "${CADDY_BIND_IP:-127.0.0.1}:${HTTPS_PORT:-443}:443"
+      - "${CADDY_BIND_IP:-127.0.0.1}:${HTTPS_PORT:-443}:443/udp"
     environment:
       - DOMAIN=${DOMAIN:-localhost}
       - CADDY_EMAIL=${CADDY_EMAIL:-admin@example.com}
@@ -55,7 +55,9 @@ services:
       - INGEST_DEFAULT_TENANT=${INGEST_DEFAULT_TENANT:-demoA}
       - INGEST_BATCH_MAX_EVENTS=1000
       - INGEST_MAX_FILE_BYTES=10485760
-      - SYSLOG_ENABLED=${SYSLOG_ENABLED:-true}
+      # The dedicated `ingest` service owns the native UDP/TCP listeners.
+      # The API container must not open a second copy of them.
+      - SYSLOG_ENABLED=false
       - SYSLOG_TENANT=${SYSLOG_TENANT:-demoA}
       - SYSLOG_SOURCE=${SYSLOG_SOURCE:-firewall}
       - SYSLOG_USERNAME=syslog
@@ -107,6 +109,12 @@ services:
       - SYSLOG_UDP_PORT=5514
       - SYSLOG_TCP_PORT=5514
       - SYSLOG_TIMEZONE=UTC
+      - SYSLOG_BIND_IP=${SYSLOG_CONTAINER_BIND_IP:-0.0.0.0}
+      - SYSLOG_ALLOWED_CIDRS=${SYSLOG_ALLOWED_CIDRS:-}
+      - SYSLOG_DB_RETRY_ATTEMPTS=${SYSLOG_DB_RETRY_ATTEMPTS:-3}
+      - SYSLOG_DB_RETRY_BACKOFF_SECS=${SYSLOG_DB_RETRY_BACKOFF_SECS:-0.25}
+      - SYSLOG_MAX_INFLIGHT=${SYSLOG_MAX_INFLIGHT:-1000}
+      - INGEST_HEALTH_PORT=8090
       - INGEST_DEFAULT_TENANT=${INGEST_DEFAULT_TENANT:-demoA}
     ports:
       - "${SYSLOG_BIND_IP:-0.0.0.0}:${SYSLOG_HOST_PORT:-514}:5514/udp"
@@ -115,10 +123,11 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 5514)); s.close()"]
+      test: ["CMD", "python3", "ingest/healthcheck.py"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
+      start_period: 15s
     networks:
       - lms
 

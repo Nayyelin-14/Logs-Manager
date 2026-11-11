@@ -7,11 +7,12 @@ export LMS_API_URL=http://localhost:4500/api
 export INGEST_API_KEY=change_me_to_a_long_random_value
 ```
 
-The API key must be configured in `backend/.env` together with a tenant:
+The API key must be configured in `.env` and linked to the `demoa` tenant by
+seeding (or by rotating the tenant key in the admin UI):
 
 ```dotenv
 INGEST_API_KEY=change_me_to_a_long_random_value
-INGEST_API_TENANT=demoA
+INGEST_DEFAULT_TENANT=demoA
 INGEST_API_USERNAME=log-forwarder
 ```
 
@@ -20,18 +21,30 @@ API key tenant is used.
 
 ## Syslog
 
-Enable the listeners in `backend/.env`:
+The self-hosted Docker stack receives native Syslog in its dedicated `ingest`
+container. Configure it in the root `.env`:
 
 ```dotenv
 SYSLOG_ENABLED=true
+SYSLOG_HOST_PORT=514
 SYSLOG_TENANT=demoA
 SYSLOG_SOURCE=firewall
-SYSLOG_UDP_PORT=514
-SYSLOG_TCP_PORT=514
+SYSLOG_UDP_PORT=5514
+SYSLOG_TCP_PORT=5514
 ```
 
-Port 514 requires root unless you change the port or add a capability. For local
-testing without root, use `SYSLOG_UDP_PORT=5514` and `SYSLOG_TCP_PORT=5514`.
+The container always listens on 5514; `SYSLOG_HOST_PORT` is the host-side port.
+If host port 514 is busy (or Docker Desktop/WSL2 refuses it), set
+`SYSLOG_HOST_PORT=5514` and send to 5514. The API container does not open a
+Syslog port.
+
+Hosted SaaS has no native listener. Use the HTTPS endpoint instead:
+
+```bash
+SYSLOG_HTTP_URL=https://<project>.vercel.app/api/ingest/syslog \
+  INGEST_API_KEY="$INGEST_API_KEY" \
+  ./samples/send_syslog_http.sh samples/syslog_firewall.log
+```
 
 Send the firewall or router sample:
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.core.database import get_session
 from app.core.dependencies import get_current_user
 from app.core.security import TokenPayload
+from app.core.tenancy import resolve_read_tenant
 from app.services import stats_service
 
 router = APIRouter()
@@ -43,11 +44,7 @@ class SourceHealth(BaseModel):
     last_event_at: Optional[str]
     status: str
 def _tenant_scope(current_user: TokenPayload, requested: Optional[str]) -> Optional[str]:
-    if current_user.role == "ADMIN" and not (current_user.tenant or "").strip():
-        if requested is None or requested == "" or requested == "all":
-            return None
-        return requested
-    return current_user.tenant
+    return resolve_read_tenant(current_user, requested)
 def _parse_range(from_str: Optional[str], to_str: Optional[str]) -> tuple[datetime, datetime]:
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=7)

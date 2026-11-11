@@ -17,6 +17,7 @@ export const severityOptions = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+  { value: "critical", label: "Critical" },
 ];
 export const getStatusBadge = (status: Status) => {
   const statusStyles = {

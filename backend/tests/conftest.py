@@ -69,7 +69,6 @@ VIEWER_B_EMAIL = _VIEWER_B_EMAIL
 VIEWER_B_PASSWORD = _VIEWER_B_PASSWORD
 
 
-
 DEMOA_API_KEY = "demoa-api-key-0123456789abcdef0123456789abcdef"
 DEMOB_API_KEY = "demob-api-key-0123456789abcdef0123456789abcdef"
 
@@ -202,6 +201,11 @@ def client():
 def login(client, email: str, password: str):
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, f"login failed: {response.status_code} {response.text}"
+    # After login, the server sets the XSRF-TOKEN cookie. Attach it as a header
+    # on the client so subsequent state-changing requests pass CSRF validation.
+    token = response.cookies.get("XSRF-TOKEN")
+    if token:
+        client.headers["X-XSRF-TOKEN"] = token
     return response
 
 
@@ -286,10 +290,80 @@ def reset_rate_limiter():
             rate_limiter.reset()
         except Exception:
             pass
-    yield
-    _FAILED_LOGIN_TRACKER.clear()
-    for rate_limiter in (login_limiter, limiter):
+
+
+@pytest.fixture(scope="session", autouse=True)
+def db_baseline(test_database):
+    """Snapshot the seeded rows immediately after the session database is built.
+
+    The snapshot is the source of truth for what "isolation" means: anything not
+    present here was created by a test module and must be removed at that
+    module's teardown.  Using a snapshot (instead of hard-coded names) keeps the
+    cleanup correct even when seed data changes.
+    """
+    import asyncpg
+
+    async def _snapshot() -> dict:
+        conn = await asyncpg.connect(**_connection_kwargs(database=db_name))
         try:
-            rate_limiter.reset()
-        except Exception:
-            pass
+            return {
+                "rule_ids": [r["id"] for r in await conn.fetch("SELECT id FROM alert_rules")],
+                "alert_ids": [r["id"] for r in await conn.fetch("SELECT id FROM alerts")],
+                "tenant_names": [r["name"] for r in await conn.fetch("SELECT name FROM tenants")],
+                "user_emails": [r["email"] for r in await conn.fetch('SELECT email FROM "User"')],
+                "ingested_at": await conn.fetchval("SELECT max(ingested_at) FROM events"),
+            }
+        finally:
+            await conn.close()
+
+    return asyncio.run(_snapshot())
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolate_db(db_baseline):
+    """Remove rows created by a test module once that module finishes.
+
+    Isolation is at module scope so module-level seed fixtures (dashboard and
+    tenant-isolation suites) stay alive for every test in their own module,
+    while alert rules, alerts, events, users and tenants created by one module
+    can never leak into the next one.  Cleanup is driven by ``db_baseline``, so
+    results do not depend on test execution order.
+    """
+    yield
+    import asyncpg
+
+    async def _cleanup() -> None:
+        conn = await asyncpg.connect(**_connection_kwargs(database=db_name))
+        try:
+            async with conn.transaction():
+                # email_notifications references alerts, so delete it first.
+                await conn.execute(
+                    'DELETE FROM email_notifications '
+                    'WHERE "alertId" IS NULL OR "alertId" <> ALL($1::varchar[])',
+                    db_baseline["alert_ids"],
+                )
+                await conn.execute(
+                    "DELETE FROM alerts WHERE id <> ALL($1::varchar[])",
+                    db_baseline["alert_ids"],
+                )
+                await conn.execute(
+                    "DELETE FROM alert_rules WHERE id <> ALL($1::varchar[])",
+                    db_baseline["rule_ids"],
+                )
+                if db_baseline["ingested_at"] is not None:
+                    await conn.execute(
+                        "DELETE FROM events WHERE ingested_at > $1",
+                        db_baseline["ingested_at"],
+                    )
+                await conn.execute(
+                    'DELETE FROM "User" WHERE email <> ALL($1::varchar[])',
+                    db_baseline["user_emails"],
+                )
+                await conn.execute(
+                    "DELETE FROM tenants WHERE name <> ALL($1::varchar[])",
+                    db_baseline["tenant_names"],
+                )
+        finally:
+            await conn.close()
+
+    asyncio.run(_cleanup())

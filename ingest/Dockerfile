@@ -26,9 +26,9 @@ ENV APP_VERSION=${APP_VERSION} GIT_SHA=${GIT_SHA}
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-EXPOSE 5514/udp 5514/tcp 8000/tcp
+EXPOSE 5514/udp 5514/tcp 8090/tcp 8000/tcp
 
-HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-    CMD python3 -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 5514)); s.close()" || exit 1
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD python3 ingest/healthcheck.py || exit 1
 
 CMD ["python3", "ingest/entrypoint.py"]
