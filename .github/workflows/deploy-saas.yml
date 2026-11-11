@@ -104,11 +104,7 @@ jobs:
               # VITE_API_URL was stored as a sensitive Vercel variable, so
               # `vercel pull` writes the literal placeholder [SENSITIVE] into
               # the local build environment. It is not a secret (it is the
-              # same-origin /api path), so store it as plain config and export
-              # it for this build as well.
-              vercel env rm VITE_API_URL production --yes --token "$VERCEL_TOKEN" >/dev/null 2>&1 || true
-              vercel env add VITE_API_URL production --value /api --no-sensitive --force --yes \
-                --token "$VERCEL_TOKEN" >/dev/null
+              # same-origin /api path), so override it for this build.
               export VITE_API_URL=/api
               for f in .vercel/.env.production.local .env.production.local; do
                 [ -f "$f" ] && sed -i 's|^VITE_API_URL=.*|VITE_API_URL=/api|' "$f"
