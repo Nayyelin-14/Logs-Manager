@@ -347,6 +347,10 @@ scale.
   Isolation is server-side, not physical.
 - **No GeoIP/reverse-DNS enrichment:** Source IPs are stored as-is without
   enrichment.
+- **Syslog events are not deduplicated:** JSON events dedupe on `(id, ts)`,
+  but identical native syslog lines (UDP/TCP 514) are stored as separate
+  events. Repeated identical syslog lines are real events, and threshold alert
+  rules depend on counting them, so syslog dedupe is intentionally omitted.
 - **No Helm/Terraform IaC:** Docker Compose is the deployment mechanism.
   Terraform/Helm are bonus items not implemented.
 - **Test database:** Tests require Docker PostgreSQL + Redis. They cannot run
