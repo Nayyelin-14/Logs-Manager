@@ -38,8 +38,15 @@ passwords and prints them once. The hosted demo was seeded with `Pass@123`.
   stack (or re-seed the Render database — see `docs/setup_saas.md`) to refresh,
   or use `make demo` to run the brute-force simulator.
 - Sample events with old timestamps (for example `2025-08-20`) are stored but
-  will not appear under the default 24h/7d dashboard range. Select the **30d**
-  range, widen the Logs date filter, or send events with current timestamps.
+  will not appear under the default 7d dashboard range (today is Nov 2026, so
+  they fall outside even a 30d window). Use the **Logs date filter** (for
+  example `2025-08-20`) to surface them, or send events with current
+  timestamps for the dashboard range buttons.
+- For the syslog demo use `nc -w 2 <host> 514` or `samples/send_syslog.sh`
+  (udp|tcp); they deliver the line verbatim. `logger` is a fallback only: it
+  routes through the local host's syslog, which prepends its own header
+  (host name, severity, current timestamp) and nests the original line inside
+  `message`.
 
 **Appliance vs SaaS:**
 
