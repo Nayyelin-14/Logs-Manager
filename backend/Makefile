@@ -14,7 +14,7 @@ help:
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test              - Run all tests"
-	@echo "  make test-models       - Run model verification tests"
+	@echo "  make test-models       - Run normalization and schema tests"
 	@echo ""
 	@echo "Development:"
 	@echo "  make run-dev           - Start FastAPI dev server (uvicorn with reload)"
@@ -40,7 +40,7 @@ test:
 	pytest tests/ -v
 
 test-models:
-	pytest tests/test_models.py -v
+	pytest tests/test_normalization.py -v
 
 run-dev:
 	uvicorn app.main:app --host 0.0.0.0 --port 4501 --reload
