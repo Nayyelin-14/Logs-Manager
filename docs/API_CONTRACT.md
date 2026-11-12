@@ -233,8 +233,8 @@ server-side tenant scope), not the current page length.
 | **Method** | GET |
 | **Path** | `/api/dashboard` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant` (optional). VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
-| **Response (200)** | Same (tenant-scoped per rules above) |
+| **Query Params** | `tenant`, `range`, `source` (all optional). `range` is `1d`, `3d`, `7d` (default) or `30d`. `source` is one of `firewall`, `network`, `api`, `crowdstrike`, `aws`, `m365`, `ad`; an unknown value returns **422**. VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
+| **Response (200)** | Same (tenant-, range- and source-scoped per rules above) |
 
 **DashboardStats (Key Fields):**
 ```json
@@ -258,6 +258,19 @@ server-side tenant scope), not the current page length.
 ```
 
 **`/api/user-dashboard/:userId`:** not implemented; viewers use `GET /api/dashboard` scoped to their own tenant.
+
+### 5.2 GET `/api/stats/*` (JWT required)
+
+| Endpoint | Query Params | Response |
+|----------|--------------|----------|
+| `/api/stats/top` | `field` (`src_ip`, `user`, `event_type`, `source`, `host`), `n` (default 10), `tenant`, `source`, `from`, `to` | `{ field, items: [{ value, count }] }` |
+| `/api/stats/timeline` | `interval` (`minute`, `hour`, `day`), `tenant`, `source`, `from`, `to` | `{ interval, buckets: [{ start, count, by_source }] }` |
+| `/api/stats/summary` | `tenant`, `source` | `{ total_events, failed_logins, open_alerts, active_sources, tenants }` |
+
+`source` uses the same seven values as `GET /api/dashboard` and is validated
+against `VALID_SOURCES`; an unknown value returns **422**. VIEWER requests are
+always scoped to `user.tenant`, even when a different `tenant` query param is
+supplied.
 
 ---
 
