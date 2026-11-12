@@ -720,6 +720,7 @@ async def ingest_syslog_http(
             None,
             context,
             pre_rejected=pre_rejected,
+            source_default=current_settings.SYSLOG_SOURCE,
         )
     except Exception as exc:  # noqa: BLE001 - map infra failure to a retryable 5xx
         await session.rollback()

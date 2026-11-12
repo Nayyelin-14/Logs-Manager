@@ -47,7 +47,21 @@ SUPPORTED_SOURCES = ", ".join(sorted(SOURCE_ALIASES))
 _ACTION_NAMES = {action.value for action in Action}
 
 
-def resolve_source(value: Any, raw_event: Optional[dict] = None) -> Source:
+def resolve_source(
+    value: Any, raw_event: Optional[dict] = None, default: Source = Source.API
+) -> Source:
+    # A string default (for example SYSLOG_SOURCE from settings) is resolved
+    # through the same alias map so callers can pass either a Source enum or
+    # its configured string value.
+    if isinstance(default, str):
+        dkey = default.strip().lower().replace("-", "").replace(" ", "").replace("_", "")
+        for alias, source in SOURCE_ALIASES.items():
+            if alias.replace("_", "") == dkey:
+                default = source
+                break
+        else:
+            default = Source.API
+
     if isinstance(value, Source):
         return value
 
@@ -66,10 +80,14 @@ def resolve_source(value: Any, raw_event: Optional[dict] = None) -> Source:
     if raw_event:
         declared = raw_event.get("source")
         if declared and declared is not value:
-            return resolve_source(declared)
-        return infer_source_from_event(raw_event)
+            return resolve_source(declared, default=default)
+        inferred = infer_source_from_event(raw_event)
+        # Only fall back to the configured default when inference cannot
+        # determine a more specific source. Recognized firewall/router/etc.
+        # messages keep their inferred source.
+        return default if inferred == Source.API else inferred
 
-    return Source.API
+    return default
 
 
 def _json_safe(value: Any, depth: int = 0) -> Any:
@@ -111,13 +129,14 @@ class IngestionService:
         raw_event: Dict[str, Any],
         source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        source_default: Source = Source.API,
     ) -> Dict[str, Any]:
         if not isinstance(raw_event, dict):
             raise ValidationError(
                 f"Event must be a JSON object, got {type(raw_event).__name__}."
             )
 
-        resolved_source = resolve_source(source, raw_event)
+        resolved_source = resolve_source(source, raw_event, default=source_default)
         normalized = self.normalizer.normalize_event(raw_event, resolved_source)
 
 
@@ -411,6 +430,7 @@ class IngestionService:
         source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         pre_rejected: Optional[List[Dict[str, Any]]] = None,
+        source_default: Source = Source.API,
     ) -> Dict[str, Any]:
         """Ingest a batch in one transaction.
 
@@ -441,7 +461,9 @@ class IngestionService:
         for idx, event_data in events:
             try:
                 event_source = event_data.get("source") or source
-                resolved_source = resolve_source(event_source, event_data)
+                resolved_source = resolve_source(
+                    event_source, event_data, default=source_default
+                )
                 normalized = self.normalizer.normalize_event(event_data, resolved_source)
 
                 context_tenant = context.get("tenant")

@@ -259,7 +259,12 @@ async def ingest_parsed(
         try:
             session = session_factory()
             service = IngestionService(session)
-            await service.ingest(event, source, syslog_ingest_context())
+            await service.ingest(
+                event,
+                source,
+                syslog_ingest_context(),
+                source_default=settings.SYSLOG_SOURCE,
+            )
             syslog_counters.accepted += 1
             return "persisted"
         except ValidationError as exc:
