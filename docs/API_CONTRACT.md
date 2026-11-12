@@ -180,8 +180,11 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Path** | `/api/get-logs` |
 | **Auth** | JWT required |
 | **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`, `date`, `search`, `limit`, `cursor` |
-| **Pagination** | Cursor-based (`cursor` = last event ID) |
-| **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number }` |
+| **Pagination** | Opaque cursor. Default `ts` sort uses keyset paging on `(ts, id)`; other `sort_by` fields use offset paging. Reusing a cursor with a different sort returns 400. |
+| **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number, next_cursor: string|null, has_more: boolean }` |
+
+`total` is the real number of rows matching the filters (same WHERE clauses and
+server-side tenant scope), not the current page length.
 
 **LogWithSeverityLevel:**
 ```json

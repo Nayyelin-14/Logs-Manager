@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import select, func, desc, asc, or_
+from sqlalchemy import select, func, desc, asc, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Set
 from pydantic import BaseModel, Field, ConfigDict
+import base64
+import binascii
+import json
 
 from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
@@ -26,6 +29,40 @@ SORTABLE_FIELDS = {
     "dst_ip",
     "ingested_at",
 }
+
+# Opaque cursors are base64url(JSON). The version and the sort metadata let us
+# reject a cursor that is reused with a different sort instead of silently
+# returning the wrong page.
+CURSOR_VERSION = 1
+
+
+def _encode_cursor(payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> dict:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError, binascii.Error, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+    if not isinstance(payload, dict) or payload.get("v") != CURSOR_VERSION:
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+    return payload
+
+
+def _cursor_timestamp(value) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _effective_tenant(current_user: "TokenPayload", requested: Optional[str]) -> Optional[str]:
@@ -151,9 +188,11 @@ async def search_logs(
     requested_tenant = (filters.tenant or "").strip()
     tenant = _effective_tenant(current_user, requested_tenant)
 
-    query = select(Event)
+    # Every filter is collected once so the page query and the COUNT query use
+    # exactly the same WHERE clauses (including the server-side tenant scope).
+    conditions = []
     if tenant:
-        query = query.where(Event.tenant == tenant)
+        conditions.append(Event.tenant == tenant)
 
     if filters.source and str(filters.source).strip():
         source = str(filters.source).strip().lower()
@@ -165,20 +204,20 @@ async def search_logs(
                     f"Valid sources: {', '.join(sorted(VALID_SOURCES))}."
                 ),
             )
-        query = query.where(Event.source == source)
+        conditions.append(Event.source == source)
 
     event_type = filters.event_type or filters.eventType
     if event_type and str(event_type).strip():
-        query = query.where(func.lower(Event.event_type) == str(event_type).strip().lower())
+        conditions.append(func.lower(Event.event_type) == str(event_type).strip().lower())
 
     if filters.severity and str(filters.severity).strip():
         sev = str(filters.severity).strip().lower()
         ranges = {"low": (0, 3), "medium": (4, 6), "high": (7, 8), "critical": (9, 10)}
         if sev in ranges:
             low, high = ranges[sev]
-            query = query.where(Event.severity.between(low, high))
+            conditions.append(Event.severity.between(low, high))
         elif sev.isdigit():
-            query = query.where(Event.severity >= int(sev))
+            conditions.append(Event.severity >= int(sev))
         else:
             raise HTTPException(
                 status_code=422,
@@ -191,30 +230,30 @@ async def search_logs(
     # A single calendar day remains the primary UI filter.
     day = _parse_datetime(filters.date)
     if day is not None:
-        query = query.where(Event.ts >= day)
-        query = query.where(Event.ts < day + timedelta(days=1))
+        conditions.append(Event.ts >= day)
+        conditions.append(Event.ts < day + timedelta(days=1))
 
     # Accept both the explicit start/end pair and the concise from/to aliases.
     start = _parse_datetime(filters.start_time) or _parse_datetime(filters.from_time)
     end = _parse_datetime(filters.end_time) or _parse_datetime(filters.to_time, end_of_day=True)
     if start is not None:
-        query = query.where(Event.ts >= start)
+        conditions.append(Event.ts >= start)
     if end is not None:
-        query = query.where(Event.ts <= end)
+        conditions.append(Event.ts <= end)
 
     if filters.action and str(filters.action).strip():
-        query = query.where(Event.action == str(filters.action).strip().lower())
+        conditions.append(Event.action == str(filters.action).strip().lower())
     if filters.user:
-        query = query.where(Event.user_name.ilike(f"%{filters.user}%"))
+        conditions.append(Event.user_name.ilike(f"%{filters.user}%"))
     if filters.src_ip:
-        query = query.where(Event.src_ip == filters.src_ip)
+        conditions.append(Event.src_ip == filters.src_ip)
     if filters.dst_ip:
-        query = query.where(Event.dst_ip == filters.dst_ip)
+        conditions.append(Event.dst_ip == filters.dst_ip)
 
     search_value = filters.search or filters.q
     if search_value and str(search_value).strip():
         search_term = f"%{str(search_value).strip()}%"
-        query = query.where(
+        conditions.append(
             or_(
                 Event.user_name.ilike(search_term),
                 Event.src_ip.ilike(search_term),
@@ -226,16 +265,80 @@ async def search_logs(
             )
         )
 
-    sort_column = getattr(Event, filters.sort_by, None)
-    if filters.sort_by not in SORTABLE_FIELDS or sort_column is None:
-        sort_column = Event.ts
-    if (filters.sort_order or "").lower() == "asc":
-        query = query.order_by(asc(sort_column))
-    else:
-        query = query.order_by(desc(sort_column))
+    sort_by = filters.sort_by if filters.sort_by in SORTABLE_FIELDS else "ts"
+    sort_column = getattr(Event, sort_by, Event.ts)
+    sort_order = "asc" if (filters.sort_order or "").lower() == "asc" else "desc"
 
-    if filters.cursor:
-        query = query.where(Event.id > filters.cursor)
+    # `total` is the real number of matching rows under the same filters, not
+    # the current page length. The COUNT query reuses `conditions`, so the
+    # tenant predicate is enforced server-side for viewers too.
+    total = await session.scalar(
+        select(func.count()).select_from(Event).where(*conditions)
+    ) or 0
+
+    query = select(Event).where(*conditions)
+
+    cursor_payload = _decode_cursor(filters.cursor) if filters.cursor else None
+
+    # Cursor design: the default `ts` sort uses keyset paging on the tuple
+    # (ts, id) -- (ts, id) < (cursor_ts, cursor_id) for DESC and the inverse for
+    # ASC. Both columns are part of the primary key and non-null, so there are
+    # no NULL branches. Other allowlisted sort fields fall back to offset
+    # paging encoded in the same opaque cursor, with id as a deterministic
+    # tie-breaker (NULLs follow PostgreSQL's default ordering).
+    if sort_by == "ts":
+        if sort_order == "asc":
+            query = query.order_by(asc(Event.ts), asc(Event.id))
+        else:
+            query = query.order_by(desc(Event.ts), desc(Event.id))
+
+        if cursor_payload is not None:
+            if (
+                cursor_payload.get("mode") != "ts"
+                or cursor_payload.get("sort") != "ts"
+                or cursor_payload.get("order") != sort_order
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid cursor: it does not match the requested sort",
+                )
+            cursor_ts = _cursor_timestamp(cursor_payload.get("ts"))
+            cursor_id = cursor_payload.get("id")
+            if not isinstance(cursor_id, str) or not cursor_id:
+                raise HTTPException(status_code=400, detail="Invalid cursor")
+            if sort_order == "asc":
+                query = query.where(
+                    or_(
+                        Event.ts > cursor_ts,
+                        and_(Event.ts == cursor_ts, Event.id > cursor_id),
+                    )
+                )
+            else:
+                query = query.where(
+                    or_(
+                        Event.ts < cursor_ts,
+                        and_(Event.ts == cursor_ts, Event.id < cursor_id),
+                    )
+                )
+    else:
+        offset = 0
+        if cursor_payload is not None:
+            if (
+                cursor_payload.get("mode") != "offset"
+                or cursor_payload.get("sort") != sort_by
+                or cursor_payload.get("order") != sort_order
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid cursor: it does not match the requested sort",
+                )
+            offset = cursor_payload.get("offset")
+            if not isinstance(offset, int) or offset < 0:
+                raise HTTPException(status_code=400, detail="Invalid cursor")
+
+        order_expr = asc(sort_column) if sort_order == "asc" else desc(sort_column)
+        id_expr = asc(Event.id) if sort_order == "asc" else desc(Event.id)
+        query = query.order_by(order_expr, id_expr).offset(offset)
 
     limit = max(1, min(int(filters.limit or 50), 500))
     query = query.limit(limit + 1)
@@ -246,7 +349,26 @@ async def search_logs(
     if has_next:
         logs = logs[:limit]
 
-    next_cursor = logs[-1].id if has_next else None
+    next_cursor = None
+    if has_next and logs:
+        last = logs[-1]
+        if sort_by == "ts":
+            next_cursor = _encode_cursor({
+                "v": CURSOR_VERSION,
+                "mode": "ts",
+                "sort": "ts",
+                "order": sort_order,
+                "ts": last.ts.isoformat(),
+                "id": last.id,
+            })
+        else:
+            next_cursor = _encode_cursor({
+                "v": CURSOR_VERSION,
+                "mode": "offset",
+                "sort": sort_by,
+                "order": sort_order,
+                "offset": offset + limit,
+            })
 
     log_dicts = [_event_payload(log) for log in logs]
 
@@ -254,7 +376,10 @@ async def search_logs(
         "logs": log_dicts,
         "newCursor": next_cursor,
         "prevCursor": None,
-        "total": len(log_dicts),
+        "total": total,
+        # Additive aliases; existing clients keep using newCursor/prevCursor.
+        "next_cursor": next_cursor,
+        "has_more": has_next,
     }
 
 
