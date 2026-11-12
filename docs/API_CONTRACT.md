@@ -179,7 +179,8 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | GET |
 | **Path** | `/api/get-logs` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`, `date`, `search`, `limit`, `cursor` |
+| **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`/`event_type`, `date`, `from`, `to`, `search`/`q`, `user`, `src_ip`, `dst_ip`, `limit`, `cursor`, `sort_by`, `sort_order` |
+| **Time Range** | Use `from` (inclusive) and `to` (inclusive; date-only values cover the whole day). `from_time`/`end_time` remain accepted aliases. |
 | **Pagination** | Opaque cursor. Default `ts` sort uses keyset paging on `(ts, id)`; other `sort_by` fields use offset paging. Reusing a cursor with a different sort returns 400. |
 | **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number, next_cursor: string|null, has_more: boolean }` |
 
@@ -352,6 +353,7 @@ supplied.
 | **Auth** | ADMIN required |
 | **Request Body** | `{ name, tenant, description?, conditions, enabled?, severity? }` |
 | **Conditions Validation** | Exactly 1 condition, type-specific required fields |
+| **Condition Values** | `value` is required for `event_type`, `severity_min`, and `field_value`; omit it for `repeated_failures`/`threshold_count` (the evaluator derives `action=login`, `outcome=failure`). |
 | **Response (201)** | `{ message, createdRule }` |
 
 ### 7.3 PUT `/api/update-rule/:id`
@@ -395,8 +397,9 @@ supplied.
 | **Method** | GET |
 | **Path** | `/api/get-users` |
 | **Auth** | ADMIN required |
-| **Query Params** | Same (scoped to admin's tenant) |
-| **Response** | `{ usersList: User[], newCursor, prevCursor? }` |
+| **Query Params** | `tenant`, `search`, `role`, `status`, `date`, `limit`, `cursor` |
+| **Pagination** | `cursor` is the **numeric** id of the last user on the previous page; rows are newest-first. |
+| **Response** | `{ usersList: User[], users: User[], newCursor: number\|null }` |
 
 ### 8.2 GET `/api/users/:q` (Frontend infinite query)
 
@@ -414,7 +417,7 @@ supplied.
 | **Method** | POST |
 | **Path** | `/api/create-user` |
 | **Auth** | ADMIN required |
-| **Request Body** | `{ username, email, tenant, role, status, password }` |
+| **Request Body** | JSON `{ username, email, tenant, role, status, password }` (form-encoded is also accepted for legacy clients) |
 | **Response** | Created user |
 
 ### 8.4 PUT `/api/update-user`
@@ -424,7 +427,7 @@ supplied.
 | **Method** | PUT |
 | **Path** | `/api/update-user` |
 | **Auth** | ADMIN required |
-| **Request Body** | `{ id, username?, email?, tenant?, role?, status? }` |
+| **Request Body** | JSON `{ id, username?, email?, tenant?, role?, status? }` (form-encoded is also accepted for legacy clients) |
 | **Response** | Updated user |
 
 ### 8.5 DELETE `/api/delete-user/:userId`
