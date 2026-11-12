@@ -31,9 +31,9 @@ All endpoints preserve:
 | **Path** | `/api/auth/login` |
 | **Auth** | None |
 | **Request Body** | `{ email: string, password: string }` |
-| **Response (201)** | `{ message: string, userData: UserPublic }` |
-| **Cookies Set** | `accessToken` (15m), `refreshToken` (30d) HttpOnly |
-| **Errors** | 400 (missing), 401 (invalid), 403 (inactive), 500 |
+| **Response (200)** | `{ message: string, userData: UserPublic }` |
+| **Cookies Set** | `accessToken` (15m), `refreshToken` (30d) HttpOnly; `XSRF-TOKEN` (30d, readable by JS for double-submit CSRF) |
+| **Errors** | 401 (invalid credentials), 403 (inactive account or tenant), 422 (invalid body/email), 429 (lockout), 500 |
 
 **UserPublic** (no password):
 ```json
@@ -42,7 +42,7 @@ All endpoints preserve:
   "username": "admin",
   "email": "admin@demo.local",
   "role": "ADMIN",
-  "tenant": "demoA",
+  "tenant": "demoa",
   "status": "ACTIVE",
   "createAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -509,6 +509,7 @@ All error responses follow this format:
 |--------|------|---------|----------|--------|----------|------|
 | Access Token | `accessToken` | 900s (15m) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` (lax/none) | `/` |
 | Refresh Token | `refreshToken` | 2592000s (30d) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
+| CSRF Token | `XSRF-TOKEN` | 2592000s (30d) | No | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
 
 **Production:** `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax` for the same-origin
 Vercel/Caddy proxy. Use `none` only when the browser calls the API directly

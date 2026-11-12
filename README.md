@@ -4,6 +4,52 @@ A complete log management appliance with multi-source ingestion, normalization,
 search, dashboard, alerting, and 7-day retention. Built for the
 Full-Stack Developer (Intern) practical assignment.
 
+## Live Demo
+
+| Service | URL |
+|---|---|
+| Frontend | https://logs-manager.vercel.app |
+| Backend API | https://nayyelin-logs-api.onrender.com |
+| Readiness check | https://nayyelin-logs-api.onrender.com/ready |
+| Version | https://nayyelin-logs-api.onrender.com/version |
+| Liveness / health | https://nayyelin-logs-api.onrender.com/healthz |
+
+**Demo accounts (demo-only credentials):**
+
+| Email | Password | Role | Tenant |
+|---|---|---|---|
+| `admin@demo.local` | `Pass@123` | ADMIN | all tenants |
+| `viewerA@demo.local` | `Pass@123` | VIEWER | demoa |
+| `viewerB@demo.local` | `Pass@123` | VIEWER | demob |
+
+These credentials exist only for the hosted demo — never reuse them for a real
+deployment. `backend/scripts/seed_demo_data.py` has no hard-coded password: it
+uses `SEED_ADMIN_PASSWORD`, `SEED_VIEWER_A_PASSWORD`, and
+`SEED_VIEWER_B_PASSWORD` when they are set, otherwise it generates random
+passwords and prints them once. The hosted demo was seeded with `Pass@123`.
+
+**Before you open the demo:**
+
+- Render's free tier sleeps after ~15 minutes idle, so the first request can
+  take 30–60 seconds. Warm the API first:
+  `curl https://nayyelin-logs-api.onrender.com/ready`
+- Demo events are subject to `RETENTION_DAYS=7` (the default). Events seeded on
+  2026-11-11 are purged around 2026-11-18. Re-run `make seed` on a self-hosted
+  stack (or re-seed the Render database — see `docs/setup_saas.md`) to refresh,
+  or use `make demo` to run the brute-force simulator.
+- Sample events with old timestamps (for example `2025-08-20`) are stored but
+  will not appear under the default 24h/7d dashboard range. Select the **30d**
+  range, widen the Logs date filter, or send events with current timestamps.
+
+**Appliance vs SaaS:**
+
+| Capability | Appliance (self-hosted Docker) | SaaS (Render + Vercel) |
+|---|---|---|
+| Native syslog UDP/TCP 514 | Yes (`ingest` service) | No — Render exposes HTTPS only |
+| HTTP syslog | `POST /api/ingest/syslog` | `POST /api/ingest/syslog` |
+| File upload | `POST /api/ingest/file` | `POST /api/ingest/file` |
+| Setup guide | `docs/setup_appliance.md` | `docs/setup_saas.md` |
+
 ## Assignment compliance
 
 | Requirement | Status |
@@ -72,13 +118,10 @@ in `.env`. For public HTTPS, also set `DOMAIN` to a DNS name that points at the
 host and open ports 80/443. Caddy handles certificate issuance; a LAN-only host
 will use Caddy's internal certificate and show a browser warning.
 
-Demo logins (after `make seed`):
-
-| Email | Password | Role |
-|---|---|---|
-| admin@demo.local | (seed prints on startup) | ADMIN | all tenants |
-| viewerA@demo.local | (see seed output) | VIEWER | demoA |
-| viewerB@demo.local | (see seed output) | VIEWER | demoB |
+Demo accounts are listed in [Live Demo](#live-demo). For a self-hosted stack,
+`make seed` uses `SEED_ADMIN_PASSWORD`, `SEED_VIEWER_A_PASSWORD`, and
+`SEED_VIEWER_B_PASSWORD` when set, otherwise it prints the generated passwords
+once on startup.
 
 ## Quick start (zero-cost SaaS)
 

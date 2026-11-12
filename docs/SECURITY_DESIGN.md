@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Date:** 2026-11-03  
-**Status:** Design Phase
+**Status:** Implemented
 
 ---
 
@@ -12,41 +12,48 @@
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| **Algorithm** | HS256 | `python-jose` default |
+| **Algorithm** | HS256 | `JWT_ALGORITHM`; encoded/decoded with PyJWT |
 | **Access Token Secret** | `ACCESS_TOKEN_SECRET` env | 32+ char random |
 | **Refresh Token Secret** | `REFRESH_TOKEN_SECRET` env | 32+ char random |
 | **Access Token TTL** | 15 minutes | `ACCESS_TOKEN_EXPIRE_MINUTES` |
 | **Refresh Token TTL** | 30 days | `REFRESH_TOKEN_EXPIRE_DAYS` |
-| **Token Payload** | `{ userId, username, email, tenant, role }` | Exact match |
+| **Token Payload** | `{ userId, username, email, tenant, role, exp }` | `TokenPayload.to_dict()` |
 
 ### 1.2 JWT Payload Structure
 
+`TokenPayload` is a plain Python class (not a Pydantic model). It keeps
+snake_case attributes internally and maps them to the camelCase `userId` claim
+in the JWT.
+
 ```python
 # app/core/security.py
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
+class TokenPayload:
+    def __init__(self, user_id: int, username: Optional[str], email: str,
+                 tenant: str, role: str):
+        self.user_id = user_id
+        self.username = username
+        self.email = email
+        self.tenant = tenant
+        self.role = role
 
-class TokenPayload(BaseModel):
-    userId: int
-    username: Optional[str] = None
-    email: str
-    tenant: str
-    role: str  # "VIEWER" or "ADMIN"
-    exp: int
-    iat: int
-    type: str  # "access" or "refresh"
-```
+    def to_dict(self) -> dict:
+        return {
+            "userId": self.user_id,
+            "username": self.username,
+            "email": self.email,
+            "tenant": self.tenant,
+            "role": self.role,
+        }
 
-**Legacy Payload (for reference):**
-```typescript
-interface TokenPayload extends JwtPayload {
-  userId: number;
-  username: string;
-  email: string;
-  tenant: string;
-  role: string;
-}
+    @classmethod
+    def from_dict(cls, data: dict) -> "TokenPayload":
+        return cls(
+            user_id=data.get("userId") or data.get("user_id"),
+            username=data.get("username"),
+            email=data.get("email"),
+            tenant=data.get("tenant"),
+            role=data.get("role"),
+        )
 ```
 
 ### 1.3 Token Creation
@@ -60,24 +67,19 @@ from app.core.config import settings
 def create_access_token(payload: TokenPayload) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token_payload = payload.model_dump()
-    token_payload.update({
-        "exp": int(expire.timestamp()),
-        "iat": int(now.timestamp()),
-        "type": "access",
-    })
+    token_payload = payload.to_dict()
+    token_payload.update({"exp": int(expire.timestamp())})
     return jwt.encode(token_payload, settings.ACCESS_TOKEN_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 def create_refresh_token(payload: TokenPayload) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    token_payload = payload.model_dump()
-    token_payload.update({
-        "exp": int(expire.timestamp()),
-        "iat": int(now.timestamp()),
-        "type": "refresh",
-    })
+    token_payload = payload.to_dict()
+    token_payload.update({"exp": int(expire.timestamp())})
     return jwt.encode(token_payload, settings.REFRESH_TOKEN_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+def decode_token(token: str, secret: str) -> dict:
+    return jwt.decode(token, secret, algorithms=[settings.JWT_ALGORITHM])
 ```
 
 ### 1.4 Cookie Settings (Exact Match)
@@ -171,67 +173,85 @@ Return { message, userData (UserPublic) }
 **FastAPI Implementation (`app/core/dependencies.py`):**
 
 ```python
-from fastapi import Depends, Request, Response, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import decode_token, create_access_token, create_refresh_token
-from app.core.config import settings
-from app.models.user import User
-from app.core.database import get_session
+from jwt import ExpiredSignatureError, PyJWTError
+from app.core.security import (
+    TokenPayload,
+    decode_token,
+    create_access_token,
+    create_refresh_token,
+)
 
 async def get_current_user(
     request: Request,
     response: Response,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
 ) -> TokenPayload:
-    """
-    Validates access token. If expired, attempts refresh using refresh token cookie.
-    Returns TokenPayload with user info.
-    """
     access_token = request.cookies.get("accessToken")
     refresh_token = request.cookies.get("refreshToken")
-    
+
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthenticated user. Try Again!!!",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Try access token first
+
+    # Try the access token first.
     if access_token:
         try:
             payload = decode_token(access_token, settings.ACCESS_TOKEN_SECRET)
-            return TokenPayload(**payload)
-        except jwt.ExpiredSignatureError:
-            pass  # Fall through to refresh
-        except jwt.JWTError:
-            pass  # Fall through to refresh
-    
-    # Access token missing or invalid → try refresh token
+            user = await session.scalar(
+                select(User).where(User.id == payload["userId"])
+            )
+            if not user or user.status != "ACTIVE":
+                raise HTTPException(status_code=401, detail="Account not active")
+
+            # Rebuild authorization from the current DB row. Never trust stale
+            # role/tenant claims from the token.
+            return TokenPayload(
+                user_id=user.id,
+                username=user.username,
+                email=user.email,
+                tenant=user.tenant,
+                role=user.role.value if hasattr(user.role, "value") else user.role,
+            )
+        except ExpiredSignatureError:
+            pass  # Fall through to refresh.
+        except PyJWTError:
+            pass  # Fall through to refresh.
+
+    # Access token missing or invalid → try the refresh token.
     try:
         payload = decode_token(refresh_token, settings.REFRESH_TOKEN_SECRET)
-        # Verify user still exists and is active
-        user = await session.get(User, payload["userId"])
+        user = await session.scalar(select(User).where(User.id == payload["userId"]))
         if not user or user.status != "ACTIVE":
             raise HTTPException(status_code=401, detail="Account not active")
-        
-        # Issue new tokens
+
         new_payload = TokenPayload(
-            userId=user.id,
+            user_id=user.id,
             username=user.username,
             email=user.email,
             tenant=user.tenant,
-            role=user.role
+            role=user.role.value if hasattr(user.role, "value") else user.role,
         )
-        new_access = create_access_token(new_payload)
-        new_refresh = create_refresh_token(new_payload)
-        
-        set_auth_cookies(response, new_access, new_refresh)
+        opts = settings.cookie_options()
+        response.set_cookie(
+            "accessToken",
+            create_access_token(new_payload),
+            max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            **opts,
+        )
+        response.set_cookie(
+            "refreshToken",
+            create_refresh_token(new_payload),
+            max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+            **opts,
+        )
+        # Keep the non-HttpOnly double-submit CSRF cookie alive as well.
         return new_payload
-        
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token refresh failed")
-    except jwt.JWTError:
+    except PyJWTError:
         raise HTTPException(status_code=401, detail="Token refresh failed")
 ```
 
@@ -331,31 +351,30 @@ ADMIN by design.
 ### 5.2 Tenant Resolution Logic
 
 ```python
-# app/core/dependencies.py
-from fastapi import Depends
-from app.models.user import User
+# app/core/tenancy.py
+def resolve_read_tenant(user, requested: Optional[str] = None) -> Optional[str]:
+    """Return the tenant filter for read endpoints.
 
-async def get_user_tenant(current_user: TokenPayload = Depends(get_current_user)) -> str:
+    None means "all tenants" and is reserved for platform admins (ADMIN with
+    no tenant). Any other account is forced to its own tenant; an account
+    without a tenant gets 403 instead of an unscoped query.
     """
-    Returns the tenant for the current user.
-    Always returns the authenticated user's tenant.
-    """
-    return current_user.tenant
+    if is_platform_admin(user):
+        requested_key = tenant_key(requested)
+        if requested_key in ("", "all"):
+            return None
+        return normalize_tenant(requested)
 
-async def get_effective_tenant(
-    current_user: TokenPayload = Depends(get_current_user),
-    requested_tenant: str | None = None
-) -> str:
-    """
-    Resolves effective tenant for query filtering.
-    - VIEWER: always user.tenant (ignores requested_tenant)
-    - ADMIN: requested tenant if provided; empty/`all` means all tenants
-    - Cross-tenant reads are allowed for ADMIN via `tenant` query param; writes remain scoped to the admin's tenant where the route enforces ownership
-    platform-level role (e.g., SUPER_ADMIN) with explicit authorization.
-    """
-    # Both VIEWER and ADMIN are scoped to their own tenant
-    return current_user.tenant
+    tenant = getattr(user, "tenant", None)
+    if not tenant_key(tenant):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is not assigned to a tenant",
+        )
+    return tenant
 ```
+
+`effective_tenant(user, requested)` remains as a backwards-compatible alias.
 
 ### 5.3 Usage in Services
 
@@ -367,13 +386,15 @@ async def get_logs(
     filters: LogFilters,
     requested_tenant: str | None = None
 ):
-    tenant = get_effective_tenant(user, requested_tenant)
-    
+    tenant = resolve_read_tenant(user, requested_tenant)
+
     query = select(SecurityEvent)
-    
-    # tenant is ALWAYS set (either user's tenant)
-    query = query.where(SecurityEvent.tenant == tenant)
-    
+
+    # None means "all tenants" (platform ADMIN only); every other account is
+    # always constrained to its own tenant.
+    if tenant is not None:
+        query = query.where(SecurityEvent.tenant == tenant)
+
     # Apply other filters...
     return await paginate(session, query, filters)
 ```
