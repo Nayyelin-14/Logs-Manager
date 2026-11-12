@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, asc, or_
+from sqlalchemy import select, func, desc, asc, or_, and_
 from sqlalchemy.orm import selectinload
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, timezone
@@ -800,7 +800,18 @@ async def list_alerts(
 
     query = query.order_by(desc(Alert.triggered_at), desc(Alert.id)).limit(limit + 1)
     if cursor:
-        query = query.where(Alert.id > cursor)
+        cursor_alert = await session.get(Alert, cursor)
+        if cursor_alert is None:
+            return {"alerts": [], "hasNextPage": False, "newCursor": None}
+        query = query.where(
+            or_(
+                Alert.triggered_at < cursor_alert.triggered_at,
+                and_(
+                    Alert.triggered_at == cursor_alert.triggered_at,
+                    Alert.id < cursor,
+                ),
+            )
+        )
 
     result = await session.execute(query)
     alerts = result.scalars().all()
@@ -1085,14 +1096,18 @@ def _normalize_rule_conditions(conditions: Any) -> tuple[dict, str, Optional[int
     if cond_type not in VALID_CONDITION_TYPES:
         raise HTTPException(status_code=422, detail=f"Unknown condition type: {cond_type}")
 
-    # Reject blank/null/whitespace condition values (H-2)
+    # Reject blank/null/whitespace condition values for condition types that
+    # use one. ``repeated_failures``/``threshold_count`` derive their filter
+    # from action/outcome and legitimately omit ``value``.
     raw_value = raw.get("value")
     if isinstance(raw_value, bool):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Condition value must not be a boolean.",
         )
-    if raw_value is None or str(raw_value).strip() == "":
+    if cond_type in ("event_type", "severity_min", "field_value") and (
+        raw_value is None or str(raw_value).strip() == ""
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Condition value must not be empty or whitespace",
@@ -1262,9 +1277,20 @@ async def list_alert_rules(
             (AlertRule.description.ilike(f"%{search}%"))
         )
 
-    query = query.order_by(desc(AlertRule.created_at)).limit(limit + 1)
+    query = query.order_by(desc(AlertRule.created_at), desc(AlertRule.id)).limit(limit + 1)
     if cursor:
-        query = query.where(AlertRule.id > cursor)
+        cursor_rule = await session.get(AlertRule, cursor)
+        if cursor_rule is None:
+            return {"rules": [], "hasNextPage": False, "newCursor": None}
+        query = query.where(
+            or_(
+                AlertRule.created_at < cursor_rule.created_at,
+                and_(
+                    AlertRule.created_at == cursor_rule.created_at,
+                    AlertRule.id < cursor,
+                ),
+            )
+        )
 
     result = await session.execute(query)
     rules = result.scalars().all()
@@ -1686,7 +1712,7 @@ async def list_users(
     status_filter: Optional[str] = Query(None, alias="status"),
     date: Optional[str] = None,
     limit: int = 25,
-    cursor: Optional[str] = None,
+    cursor: Optional[int] = None,
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
@@ -1732,7 +1758,8 @@ async def list_users(
 
     query = query.order_by(desc(User.id)).limit(limit + 1)
     if cursor:
-        query = query.where(User.id > cursor)
+        # Rows are ordered newest-first, so the next page contains smaller ids.
+        query = query.where(User.id < cursor)
 
     result = await session.execute(query)
     users = result.scalars().all()
@@ -1762,25 +1789,68 @@ async def list_users(
         "newCursor": next_cursor,
     }
 
+async def _read_user_request_payload(request: Request) -> Dict[str, Any]:
+    """Read a user payload from JSON (documented) or form data (legacy clients)."""
+
+    content_type = (
+        (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    )
+    if content_type == "application/json":
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=400, detail="Request body must be a JSON object."
+            )
+        return payload
+
+    try:
+        form = await request.form()
+    except Exception as exc:  # pragma: no cover - malformed multipart bodies
+        raise HTTPException(status_code=400, detail="Invalid form body.") from exc
+    return {key: value for key, value in form.items()}
+
+
 @router.post("/create-user", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
-    username: str = Form(...),
-    email: str = Form(...),
-    tenant: str = Form(...),
-    role: str = Form("VIEWER"),
-    status: str = Form("ACTIVE"),
-    password: str = Form(...),
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    target_tenant = normalize_tenant(tenant)
+    payload = await _read_user_request_payload(request)
+
+    username = str(payload.get("username") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    raw_tenant = payload.get("tenant")
+    raw_password = payload.get("password")
+
+    required = {
+        "username": username,
+        "email": email,
+        "tenant": raw_tenant,
+        "password": raw_password,
+    }
+    missing = [
+        name
+        for name, value in required.items()
+        if value is None or str(value).strip() == ""
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing required fields: {', '.join(missing)}",
+        )
+
+    target_tenant = normalize_tenant(str(raw_tenant))
     if not is_platform_admin(current_user) and target_tenant != tenant_key(current_user.tenant):
         raise HTTPException(status_code=403, detail="Cannot create user for different tenant")
 
     await _require_active_tenant(session, target_tenant)
 
-    role_value = _validated_role(role)
-    status_value = _validated_status(status)
+    role_value = _validated_role(payload.get("role") or "VIEWER")
+    status_value = _validated_status(payload.get("status") or "ACTIVE")
 
     from app.core.security import hash_password
 
@@ -1788,7 +1858,7 @@ async def create_user(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    hashed = hash_password(password)
+    hashed = hash_password(str(raw_password))
     user = User(
         username=username,
         email=email,
@@ -1815,16 +1885,27 @@ async def create_user(
 
 @router.put("/update-user", response_model=UserResponse)
 async def update_user(
-    id: int = Form(...),
-    username: Optional[str] = Form(None),
-    email: Optional[str] = Form(None),
-    tenant: Optional[str] = Form(None),
-    role: Optional[str] = Form(None),
-    status: Optional[str] = Form(None),
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: TokenPayload = Depends(require_admin),
 ):
-    result = await session.execute(select(User).where(User.id == id))
+    payload = await _read_user_request_payload(request)
+
+    raw_id = payload.get("id")
+    if raw_id is None or str(raw_id).strip() == "":
+        raise HTTPException(status_code=422, detail="id is required")
+    try:
+        user_id = int(str(raw_id))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="id must be an integer")
+
+    username = payload.get("username")
+    email = payload.get("email")
+    tenant = payload.get("tenant")
+    role = payload.get("role")
+    status = payload.get("status")
+
+    result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not owns_tenant(current_user, user.tenant):
         raise HTTPException(status_code=404, detail="User not found")
@@ -1834,7 +1915,7 @@ async def update_user(
     target_tenant: Optional[str] = None
 
     if tenant is not None:
-        requested_tenant = tenant_key(tenant)
+        requested_tenant = tenant_key(str(tenant))
         if is_self and requested_tenant != current_tenant:
             raise HTTPException(status_code=403, detail="Cannot change your own tenant")
         if not is_platform_admin(current_user) and requested_tenant != current_tenant:
@@ -1843,14 +1924,14 @@ async def update_user(
                 detail="Tenant-bound administrators cannot change a user's tenant",
             )
         if requested_tenant != current_tenant:
-            target_tenant = normalize_tenant(tenant)
+            target_tenant = normalize_tenant(str(tenant))
             await _require_active_tenant(session, target_tenant)
         elif current_tenant:
             # Keep the canonical value when the caller re-sends the same tenant.
-            target_tenant = normalize_tenant(tenant)
+            target_tenant = normalize_tenant(str(tenant))
 
-    role_value = _validated_role(role) if role is not None else None
-    status_value = _validated_status(status) if status is not None else None
+    role_value = _validated_role(str(role)) if role is not None else None
+    status_value = _validated_status(str(status)) if status is not None else None
 
     if is_self:
         if role_value is not None and role_value != "ADMIN":
@@ -1868,9 +1949,9 @@ async def update_user(
             raise HTTPException(status_code=403, detail="Cannot deactivate the last active admin")
 
     if username is not None:
-        user.username = username
+        user.username = str(username).strip()
     if email is not None:
-        user.email = email
+        user.email = str(email).strip()
     if target_tenant is not None:
         user.tenant = target_tenant
     if role_value is not None:

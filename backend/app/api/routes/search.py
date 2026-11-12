@@ -182,6 +182,11 @@ class PaginatedLogsResponse(BaseModel):
 @router.get("/events", response_model=dict)
 async def search_logs(
     filters: LogFilters = Depends(),
+    from_: Optional[str] = Query(
+        None,
+        alias="from",
+        description="Inclusive start of the time window (ISO-8601).",
+    ),
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
@@ -234,7 +239,11 @@ async def search_logs(
         conditions.append(Event.ts < day + timedelta(days=1))
 
     # Accept both the explicit start/end pair and the concise from/to aliases.
-    start = _parse_datetime(filters.start_time) or _parse_datetime(filters.from_time)
+    start = (
+        _parse_datetime(filters.start_time)
+        or _parse_datetime(from_)
+        or _parse_datetime(filters.from_time)
+    )
     end = _parse_datetime(filters.end_time) or _parse_datetime(filters.to_time, end_of_day=True)
     if start is not None:
         conditions.append(Event.ts >= start)

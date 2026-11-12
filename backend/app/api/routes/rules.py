@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
-from sqlalchemy import select, func, desc
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select, func, desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -58,7 +58,7 @@ def _rule_payload(rule: AlertRule) -> dict:
     }
 
 
-@router.get("/get-rules", response_model=dict)
+@router.get("/get-rules", response_model=dict, include_in_schema=False)
 async def list_alert_rules(
     tenant: Optional[str] = None,
     search: Optional[str] = None,
@@ -83,9 +83,25 @@ async def list_alert_rules(
             (AlertRule.description.ilike(f"%{search}%"))
         )
 
-    query = query.order_by(desc(AlertRule.created_at)).limit(limit + 1)
+    query = query.order_by(desc(AlertRule.created_at), desc(AlertRule.id)).limit(limit + 1)
     if cursor:
-        query = query.where(AlertRule.id > cursor)
+        cursor_rule = await session.get(AlertRule, cursor)
+        if cursor_rule is None:
+            return {
+                "rules": [],
+                "hasNextPage": False,
+                "newCursor": None,
+                "nextCursor": None,
+            }
+        query = query.where(
+            or_(
+                AlertRule.created_at < cursor_rule.created_at,
+                and_(
+                    AlertRule.created_at == cursor_rule.created_at,
+                    AlertRule.id < cursor,
+                ),
+            )
+        )
 
     result = await session.execute(query)
     rules = result.scalars().all()
@@ -99,6 +115,7 @@ async def list_alert_rules(
     return {
         "rules": [_rule_payload(r) for r in rules],
         "hasNextPage": has_next,
+        "newCursor": next_cursor,
         "nextCursor": next_cursor,
     }
 
@@ -291,7 +308,7 @@ async def create_alert_rule(
     return {"message": "Alert rule created", "createdRule": _rule_payload(new_rule)}
 
 
-@router.put("/update-rule/{rule_id}", response_model=dict)
+@router.put("/update-rule/{rule_id}", response_model=dict, include_in_schema=False)
 async def update_alert_rule(
     rule_id: str,
     rule: AlertRuleUpdate,
@@ -431,10 +448,10 @@ async def update_alert_rule(
     return {"message": "Alert rule updated", "rule": _rule_payload(existing)}
 
 
-@router.patch("/rules/{rule_id}/enabled", response_model=dict)
+@router.patch("/rules/{rule_id}/enabled", response_model=dict, include_in_schema=False)
 async def toggle_rule_enabled(
     rule_id: str,
-    enabled: bool = Form(...),
+    enabled: bool = Query(..., description="Desired enabled state"),
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(require_admin),
 ):
@@ -454,7 +471,7 @@ async def toggle_rule_enabled(
     }}
 
 
-@router.delete("/delete-rule/{rule_id}", response_model=dict)
+@router.delete("/delete-rule/{rule_id}", response_model=dict, include_in_schema=False)
 async def delete_alert_rule(
     rule_id: str,
     session: AsyncSession = Depends(get_session),

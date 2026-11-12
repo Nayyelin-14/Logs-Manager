@@ -25,7 +25,7 @@ class UserResponse(BaseModel):
     updatedAt: Optional[datetime] = None
 
 
-@router.get("/get-users", response_model=dict)
+@router.get("/get-users", response_model=dict, include_in_schema=False)
 async def list_users(
     search: Optional[str] = None,
     limit: int = 25,
@@ -45,7 +45,8 @@ async def list_users(
 
     query = query.order_by(desc(User.id)).limit(limit + 1)
     if cursor:
-        query = query.where(User.id > cursor)
+        # Rows are ordered newest-first, so the next page contains smaller ids.
+        query = query.where(User.id < cursor)
 
     result = await session.execute(query)
     users = result.scalars().all()
@@ -131,7 +132,7 @@ async def get_users_infinite(
     }
 
 
-@router.post("/create-user", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/create-user", response_model=UserResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_user(
     username: str = Form(...),
     email: str = Form(...),
@@ -176,7 +177,7 @@ async def create_user(
     )
 
 
-@router.put("/update-user", response_model=UserResponse)
+@router.put("/update-user", response_model=UserResponse, include_in_schema=False)
 async def update_user(
     id: int = Form(...),
     username: Optional[str] = Form(None),
@@ -220,7 +221,7 @@ async def update_user(
     )
 
 
-@router.delete("/delete-user/{user_id}", response_model=dict)
+@router.delete("/delete-user/{user_id}", response_model=dict, include_in_schema=False)
 async def delete_user(
     user_id: str,
     session: AsyncSession = Depends(get_session),
@@ -253,7 +254,7 @@ async def delete_user(
     return {"success": True, "message": "User deleted successfully", "user": user_data}
 
 
-@router.get("/get-all-data", response_model=dict)
+@router.get("/get-all-data", response_model=dict, include_in_schema=False)
 async def get_all_data(
     tenant: Optional[str] = None,
     session: AsyncSession = Depends(get_session),

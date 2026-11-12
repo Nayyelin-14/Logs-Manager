@@ -19,7 +19,7 @@ class AlertStatusUpdate(BaseModel):
     status: str
 
 
-@router.get("/get-alerts", response_model=dict)
+@router.get("/get-alerts", response_model=dict, include_in_schema=False)
 async def list_alerts(
     tenant: Optional[str] = None,
     status: Optional[str] = None,
@@ -88,7 +88,7 @@ async def list_alerts(
     }
 
 
-@router.patch("/alerts/{alert_id}", response_model=dict)
+@router.patch("/alerts/{alert_id}", response_model=dict, include_in_schema=False)
 async def update_alert_status(
     alert_id: str,
     update: AlertStatusUpdate,
