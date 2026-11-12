@@ -245,7 +245,10 @@ async def ingest_parsed(
 
     event = dict(parsed)
     event.update(remote)
-    source = event.get("source") or settings.SYSLOG_SOURCE
+    # Only a message-level ``source=`` field is honored as a declaration;
+    # otherwise the source is inferred from the message keys
+    # (see infer_source_from_event) rather than forced by SYSLOG_SOURCE.
+    source = event.get("source")
 
     attempts = max(1, int(getattr(settings, "SYSLOG_DB_RETRY_ATTEMPTS", 1)))
     backoff = max(0.0, float(getattr(settings, "SYSLOG_DB_RETRY_BACKOFF_SECS", 0.0)))

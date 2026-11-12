@@ -177,11 +177,11 @@ def test_network_normalizer_uses_network_source_and_ports():
 FIREWALL_LINE = (
     '<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny '
     'src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp '
-    'msg="DNS blocked" policy=Block-DNS'
+    'msg=DNS blocked policy=Block-DNS'
 )
 ROUTER_LINE = (
-    "<190>Aug 20 13:01:02 r1 source=network if=ge-0/0/1 event=link-down "
-    "mac=aa:bb:cc:dd:ee:ff reason=carrier-loss"
+    '<190>Aug 20 13:01:02 r1 if=ge-0/0/1 event=link-down '
+    'mac=aa:bb:cc:dd:ee:ff reason=carrier-loss'
 )
 
 ASSIGNMENT_SAMPLES = {

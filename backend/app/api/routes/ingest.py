@@ -717,7 +717,7 @@ async def ingest_syslog_http(
     try:
         results = await service.ingest_batch_atomic(
             events,
-            current_settings.SYSLOG_SOURCE,
+            None,
             context,
             pre_rejected=pre_rejected,
         )
