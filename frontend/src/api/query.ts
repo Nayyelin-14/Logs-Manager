@@ -77,14 +77,17 @@ export const UsersInfiniteQueryWithFilters = (
 
 export const fetchDashboardStats = async (
   tenant?: string,
-  range?: string
+  range?: string,
+  source?: string
 ): Promise<DashboardStats> => {
   const dashboardParams = new URLSearchParams();
   if (tenant) dashboardParams.append("tenant", tenant);
   if (range) dashboardParams.append("range", range);
+  if (source && source !== "all") dashboardParams.append("source", source);
 
   const summaryParams = new URLSearchParams();
   if (tenant) summaryParams.append("tenant", tenant);
+  if (source && source !== "all") summaryParams.append("source", source);
 
   // `/dashboard` carries the full aggregate contract; `/stats/summary` supplies
   // the workspace totals (failed logins, open alerts, active sources) that the
@@ -130,10 +133,17 @@ export const fetchDashboardStats = async (
 export const useDashboardStats = (
   tenant?: string,
   range?: string,
-  userId?: string
+  userId?: string,
+  source?: string
 ) => ({
-  queryKey: ["dashboardStats", tenant ?? "all", range ?? "7d", userId ?? null],
-  queryFn: () => fetchDashboardStats(tenant, range),
+  queryKey: [
+    "dashboardStats",
+    tenant ?? "all",
+    range ?? "7d",
+    userId ?? null,
+    source ?? "all",
+  ],
+  queryFn: () => fetchDashboardStats(tenant, range, source),
 });
 
 export const invalidateDashboardStats = async (

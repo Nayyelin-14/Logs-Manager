@@ -10,8 +10,24 @@ from app.core.dependencies import get_current_user
 from app.core.security import TokenPayload
 from app.core.tenancy import resolve_read_tenant
 from app.services import stats_service
+from app.api.routes.search import VALID_SOURCES
 
 router = APIRouter()
+
+
+def _validate_source(source: Optional[str]) -> Optional[str]:
+    if source is None or not str(source).strip():
+        return None
+    value = str(source).strip().lower()
+    if value not in VALID_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unsupported source '{source}'. "
+                f"Valid sources: {', '.join(sorted(VALID_SOURCES))}."
+            ),
+        )
+    return value
 class TopItem(BaseModel):
     value: Optional[str]
     count: int
@@ -72,6 +88,7 @@ async def stats_top(
     session=Depends(get_session),
 ):
     effective_tenant = _tenant_scope(current_user, tenant)
+    source = _validate_source(source)
     start, end = _parse_range(from_, to)
     items = await stats_service.query_stats_top(
         session, field, n, start, end, effective_tenant, source
@@ -88,6 +105,7 @@ async def stats_timeline(
     session=Depends(get_session),
 ):
     effective_tenant = _tenant_scope(current_user, tenant)
+    source = _validate_source(source)
     start, end = _parse_range(from_, to)
     range_minutes = (end - start).total_seconds() / 60
     if interval not in ("1m", "5m", "1h", "1d"):
@@ -102,13 +120,15 @@ async def stats_timeline(
 @router.get("/stats/summary", response_model=SummaryResponse)
 async def stats_summary(
     tenant: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     current_user: TokenPayload = Depends(get_current_user),
     session=Depends(get_session),
 ):
     effective_tenant = _tenant_scope(current_user, tenant)
+    source = _validate_source(source)
     start, end = _parse_range(None, None)
     data = await stats_service.query_stats_summary(
-        session, start, end, effective_tenant
+        session, start, end, effective_tenant, source
     )
     return SummaryResponse(**data)
 @router.get("/sources/health", response_model=list[SourceHealth])
