@@ -526,7 +526,7 @@ function EventRow({ event, expanded, onToggle, deleting, onDelete }: { event: Lo
           <div className="mt-0.5 truncate font-mono text-xs text-ink-muted/50">{event.user && event.srcIp ? event.srcIp : event.tenant || "No actor detail"}</div>
         </td>
         <td className="px-3 py-3">
-          <span className={cn("inline-flex rounded border px-1.5 py-0.5 font-mono text-xs font-semibold", getActionTone(event.action))}>{event.action || "LOG"}</span>
+          <span className={cn("inline-flex rounded border px-1.5 py-0.5 font-mono text-xs font-semibold", getActionTone(event.action))}>{event.action || "—"}</span>
         </td>
         <td className="px-3 py-3 text-right">
           <span className="inline-flex size-6 items-center justify-center rounded-lg text-ink-muted transition-colors group-hover:text-ink">

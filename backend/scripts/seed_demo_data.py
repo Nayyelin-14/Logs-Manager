@@ -295,86 +295,254 @@ async def seed_demo_data():
 
             # IngestionService stores the supplied raw payload under the
             # normalized event's ``raw`` key, so the seed marker is nested.
+            # Each scenario is seeded independently: re-running the seed stays
+            # idempotent, and scenarios added later still populate an existing
+            # demo database.
             existing_result = await session.execute(
                 text(
-                    "SELECT id FROM events "
-                    "WHERE raw->'raw'->>'_seed' = 'true' LIMIT 1"
+                    "SELECT DISTINCT raw->'raw'->>'scenario' FROM events "
+                    "WHERE raw->'raw'->>'_seed' = 'true'"
                 )
             )
-            already_seeded = existing_result.scalars().first() is not None
-            if already_seeded:
-                print("Seed events already exist, skipping ingestion")
-                print("\nSeed complete!")
-                return
-
-
+            seeded_scenarios = {
+                row[0] for row in existing_result.fetchall() if row[0]
+            }
 
             now = datetime.now(timezone.utc)
             ingest = IngestionService(session)
-            for i in range(6):
-                result = await ingest.ingest(
+
+            def iso(seconds_ago: int = 0) -> str:
+                return (
+                    now - timedelta(seconds=seconds_ago)
+                ).isoformat().replace("+00:00", "Z")
+
+            def seed_raw(scenario: str, **extra) -> dict:
+                return {"_seed": True, "scenario": scenario, **extra}
+
+            if "brute_force" not in seeded_scenarios:
+                for i in range(6):
+                    await ingest.ingest(
+                        {
+                            "tenant": "demoa",
+                            "source": "AD",
+                            "event_id": 4625,
+                            "event_type": "LogonFailed",
+                            "user": "demo\\eve",
+                            "host": "DC01",
+                            "src_ip": "203.0.113.77",
+                            "src_port": str(49152 + i),
+                            "action": "LOGIN",
+                            "status": "Failure",
+                            "severity": 7,
+                            "login_type": 3,
+                            "@timestamp": iso(60 * i),
+                            "raw": seed_raw("brute_force", index=i),
+                            "tags": ["demo", "seed"],
+                        },
+                        source="AD",
+                        context={"tenant": "demoa"},
+                    )
+                    print(f"Seeded failed login {i + 1}/6 src_ip=203.0.113.77")
+            else:
+                print("Brute-force seed events already exist, skipping")
+
+            if "firewall" not in seeded_scenarios:
+                await ingest.ingest(
                     {
                         "tenant": "demoa",
-                        "source": "AD",
-                        "event_id": 4625,
-                        "event_type": "LogonFailed",
-                        "user": "demo\\eve",
-                        "host": "DC01",
-                        "src_ip": "203.0.113.77",
-                        "src_port": str(49152 + i),
-                        "action": "LOGIN",
-                        "status": "Failure",
-                        "severity": 7,
-                        "login_type": 3,
-                        "@timestamp": (now - timedelta(seconds=60 * i)).isoformat().replace("+00:00", "Z"),
-                        "raw": {"_seed": True, "scenario": "brute_force", "index": i},
+                        "source": "firewall",
+                        "event_type": "firewall_deny",
+                        "action": "DENY",
+                        "src_ip": "10.0.0.5",
+                        "src_port": 54321,
+                        "dst_ip": "8.8.8.8",
+                        "dst_port": 53,
+                        "protocol": "UDP",
+                        "host": "fw01",
+                        "rule_name": "block-dns",
+                        "description": "DNS query blocked",
+                        "severity": 6,
+                        "vendor": "Fortinet",
+                        "product": "FortiGate",
+                        "@timestamp": iso(25),
+                        "raw": seed_raw("firewall", sample="syslog_firewall.log"),
                         "tags": ["demo", "seed"],
                     },
-                    source="AD",
+                    source="FIREWALL",
                     context={"tenant": "demoa"},
                 )
-                print(f"Seeded failed login {i + 1}/6 src_ip=203.0.113.77")
+                print("Seeded firewall event")
+            else:
+                print("Firewall seed event already exists, skipping")
 
-            await ingest.ingest(
-                {
-                    "tenant": "demoa",
-                    "source": "firewall",
-                    "event_type": "traffic_blocked",
-                    "action": "DENY",
-                    "src_ip": "10.0.1.10",
-                    "src_port": 5353,
-                    "dst_ip": "8.8.8.8",
-                    "dst_port": 53,
-                    "protocol": "udp",
-                    "host": "fw01",
-                    "rule_name": "Block-DNS",
-                    "severity": 4,
-                    "vendor": "demo",
-                    "product": "ngfw",
-                    "@timestamp": (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
-                    "raw": {"_seed": True, "scenario": "firewall"},
-                    "tags": ["demo", "seed"],
-                },
-                source="FIREWALL",
-                context={"tenant": "demoa"},
-            )
+            if "network" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demoa",
+                        "source": "network",
+                        "event_type": "traffic_allowed",
+                        "action": "ALLOW",
+                        "src_ip": "192.168.1.10",
+                        "src_port": 51515,
+                        "dst_ip": "1.1.1.1",
+                        "dst_port": 443,
+                        "protocol": "TCP",
+                        "host": "router01",
+                        "interface": "Gi0/1",
+                        "description": "outbound https",
+                        "severity": 3,
+                        "vendor": "Cisco",
+                        "product": "IOS",
+                        "@timestamp": iso(20),
+                        "raw": seed_raw("network", sample="syslog_network.log"),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="NETWORK",
+                    context={"tenant": "demoa"},
+                )
+                print("Seeded network event")
+            else:
+                print("Network seed event already exists, skipping")
 
-            await ingest.ingest(
-                {
-                    "tenant": "demob",
-                    "source": "aws",
-                    "event_type": "CreateUser",
-                    "user": "admin",
-                    "cloud": {"service": "iam", "account_id": "123456789012", "region": "ap-southeast-1"},
-                    "action": "CREATE",
-                    "severity": 6,
-                    "@timestamp": now.isoformat().replace("+00:00", "Z"),
-                    "raw": {"_seed": True, "scenario": "aws", "eventName": "CreateUser", "requestParameters": {"userName": "temp-user"}},
-                    "tags": ["demo", "seed"],
-                },
-                source="AWS",
-                context={"tenant": "demob"},
-            )
+            if "api" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demoa",
+                        "source": "api",
+                        "event_type": "app_login_failed",
+                        "event_subtype": "wrong_password",
+                        "user": "svc-api",
+                        "src_ip": "203.0.113.40",
+                        "action": "LOGIN",
+                        "outcome": "failure",
+                        "description": "API login failed",
+                        "severity": 5,
+                        "@timestamp": iso(15),
+                        "raw": seed_raw("api", request_id="demo-request-1"),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="API",
+                    context={"tenant": "demoa"},
+                )
+                print("Seeded API event")
+            else:
+                print("API seed event already exists, skipping")
+
+            if "crowdstrike" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demoa",
+                        "source": "crowdstrike",
+                        "event_type": "malware_detected",
+                        "user": "alice",
+                        "host": "WIN-ENG-01",
+                        "process": "invoice.exe",
+                        "src_ip": "10.0.0.42",
+                        "action": "alert",
+                        "description": "Malicious executable blocked by Falcon",
+                        "severity": 8,
+                        "vendor": "crowdstrike",
+                        "product": "falcon",
+                        "@timestamp": iso(10),
+                        "raw": seed_raw(
+                            "crowdstrike",
+                            DetectName="MalwareDetected",
+                            FileName="invoice.exe",
+                        ),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="CROWDSTRIKE",
+                    context={"tenant": "demoa"},
+                )
+                print("Seeded CrowdStrike event")
+            else:
+                print("CrowdStrike seed event already exists, skipping")
+
+            if "m365" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demoa",
+                        "source": "m365",
+                        "event_type": "UserLoggedIn",
+                        "user": "alice@example.com",
+                        "src_ip": "203.0.113.20",
+                        "action": "LOGIN",
+                        "outcome": "success",
+                        "status": "Success",
+                        "description": "UserLoggedIn",
+                        "severity": 2,
+                        "vendor": "microsoft",
+                        "product": "AzureActiveDirectory",
+                        "@timestamp": iso(8),
+                        "raw": seed_raw(
+                            "m365",
+                            Operation="UserLoggedIn",
+                            Workload="AzureActiveDirectory",
+                        ),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="M365",
+                    context={"tenant": "demoa"},
+                )
+                print("Seeded M365 event")
+            else:
+                print("M365 seed event already exists, skipping")
+
+            if "aws_createuser_demoa" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demoa",
+                        "source": "aws",
+                        "event_type": "CreateUser",
+                        "user": "alice",
+                        "src_ip": "203.0.113.10",
+                        "cloud": {
+                            "service": "iam.amazonaws.com",
+                            "account_id": "123456789012",
+                            "region": "us-east-1",
+                        },
+                        "action": "CREATE",
+                        "severity": 3,
+                        "@timestamp": iso(5),
+                        "raw": seed_raw(
+                            "aws_createuser_demoa",
+                            eventName="CreateUser",
+                            requestParameters={"userName": "bob"},
+                        ),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="AWS",
+                    context={"tenant": "demoa"},
+                )
+                print("Seeded AWS event (demoa)")
+            else:
+                print("AWS demoa seed event already exists, skipping")
+
+            if "aws_createuser_demob" not in seeded_scenarios:
+                await ingest.ingest(
+                    {
+                        "tenant": "demob",
+                        "source": "aws",
+                        "event_type": "CreateUser",
+                        "user": "admin",
+                        "cloud": {"service": "iam", "account_id": "123456789012", "region": "ap-southeast-1"},
+                        "action": "CREATE",
+                        "severity": 6,
+                        "@timestamp": iso(0),
+                        "raw": seed_raw(
+                            "aws_createuser_demob",
+                            eventName="CreateUser",
+                            requestParameters={"userName": "temp-user"},
+                        ),
+                        "tags": ["demo", "seed"],
+                    },
+                    source="AWS",
+                    context={"tenant": "demob"},
+                )
+                print("Seeded AWS event (demob)")
+            else:
+                print("AWS demob seed event already exists, skipping")
+
             print("\nSeed complete!")
 
         except Exception as e:

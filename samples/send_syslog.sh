@@ -16,7 +16,7 @@ case "${MODE}" in
     nc -u -w 1 "${HOST}" "${PORT}" < "${FILE}"
     ;;
   tcp)
-    nc "${HOST}" "${PORT}" < "${FILE}"
+    nc -w 2 "${HOST}" "${PORT}" < "${FILE}"
     ;;
   logger)
     while IFS= read -r line; do

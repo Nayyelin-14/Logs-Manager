@@ -533,74 +533,39 @@
           "name": "Create user - POST /api/create-user",
           "request": {
             "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "username",
-                  "type": "text",
-                  "value": "newviewer"
-                },
-                {
-                  "key": "email",
-                  "type": "text",
-                  "value": "newviewer@demo.local"
-                },
-                {
-                  "key": "tenant",
-                  "type": "text",
-                  "value": "{{tenant}}"
-                },
-                {
-                  "key": "role",
-                  "type": "text",
-                  "value": "VIEWER"
-                },
-                {
-                  "key": "status",
-                  "type": "text",
-                  "value": "ACTIVE"
-                },
-                {
-                  "key": "password",
-                  "type": "text",
-                  "value": "ChangeMe123!"
-                }
-              ]
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"newviewer\",\n  \"email\": \"newviewer@demo.local\",\n  \"tenant\": \"{{tenant}}\",\n  \"role\": \"VIEWER\",\n  \"status\": \"ACTIVE\",\n  \"password\": \"ChangeMe123!\"\n}"
             },
             "url": "{{baseUrl}}/api/create-user"
           },
           "response": [],
-          "description": "Multipart form data."
+          "description": "JSON body (form-encoded is also accepted)."
         },
         {
           "name": "Update user - PUT /api/update-user",
           "request": {
             "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "id",
-                  "type": "text",
-                  "value": "{{userId}}"
-                },
-                {
-                  "key": "role",
-                  "type": "text",
-                  "value": "VIEWER"
-                },
-                {
-                  "key": "status",
-                  "type": "text",
-                  "value": "ACTIVE"
-                }
-              ]
+              "mode": "raw",
+              "raw": "{\n  \"id\": {{userId}},\n  \"role\": \"VIEWER\",\n  \"status\": \"ACTIVE\"\n}"
             },
             "url": "{{baseUrl}}/api/update-user"
           },
           "response": [],
-          "description": "Multipart form data. Set userId first."
+          "description": "JSON body (form-encoded is also accepted). Set userId first."
         },
         {
           "name": "Delete user - DELETE /api/delete-user/{id}",

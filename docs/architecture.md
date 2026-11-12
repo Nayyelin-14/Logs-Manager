@@ -157,8 +157,12 @@ graph TB
    preserved in the `raw` JSONB column.
 3. **Normalize → Store**: Normalized events are inserted into PostgreSQL with deterministic
    SHA256 IDs for deduplication. JSONB `raw` + GIN indexes enable full-text search.
-4. **Store → Search/Stats**: The FastAPI API serves GET /api/events and GET /api/stats/*
-   with tenant-scoped, parameterized SQL queries.
+4. **Store → Search/Stats**: The FastAPI API serves GET /api/events with keyset
+   pagination on `(ts, id)` (opaque cursor; changing `sort_by` with an old cursor
+   returns 400) and GET /api/stats/* with tenant-scoped, parameterized SQL
+   queries. The dashboard filters events by time range, tenant and source; the
+   source condition is applied to every event aggregate so the top lists,
+   timeline and source distribution describe the same scope.
 5. **Store → Alert Worker**: Every 30 seconds, the worker evaluates all enabled alert rules
    via a single GROUP BY ... HAVING query per rule. Evidence collection uses the same
    tenant, filter, and `ts >= window_start` predicate as the aggregate (no `ts <= now`
@@ -166,7 +170,10 @@ graph TB
    Alerts are idempotent (dedupe key).
 6. **Alert → Notify**: Webhook POST with 3 retries + exponential backoff; optional SMTP.
    Results stored in `alerts.notifications`.
-7. **UI**: React dashboard displays Top IP/User/Event Type, timeline, filters, alerts, rules.
+7. **UI**: React dashboard displays Top IP/User/Event Type, timeline and source
+   distribution, with filters for time range, tenant (admins) and source; alerts and
+   rules are managed from the same shell. Source values match the backend exactly
+   (`firewall`, `network`, `api`, `crowdstrike`, `aws`, `m365`, `ad`).
 
 ## Tenant model
 
@@ -340,6 +347,10 @@ scale.
   Isolation is server-side, not physical.
 - **No GeoIP/reverse-DNS enrichment:** Source IPs are stored as-is without
   enrichment.
+- **Syslog events are not deduplicated:** JSON events dedupe on `(id, ts)`,
+  but identical native syslog lines (UDP/TCP 514) are stored as separate
+  events. Repeated identical syslog lines are real events, and threshold alert
+  rules depend on counting them, so syslog dedupe is intentionally omitted.
 - **No Helm/Terraform IaC:** Docker Compose is the deployment mechanism.
   Terraform/Helm are bonus items not implemented.
 - **Test database:** Tests require Docker PostgreSQL + Redis. They cannot run

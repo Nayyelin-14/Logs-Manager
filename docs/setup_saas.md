@@ -317,11 +317,19 @@ Health routes live at the backend root, not under `/api`. Verify the proxy with
 an authenticated API route instead:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/api/get-logs
+curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/api/events
 ```
 
 This must return `401`. If it returns `200` with HTML, the rewrite order or
 destination is wrong and Vercel is serving the SPA instead of proxying.
+
+After logging in, the dashboard also accepts `range`, `tenant` and `source`
+filters, for example:
+
+```bash
+curl -s "https://<project>.vercel.app/api/dashboard?range=7d&source=firewall" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
 
 ## 6. Seed or repair the database
 

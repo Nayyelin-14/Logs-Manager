@@ -148,11 +148,11 @@ make test  # Runs pytest against the test database (tests/conftest.py)
 # or: pytest tests/ -q
 ```
 
-The full suite passes (507 tests after consolidating the standalone tenancy tests), including:
-- Ingestion API (single/batch/file, tenant enforcement, limits)
-- Syslog + batch parsing and source resolution
-- Retention (7-day purge, dry-run, cron parsing, timezone policy)
-- Tenant isolation, alert threshold, auth, models, parsers
+The curated suite passes (69 test functions / 85 cases across 11 files), including:
+- Normalization for firewall, AWS, CrowdStrike, Microsoft 365, Active Directory, and network sources
+- Ingestion API (single/batch/file/HTTP syslog, tenant enforcement, limits)
+- Authentication, RBAC, tenant isolation, CSRF/CORS, API keys, and SSRF guards
+- Search filters, keyset pagination, dashboard/stats scoping, alerting, retention, and health
 
 Tests always run against a disposable `logs_manager_test` database (see
 `tests/conftest.py`); they never touch Neon or the appliance database.

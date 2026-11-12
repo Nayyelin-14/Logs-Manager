@@ -376,18 +376,31 @@ def infer_source_from_event(event: dict) -> Source:
         "ClientIP", "client_ip",
     ]):
         return Source.M365
-    if any(key in payload for key in [
+    # Firewall/NGW keys: a security-appliance log carries an action plus
+    # endpoints (src/dst) and a policy. These take precedence so a firewall
+    # line is never reclassified as network.
+    _FIREWALL_KEYS = {
         "action", "Action", "act", "disposition",
         "src", "srcIp", "src_ip", "sourceIp", "source_ip", "saddr",
         "dst", "dstIp", "dst_ip", "destinationIp", "destination_ip", "daddr",
         "spt", "srcPort", "src_port", "source_port",
         "dpt", "dstPort", "dst_port", "destination_port",
         "proto", "protocol", "network.protocol",
-        "msg", "message", "reason",
-        "policy", "if", "interface", "interfaceName", "interface_name",
+        "policy", "vendor", "product",
+    }
+    # Network/router keys: interface, MAC and reason/link events identify a
+    # router or switch rather than a firewall. Only consulted when no
+    # firewall key is present.
+    _ROUTER_KEYS = {
+        "if", "interface", "interfaceName", "interface_name",
         "mac", "macAddress", "mac_address",
-        "event", "reason",
-    ]):
+        "reason",
+    }
+    if any(key in payload for key in _FIREWALL_KEYS):
         return Source.FIREWALL
+    if any(key in payload for key in _ROUTER_KEYS) or str(
+        payload.get("event", "")
+    ).startswith("link-"):
+        return Source.NETWORK
 
     return Source.API

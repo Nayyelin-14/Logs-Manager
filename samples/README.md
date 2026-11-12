@@ -99,7 +99,7 @@ python3 samples/post_logs.py samples/batch_sample.jsonl
 CSV upload:
 
 ```bash
-curl -sS -X POST "$LMS_API_URL/ingest/batch" \
+curl -sS -X POST "$LMS_API_URL/ingest/file" \
   -H "X-API-Key: $INGEST_API_KEY" \
   -F "file=@samples/ad_4625.csv"
 ```
@@ -107,12 +107,12 @@ curl -sS -X POST "$LMS_API_URL/ingest/batch" \
 JSON file upload:
 
 ```bash
-curl -sS -X POST "$LMS_API_URL/ingest/batch" \
+curl -sS -X POST "$LMS_API_URL/ingest/file" \
   -H "X-API-Key: $INGEST_API_KEY" \
   -F "file=@samples/crowdstrike.json"
 ```
 
-`POST /api/ingest/batch` accepts:
+`POST /api/ingest/file` accepts:
 
 - a multipart file field named `file` (JSON array, JSONL/NDJSON, or CSV)
 - a raw JSON array

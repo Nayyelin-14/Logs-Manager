@@ -31,9 +31,9 @@ All endpoints preserve:
 | **Path** | `/api/auth/login` |
 | **Auth** | None |
 | **Request Body** | `{ email: string, password: string }` |
-| **Response (201)** | `{ message: string, userData: UserPublic }` |
-| **Cookies Set** | `accessToken` (15m), `refreshToken` (30d) HttpOnly |
-| **Errors** | 400 (missing), 401 (invalid), 403 (inactive), 500 |
+| **Response (200)** | `{ message: string, userData: UserPublic }` |
+| **Cookies Set** | `accessToken` (15m), `refreshToken` (30d) HttpOnly; `XSRF-TOKEN` (30d, readable by JS for double-submit CSRF) |
+| **Errors** | 401 (invalid credentials), 403 (inactive account or tenant), 422 (invalid body/email), 429 (lockout), 500 |
 
 **UserPublic** (no password):
 ```json
@@ -42,7 +42,7 @@ All endpoints preserve:
   "username": "admin",
   "email": "admin@demo.local",
   "role": "ADMIN",
-  "tenant": "demoA",
+  "tenant": "demoa",
   "status": "ACTIVE",
   "createAt": "2026-01-01T00:00:00.000Z",
   "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -179,9 +179,13 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | GET |
 | **Path** | `/api/get-logs` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`, `date`, `search`, `limit`, `cursor` |
-| **Pagination** | Cursor-based (`cursor` = last event ID) |
-| **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number }` |
+| **Query Params** | `tenant`, `source`, `action`, `severity`, `eventType`/`event_type`, `date`, `from`, `to`, `search`/`q`, `user`, `src_ip`, `dst_ip`, `limit`, `cursor`, `sort_by`, `sort_order` |
+| **Time Range** | Use `from` (inclusive) and `to` (inclusive; date-only values cover the whole day). `from_time`/`end_time` remain accepted aliases. |
+| **Pagination** | Opaque cursor. Default `ts` sort uses keyset paging on `(ts, id)`; other `sort_by` fields use offset paging. Reusing a cursor with a different sort returns 400. |
+| **Response (200)** | `{ logs: LogWithSeverityLevel[], newCursor: string|null, prevCursor: string|null, total: number, next_cursor: string|null, has_more: boolean }` |
+
+`total` is the real number of rows matching the filters (same WHERE clauses and
+server-side tenant scope), not the current page length.
 
 **LogWithSeverityLevel:**
 ```json
@@ -230,8 +234,8 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | GET |
 | **Path** | `/api/dashboard` |
 | **Auth** | JWT required |
-| **Query Params** | `tenant` (optional). VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
-| **Response (200)** | Same (tenant-scoped per rules above) |
+| **Query Params** | `tenant`, `range`, `source` (all optional). `range` is `1d`, `3d`, `7d` (default) or `30d`. `source` is one of `firewall`, `network`, `api`, `crowdstrike`, `aws`, `m365`, `ad`; an unknown value returns **422**. VIEWER is forced to `user.tenant`; ADMIN can request a tenant or use empty/`all` for all tenants |
+| **Response (200)** | Same (tenant-, range- and source-scoped per rules above) |
 
 **DashboardStats (Key Fields):**
 ```json
@@ -255,6 +259,19 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 ```
 
 **`/api/user-dashboard/:userId`:** not implemented; viewers use `GET /api/dashboard` scoped to their own tenant.
+
+### 5.2 GET `/api/stats/*` (JWT required)
+
+| Endpoint | Query Params | Response |
+|----------|--------------|----------|
+| `/api/stats/top` | `field` (`src_ip`, `user`, `event_type`, `source`, `host`), `n` (default 10), `tenant`, `source`, `from`, `to` | `{ field, items: [{ value, count }] }` |
+| `/api/stats/timeline` | `interval` (`minute`, `hour`, `day`), `tenant`, `source`, `from`, `to` | `{ interval, buckets: [{ start, count, by_source }] }` |
+| `/api/stats/summary` | `tenant`, `source` | `{ total_events, failed_logins, open_alerts, active_sources, tenants }` |
+
+`source` uses the same seven values as `GET /api/dashboard` and is validated
+against `VALID_SOURCES`; an unknown value returns **422**. VIEWER requests are
+always scoped to `user.tenant`, even when a different `tenant` query param is
+supplied.
 
 ---
 
@@ -336,6 +353,7 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Auth** | ADMIN required |
 | **Request Body** | `{ name, tenant, description?, conditions, enabled?, severity? }` |
 | **Conditions Validation** | Exactly 1 condition, type-specific required fields |
+| **Condition Values** | `value` is required for `event_type`, `severity_min`, and `field_value`; omit it for `repeated_failures`/`threshold_count` (the evaluator derives `action=login`, `outcome=failure`). |
 | **Response (201)** | `{ message, createdRule }` |
 
 ### 7.3 PUT `/api/update-rule/:id`
@@ -379,8 +397,9 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | GET |
 | **Path** | `/api/get-users` |
 | **Auth** | ADMIN required |
-| **Query Params** | Same (scoped to admin's tenant) |
-| **Response** | `{ usersList: User[], newCursor, prevCursor? }` |
+| **Query Params** | `tenant`, `search`, `role`, `status`, `date`, `limit`, `cursor` |
+| **Pagination** | `cursor` is the **numeric** id of the last user on the previous page; rows are newest-first. |
+| **Response** | `{ usersList: User[], users: User[], newCursor: number\|null }` |
 
 ### 8.2 GET `/api/users/:q` (Frontend infinite query)
 
@@ -398,7 +417,7 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | POST |
 | **Path** | `/api/create-user` |
 | **Auth** | ADMIN required |
-| **Request Body** | `{ username, email, tenant, role, status, password }` |
+| **Request Body** | JSON `{ username, email, tenant, role, status, password }` (form-encoded is also accepted for legacy clients) |
 | **Response** | Created user |
 
 ### 8.4 PUT `/api/update-user`
@@ -408,7 +427,7 @@ forwarder in `samples/forwarder/` to post their messages to this endpoint.
 | **Method** | PUT |
 | **Path** | `/api/update-user` |
 | **Auth** | ADMIN required |
-| **Request Body** | `{ id, username?, email?, tenant?, role?, status? }` |
+| **Request Body** | JSON `{ id, username?, email?, tenant?, role?, status? }` (form-encoded is also accepted for legacy clients) |
 | **Response** | Updated user |
 
 ### 8.5 DELETE `/api/delete-user/:userId`
@@ -509,6 +528,7 @@ All error responses follow this format:
 |--------|------|---------|----------|--------|----------|------|
 | Access Token | `accessToken` | 900s (15m) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` (lax/none) | `/` |
 | Refresh Token | `refreshToken` | 2592000s (30d) | Yes | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
+| CSRF Token | `XSRF-TOKEN` | 2592000s (30d) | No | `COOKIE_SECURE` | `COOKIE_SAME_SITE` | `/` |
 
 **Production:** `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=lax` for the same-origin
 Vercel/Caddy proxy. Use `none` only when the browser calls the API directly

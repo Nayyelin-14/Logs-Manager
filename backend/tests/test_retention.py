@@ -1,9 +1,4 @@
-"""Retention acceptance tests.
-
-The assignment requires at least seven days of retention. These checks assert
-the configured default and prove that the purge removes only expired rows while
-a dry run changes nothing.
-"""
+"""Retention guarantees: at least seven days, purge only expired rows."""
 
 from __future__ import annotations
 
@@ -37,7 +32,7 @@ def _event(event_type: str, ingested_age: timedelta) -> Event:
 
 
 @pytest.mark.asyncio
-async def test_retention_is_at_least_seven_days_and_purges_only_expired(test_database):
+async def test_purge_removes_only_expired_events_and_dry_run_is_safe(test_database):
     assert get_settings().RETENTION_DAYS >= 7
 
     async with async_session_maker() as session:

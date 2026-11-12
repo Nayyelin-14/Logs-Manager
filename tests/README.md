@@ -1,46 +1,106 @@
 # Tests
 
-The backend test suite is in `backend/tests/` and runs with **pytest** (507 tests after moving the standalone `tests_unit/test_tenancy_isolation.py` suite into `backend/tests/unit/`).
+The backend acceptance suite lives in `backend/tests/` and runs with **pytest**.
+It is intentionally curated: **69 test functions / 85 parametrized cases across
+11 files**, each pinning a product or security boundary rather than duplicating
+unit-level coverage.
 
 ## Quick start
 
 ```bash
-# From repo root
-make test          # runs pytest via backend/.venv
+# From repo root (starts nothing; expects the local db/redis from make up)
+make test
 # or
 cd backend
 ./.venv/bin/python -m pytest -q
 ```
 
-## Test structure
+The suite always uses the disposable `logs_manager_test` database and never
+Neon or the appliance database. `make test-deps` starts only PostgreSQL and
+Redis.
 
-| File | Scope |
-|------|-------|
-| `test_auth_compatibility.py` | JWT payload, bcrypt, cookie options match the legacy backend |
-| `test_models.py` | SQLAlchemy models, table names, columns, constraints |
-| `test_parsers.py` | Canonical event inference, source resolution |
-| `test_http_routes.py` | Cookie auth, login, `/api/get-logs`, `/api/get-alerts`, tenant isolation, admin cross-tenant views |
-| `test_ingest_api.py` | Single/batch/file ingestion, API-key auth, tenant enforcement, limits (400/401/403/413) |
-| `test_syslog_and_batch.py` | RFC3164/RFC5424 parsing, source aliases, RFC3164 timezone policy, RFC5424 offsets untouched |
-| `test_retention.py` | 7-day purge, dry-run, cron parsing, APScheduler integration |
-| `test_tenant_isolation.py` | VIEWER sees only own tenant; ADMIN cross-tenant queries; forced tenant scoping |
-| `tests/unit/test_tenancy_isolation.py` | Pure unit tests for `normalize_tenant`, `effective_tenant`, role/tenant consistency, and removed `/api/auth/register` route |
-| `test_alert_rule.py` | Alert rule CRUD, threshold evaluation, dedupe cooldown |
-| `test_functional.py` | End-to-end flow: login → ingest → alert → dashboard |
+## Suite layout
+
+| File | Functions (cases) | Scope |
+| --- | ---: | --- |
+| `test_normalization.py` | 11 (27) | The seven assignment samples through real ingest; parser and normalizer helpers; canonical event names; outcome inference; syslog parsing |
+| `test_ingest_api.py` | 13 | Single, batch, file (JSON/JSONL/CSV/syslog), and HTTP syslog ingestion; malformed payloads (400/401/403/413/422); API-key tenant binding; rate limits (429); native-listener parser; transient DB failure (503) |
+| `test_security_rbac.py` | 12 | Login/session/refresh, login lockout (429), absent self-registration, admin-only routes, viewer read/write boundaries, tenant isolation, API-key secrecy/rotation, CSRF/CORS, SSRF, tenant/user/rule lifecycle |
+| `test_search_filters.py` | 6 | Free text, source, event type, severity, time range (`from`/`to`), sort/limit, viewer scoping |
+| `test_alerting.py` | 7 | Threshold trigger + aggregation, below-threshold/per-IP isolation, five-minute window edge, notification delivery (webhook/email), tenant evidence, rule validation/lifecycle, idempotent upsert and cooldown |
+| `test_retention.py` | 1 | Seven-day default, purge only expired rows, dry run is read-only |
+| `test_dashboard.py` | 4 | Top widgets, viewer tenant scoping, platform-admin multi-tenant view, stats endpoints |
+| `test_health.py` | 3 | Liveness, readiness (DB + Redis), version, feature flags |
+| `test_search_pagination.py` | 5 | Opaque `(ts, id)` keyset cursors, timestamp ties, real totals, invalid cursor |
+| `test_dashboard_source_filter.py` | 3 | Dashboard and stats source filters, unknown source -> 422 |
+| `test_api_contract.py` | 4 | OpenAPI/effective-route and frontend request-shape guard |
+
+## Assignment requirement -> test mapping
+
+| Assignment requirement | Test file::function |
+| --- | --- |
+| >=4 working ingest sources (HTTP JSON, batch/file, HTTP syslog, simulator/API key) | `test_ingest_api.py::test_single_event_ingest_normalizes_and_scopes_to_api_key`; `test_ingest_api.py::test_batch_ingest_counts_per_record_and_keeps_good_rows`; `test_ingest_api.py::test_file_upload_parses_jsonl_and_csv`; `test_ingest_api.py::test_http_syslog_accepts_rfc3164_and_rfc5424` |
+| 7 source types normalized (firewall, network, api, crowdstrike, aws, m365, ad) | `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[firewall]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[router]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[api]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[crowdstrike]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[aws]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[m365]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[ad]` (each case sends the assignment sample through HTTP ingest and reads the stored row back through search) |
+| Common schema: `@timestamp`, tenant, source, severity 0-10, action, raw, `_tags` | `test_normalization.py::test_normalized_event_validators_and_deterministic_id`; `test_normalization.py::test_tenant_is_never_trusted_from_the_payload` |
+| Postgres JSONB storage + dashboard Top IP/User/Event Type + timeline | `test_dashboard.py::test_dashboard_returns_top_widgets_and_timeline`; `test_dashboard.py::test_stats_endpoints_are_scoped_and_shaped` |
+| >=1 alert rule with UI + webhook notification | `test_alerting.py::test_threshold_rule_triggers_one_alert_and_aggregates`; `test_alerting.py::test_alert_records_a_notification`; `test_alerting.py::test_rule_validation_and_viewer_boundary` |
+| Five failed logins from one IP: alert inside 5 minutes, none when spread beyond 5 minutes | `test_alerting.py::test_five_failures_only_alert_when_inside_five_minute_window` |
+| Admin/Viewer RBAC with tenant data isolation | `test_security_rbac.py::test_admin_routes_require_admin_and_authentication`; `test_security_rbac.py::test_viewer_reads_are_tenant_scoped`; `test_security_rbac.py::test_viewer_cannot_mutate_alerts_rules_logs_or_users`; `test_alerting.py::test_alert_evidence_stays_within_tenant` |
+| API key secrecy, tenant binding and rotation | `test_security_rbac.py::test_api_key_tenant_binding_secrecy_and_rotation`; `test_ingest_api.py::test_ingest_enforces_api_keys_and_tenant_binding` |
+| Login/session security, lockout, CSRF/CORS, SSRF | `test_security_rbac.py::test_login_sets_cookies_and_logout_invalidates_the_session`; `test_security_rbac.py::test_login_rejects_bad_credentials_and_inactive_users`; `test_security_rbac.py::test_repeated_bad_logins_return_429_lockout`; `test_security_rbac.py::test_register_route_is_absent`; `test_security_rbac.py::test_csrf_and_cors_boundaries`; `test_security_rbac.py::test_webhook_ssrf_blocks_internal_targets` |
+| Search, filters, time range and pagination | `test_search_filters.py::test_free_text_user_and_ip_search`; `test_search_filters.py::test_time_range_filters_use_from_and_to`; `test_search_pagination.py::test_cursor_pagination_covers_every_row_once_with_timestamp_ties` |
+| Retention >=7 days (purge + dry run) | `test_retention.py::test_purge_removes_only_expired_events_and_dry_run_is_safe` |
+| Self-hosted Docker / SaaS readiness + frontend API contract | `test_health.py::test_readiness_checks_database_and_redis`; `test_api_contract.py::test_every_frontend_route_is_declared`; `test_api_contract.py::test_frontend_query_parameters_are_declared` |
+| HTTPS / managed TLS | Manual smoke check (`tests/smoke.sh` against the deployed HTTPS URL); no unit test can assert managed certificates |
+
+## What is intentionally not unit-tested
+
+- **Provider retry internals** (webhook/email backoff and circuit-breaker paths).
+  The curated suite asserts the observable alert and notification record, not the
+  provider SDK's internal retry loop.
+- **Vector configuration**. The forwarder configuration is deployment data; a
+  unit test here would only restate the file. It is exercised as part of the
+  appliance smoke check.
+- **Listener sockets**. The native UDP/TCP socket lifecycle is verified manually
+  on the Appliance with `logger` and `nc`; the suite tests the same
+  `parse_syslog_message` parser without opening real sockets.
 
 ## Conftest
 
 `backend/tests/conftest.py`:
-- Forces a disposable test database `logs_manager_test` on Docker PostgreSQL (never Neon)
+- Forces the disposable `logs_manager_test` database on local Docker PostgreSQL
 - Sets `NullPool` to avoid cross-event-loop connection reuse
 - Forces Redis to local Docker Redis
-- Disables Syslog listeners (`SYSLOG_ENABLED=false`)
-- Runs alembic migrations + seed per test session
-- Provides fixtures: `client`, `admin_client`, `viewer_a_client`, `viewer_b_client`, `api_key`, `login()`
+- Disables the native syslog listener (`SYSLOG_ENABLED=false`); SaaS ingestion is tested over HTTP
+- Runs Alembic migrations and `scripts/seed_demo_data.py` once per session
+- Removes rows created by each module, driven by a baseline snapshot
+- Provides `client`, `login()`, `api_key`, `api_key_demoa`, and `api_key_demob`
+
+## Coverage
+
+Run the same command with coverage:
+
+```bash
+cd backend
+TEST_DATABASE_URL="postgresql+asyncpg://logs:postgres_pass@localhost:55432/logs_manager_test?sslmode=disable" \
+TEST_REDIS_PORT=56379 \
+./.venv/bin/python -m pytest --cov=app --cov-report=term-missing -q
+```
+
+The curated suite keeps overall coverage at 76% and holds every critical module
+within 10 points of the previous full suite (ingest, parsers, search, alerting,
+security, dependencies, normalized schema).
+
+## Deletion record
+
+The old 577-test-function suite was removed in a separate commit. The full
+per-function KEEP/MERGE/DELETE ledger (`file::function` plus reason) is recorded
+in `/tmp/test_deletion_manifest.md` during the cleanup run.
 
 ## Smoke test
 
-`tests/smoke.sh` exercises a running stack end to end (health, login, single/batch ingest, logs, alerts, dashboard, rules):
+`tests/smoke.sh` exercises a running stack end to end (health, login,
+single/batch ingest, logs, alerts, dashboard, rules):
 
 ```bash
 # Appliance defaults (FastAPI stack on 4500/8081)
@@ -54,26 +114,13 @@ ADMIN_PASSWORD='$SEED_ADMIN_PASSWORD' \
 ./tests/smoke.sh
 ```
 
-**Demo credentials (after `make seed`):**
-- Printed to stdout during seeding
-- Set via `SEED_ADMIN_PASSWORD`, `SEED_VIEWER_A_PASSWORD`, `SEED_VIEWER_B_PASSWORD` env vars
-
-Run `make seed` first so the demo accounts and an alert rule exist.
+Run `make seed` first so the demo accounts and an alert rule exist. Demo
+credentials are printed during seeding and are controlled by
+`SEED_ADMIN_PASSWORD`, `SEED_VIEWER_A_PASSWORD`, and
+`SEED_VIEWER_B_PASSWORD`.
 
 ## CI note
 
-Tests require Docker PostgreSQL and Redis (provided by the root `docker-compose.yml`, not a backend-specific Compose file). A typical CI job would:
-
-```yaml
-services:
-  postgres:
-    image: postgres:18-alpine
-    env: { POSTGRES_USER: logs, POSTGRES_PASSWORD: logs_dev_password, POSTGRES_DB: logs_manager_test }
-    ports: ["5432:5432"]
-  redis:
-    image: redis:8-alpine
-    ports: ["6379:6379"]
-steps:
-  - cd backend && pip install -r requirements.txt
-  - TEST_DB_PORT=55432 TEST_REDIS_PORT=56379 .venv/bin/python -m pytest -q
-```
+Tests require PostgreSQL and Redis (provided by the root `docker-compose.yml`
+locally and service containers in CI). CI runs `python -m pytest -q` from
+`backend/`; no individual test paths are hard-coded.

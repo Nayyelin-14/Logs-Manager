@@ -91,7 +91,9 @@ export interface AlertConditionType {
   threshold?: number;
   windowSeconds?: number;
   severity_min?: number;
-  groupBy?: "srcIp" | "user" | "host";
+  // Rules are persisted with canonical snake_case names; older payloads and
+  // the create form use camelCase.
+  groupBy?: "srcIp" | "user" | "host" | "src_ip" | "user_name";
 }
 
 export interface AlertRuleType {
@@ -103,9 +105,16 @@ export interface AlertRuleType {
   severity: "low" | "medium" | "high" | "critical";
   createdAt: string;
   updatedAt: string;
-  actions: Record<string, unknown>;
+  actions?: Record<string, unknown>;
   windowSeconds?: number;
   conditions: AlertConditionType[];
+  rule_type?: string;
+  filter?: Record<string, unknown>;
+  group_by?: string;
+  threshold?: number;
+  window_minutes?: number;
+  cooldown_minutes?: number;
+  notify?: Record<string, unknown>;
 }
 
 export interface SecurityEventFilters {
@@ -133,6 +142,8 @@ export interface PaginatedLogsResponse {
 export interface PaginatedRulesResponse {
   rules: AlertRuleType[];
   newCursor: string | null;
+  nextCursor?: string | null;
+  hasNextPage?: boolean;
   prevCursor?: string | null;
 }
 

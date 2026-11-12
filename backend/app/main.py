@@ -20,7 +20,6 @@ from app.api.routes import (
     ingest,
     search,
     dashboard,
-    alerts,
     rules,
     users,
     aliases,
@@ -302,7 +301,6 @@ app.include_router(ingest.router, prefix="/api", tags=["Ingest"])
 app.include_router(ingest.public_router, tags=["Ingest"])
 app.include_router(search.router, prefix="/api", tags=["Search"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
-app.include_router(alerts.router, prefix="/api", tags=["Alerts"])
 app.include_router(rules.router, prefix="/api", tags=["Rules"])
 app.include_router(users.router, prefix="/api", tags=["Users"])
 app.include_router(aliases.alias_router, tags=["Ingest Aliases"])

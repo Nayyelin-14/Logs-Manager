@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,11 +9,27 @@ from app.core.database import get_session
 from app.core.dependencies import get_current_user, get_effective_tenant
 from app.core.security import TokenPayload
 from app.core.tenancy import resolve_read_tenant
+from app.api.routes.search import VALID_SOURCES
 from app.models.events import Event
 from app.models.alert import Alert, AlertRule
 from app.models.tenant import Tenant
 
 router = APIRouter()
+
+
+def _validate_source(source: Optional[str]) -> Optional[str]:
+    if source is None or not str(source).strip():
+        return None
+    value = str(source).strip().lower()
+    if value not in VALID_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unsupported source '{source}'. "
+                f"Valid sources: {', '.join(sorted(VALID_SOURCES))}."
+            ),
+        )
+    return value
 
 
 def _iso_utc(value):
@@ -46,10 +62,12 @@ class DashboardStats(BaseModel):
 async def get_dashboard_stats(
     tenant: Optional[str] = None,
     range: str = "7d",
+    source: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
     current_user: "TokenPayload" = Depends(get_current_user),
 ):
 
+    source = _validate_source(source)
     tenant = resolve_read_tenant(current_user, tenant)
     range_days = {"1d": 1, "3d": 3, "7d": 7, "30d": 30}.get(range, 7)
 
@@ -58,21 +76,25 @@ async def get_dashboard_stats(
     # A one-day window is only useful at hour resolution; wider windows use days.
     bucket_unit = "hour" if range_days <= 1 else "day"
 
+    # Source and tenant filters are applied to every event aggregate, so the
+    # top lists, timeline and source distribution all describe the same scope.
+    event_conditions = [Event.ts.between(start_date, end_date)]
+    if tenant:
+        event_conditions.append(Event.tenant == tenant)
+    if source:
+        event_conditions.append(Event.source == source)
 
+    alert_conditions = []
+    if tenant:
+        alert_conditions.append(Alert.tenant == tenant)
 
     total_events = await session.execute(
-        select(func.count()).select_from(Event).where(
-            Event.tenant == tenant,
-            Event.ts.between(start_date, end_date)
-        ) if tenant else select(func.count()).select_from(Event).where(
-            Event.ts.between(start_date, end_date)
-        )
+        select(func.count()).select_from(Event).where(*event_conditions)
     )
 
     top_ips = await session.execute(
         select(Event.src_ip, func.count().label("count"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .where(Event.src_ip.isnot(None))
         .group_by(Event.src_ip)
         .order_by(desc("count"))
@@ -81,8 +103,7 @@ async def get_dashboard_stats(
 
     top_users = await session.execute(
         select(Event.user_name, func.count().label("count"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .where(Event.user_name.isnot(None))
         .group_by(Event.user_name)
         .order_by(desc("count"))
@@ -91,8 +112,7 @@ async def get_dashboard_stats(
 
     top_event_types = await session.execute(
         select(Event.event_type, func.count().label("count"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .group_by(Event.event_type)
         .order_by(desc("count"))
         .limit(10)
@@ -105,39 +125,35 @@ async def get_dashboard_stats(
             Event.source,
             func.count().label("count"),
         )
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .group_by(Event.tenant, "day", Event.source)
         .order_by("day")
     )
 
     recent_alerts = await session.execute(
         select(Alert)
-        .where(Alert.tenant == tenant if tenant else True)
+        .where(*alert_conditions)
         .order_by(desc(Alert.triggered_at))
         .limit(5)
     )
 
     sources = await session.execute(
         select(Event.source, func.count().label("count"), func.max(Event.ts).label("latest"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .group_by(Event.source)
         .order_by(desc("count"))
     )
 
     severity_counts = await session.execute(
         select(Event.severity, func.count().label("count"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .group_by(Event.severity)
         .order_by(Event.severity)
     )
 
     events_by_tenant = await session.execute(
         select(Event.tenant, func.count().label("count"))
-        .where(Event.tenant == tenant if tenant else True)
-        .where(Event.ts.between(start_date, end_date))
+        .where(*event_conditions)
         .group_by(Event.tenant)
         .order_by(desc("count"))
         .limit(8)
@@ -145,14 +161,14 @@ async def get_dashboard_stats(
 
     alert_counts_by_status = await session.execute(
         select(Alert.status, func.count().label("count"))
-        .where(Alert.tenant == tenant if tenant else True)
+        .where(*alert_conditions)
         .where(Alert.triggered_at.between(start_date, end_date))
         .group_by(Alert.status)
     )
 
     alert_counts_by_severity = await session.execute(
         select(Alert.severity, func.count().label("count"))
-        .where(Alert.tenant == tenant if tenant else True)
+        .where(*alert_conditions)
         .where(Alert.triggered_at.between(start_date, end_date))
         .group_by(Alert.severity)
     )
@@ -163,7 +179,7 @@ async def get_dashboard_stats(
             func.date_trunc(bucket_unit, Alert.triggered_at).label("day"),
             func.count().label("count"),
         )
-        .where(Alert.tenant == tenant if tenant else True)
+        .where(*alert_conditions)
         .where(Alert.triggered_at.between(start_date, end_date))
         .group_by(Alert.tenant, "day")
         .order_by("day")
@@ -176,7 +192,7 @@ async def get_dashboard_stats(
             func.count().label("count"),
         )
         .join(AlertRule, Alert.rule_id == AlertRule.id)
-        .where(Alert.tenant == tenant if tenant else True)
+        .where(*alert_conditions)
         .where(Alert.triggered_at.between(start_date, end_date))
         .group_by("day", "rule_name")
         .order_by("day", "rule_name")

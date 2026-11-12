@@ -18,6 +18,15 @@ const rangeLabel = (range: string) =>
     : range === "3d" ? "Last 3 days"
     : range === "30d" ? "Last 30 days"
     : "Last 7 days";
+const sourceOptions = [
+  { value: "firewall", label: "Firewall" },
+  { value: "network", label: "Network" },
+  { value: "api", label: "API" },
+  { value: "crowdstrike", label: "CrowdStrike" },
+  { value: "aws", label: "AWS" },
+  { value: "m365", label: "M365" },
+  { value: "ad", label: "Active Directory" },
+];
 const severityOrder = ["critical", "high", "medium", "low"];
 const severityColors: Record<string, string> = { critical: "#f87171", high: "#f97316", medium: "#fbbf24", low: "#34d399" };
 const relativeTime = (value?: string | null) => {
@@ -228,8 +237,9 @@ const DashboardStatsPage = () => {
   const user = useUserStore((state) => state.user);
   const [tenant, setTenant] = useState("all");
   const [range, setRange] = useState("7d");
+  const [source, setSource] = useState("all");
   const userId = user?.role === "VIEWER" ? String(user.id) : undefined;
-  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery(useDashboardStats(tenant, range, userId));
+  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery(useDashboardStats(tenant, range, userId, source));
   const createdRules = data?.alertsRuleByDay?.reduce((sum, item) => sum + item._count.id, 0) ?? 0;
   const recentLogsQuery = useInfiniteQuery(LogsInfiniteQueryWithFilters({ date: "", search: "", severity: null, eventType: null, source: null, tenant: null, user: null, srcIp: null }));
   const recentLogs = recentLogsQuery.data?.pages.flatMap((page) => page.logs).slice(0, 4) ?? [];
@@ -255,6 +265,7 @@ const DashboardStatsPage = () => {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {user?.role === "ADMIN" && <Select value={tenant} onValueChange={setTenant}><SelectTrigger className="w-[155px]" aria-label="Filter tenant"><SelectValue placeholder="All tenants" /></SelectTrigger><SelectContent align="end"><SelectItem value="all">All tenants</SelectItem>{data.tenants?.map((item) => <SelectItem key={item.tenant} value={item.tenant}>{item.tenant}</SelectItem>)}</SelectContent></Select>}
+        <Select value={source} onValueChange={setSource}><SelectTrigger className="w-[165px]" aria-label="Filter source"><SelectValue placeholder="All sources" /></SelectTrigger><SelectContent align="end"><SelectItem value="all">All sources</SelectItem>{sourceOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
         <div className="inline-flex rounded-xl bg-surface-muted p-1" role="group" aria-label="Time range">
           {[{ value: "1d", label: "24h" }, { value: "3d", label: "3d" }, { value: "7d", label: "7d" }, { value: "30d", label: "30d" }].map((option) => <Button key={option.value} type="button" size="sm" variant={range === option.value ? "signal" : "ghost"} className="h-8 px-3 text-xs" aria-pressed={range === option.value} onClick={() => setRange(option.value)}>{option.label}</Button>)}
         </div>

@@ -178,7 +178,8 @@ const AllRulesTable = ({ tenant }: TenantType) => {
     { message?: string },
     { id: string; enabled: boolean }
   >({
-    endpoint: (variables) => `/rules/${variables.id}/enabled`,
+    endpoint: (variables) =>
+      `/rules/${variables.id}/enabled?enabled=${variables.enabled}`,
     method: "patch",
     invalidateFn: async () => {
       await invalidateRuleQueries();

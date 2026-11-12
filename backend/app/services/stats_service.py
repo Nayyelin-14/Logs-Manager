@@ -145,10 +145,13 @@ async def query_stats_summary(
     start: datetime,
     end: datetime,
     tenant: Optional[str],
+    source: Optional[str] = None,
 ) -> dict[str, Any]:
     conditions = [Event.ts >= start, Event.ts <= end]
     if tenant:
         conditions.append(Event.tenant == tenant)
+    if source:
+        conditions.append(Event.source == source)
 
     total_result = await session.execute(
         select(func.count()).select_from(Event).where(and_(*conditions))

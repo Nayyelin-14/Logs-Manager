@@ -52,7 +52,7 @@ This document describes the common normalized event schema used across all log s
 | `dpt` | `dst_port` | Destination port |
 | `proto` | `protocol` | UDP/TCP/etc |
 | `policy` | `rule_name` | Firewall rule/policy name |
-| PRI (severity) | `severity` | Mapped: 0→10, 1→9, 2→8, 3→7, 4→5, 5→4, 6→2, 7→1 |
+| PRI (severity) | `severity` | Production derives severity as `PRI % 8`, so PRI 134 → `134 % 8` = **6**. The low three PRI bits are the RFC 5424 severity code (0-7) used directly on the 0-10 scale; the facility bits are discarded. |
 | `action` (key=value) | `action` | deny→denied, allow→allowed |
 | `msg` | `raw` | Preserved in raw JSON |
 
@@ -64,7 +64,7 @@ This document describes the common normalized event schema used across all log s
 | `if` | `tags` | Interface name |
 | `reason` | `raw` | Preserved |
 | `mac` | `raw` | Preserved |
-| PRI (severity) | `severity` | Mapped as above |
+| PRI (severity) | `severity` | `PRI % 8` (PRI 190 → **6**); see the firewall row above. |
 | `event_type` | `network` | Source enum |
 
 ### 3. HTTP API
@@ -163,6 +163,15 @@ Syslog severity (0=worst, 7=best) → Normalized (0-10, 10=worst):
 ## Database Storage
 
 The `events` table is a single Postgres table (no declarative partitioning). Retention is deletion-based: the worker deletes events older than `RETENTION_DAYS` (default 7). See `docs/schema.png` for the current schema diagram.
+
+### Deduplication
+
+JSON events are deduplicated on the `(id, ts)` tuple: re-sending the same JSON
+event returns the same `eventId` and stores a single row. Native syslog events
+(UDP/TCP 514) are **not** deduplicated: each identical line is treated as a
+separate event, because repeated identical syslog lines are real events and the
+threshold alert rules depend on counting them. Do not enable content-hash
+dedupe for syslog without accounting for this.
 
 ### Indexes
 

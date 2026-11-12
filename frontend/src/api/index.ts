@@ -55,9 +55,9 @@ adminApi.interceptors.request.use(attachCsrfToken);
 adminApi.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 403) {
-      window.location.href = "/login";
-    }
+    // 403 means the signed-in account lacks permission for this action. Keep
+    // the session intact and let the caller surface the error; redirecting to
+    // /login here would misleadingly look like an expired session.
     if (error.response?.status === 401) {
       window.location.href = `/login?redirect=${encodeURIComponent(
         window.location.pathname
