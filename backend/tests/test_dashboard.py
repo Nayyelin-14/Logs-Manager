@@ -1,9 +1,4 @@
-"""Dashboard acceptance tests.
-
-The dashboard must expose Top IP, Top User, Event Type, a timeline/source
-breakdown, and tenant/time scoping. The tests seed one event per tenant and
-then check both the widget values and the isolation rules.
-"""
+"""Dashboard widgets, tenant scoping, and the stats endpoints behind them."""
 
 from __future__ import annotations
 
@@ -152,8 +147,9 @@ def _assert_viewer_scoped(data: dict, requested_tenant: str) -> None:
             assert row.get("tenant") == "demoa", f"{widget} leaked {row}"
 
 
-def test_dashboard_returns_top_widgets_and_timeline(admin_client):
-    response = admin_client.get("/api/dashboard")
+def test_dashboard_returns_top_widgets_and_timeline(client):
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    response = client.get("/api/dashboard")
     assert response.status_code == 200, response.text
     data = response.json()
 
@@ -164,11 +160,11 @@ def test_dashboard_returns_top_widgets_and_timeline(admin_client):
     assert any(row["type"] == DEMOA_TYPE for row in data["topEventTypes"])
 
     timeline = data["eventsBySource"]
-    assert timeline, "dashboard timeline must not be empty"
+    assert timeline
     assert any(row["source"] == "firewall" for row in timeline)
     assert any(row["source"] == "aws" for row in timeline)
     assert all(row["timestamp"] for row in timeline)
-    assert data["alertsByDay"], "dashboard alert timeline must not be empty"
+    assert data["alertsByDay"]
 
 
 def test_viewer_dashboard_is_tenant_scoped(client):
@@ -180,8 +176,9 @@ def test_viewer_dashboard_is_tenant_scoped(client):
         _assert_viewer_scoped(response.json(), params.get("tenant", "<none>"))
 
 
-def test_admin_dashboard_sees_all_tenants(admin_client):
-    response = admin_client.get("/api/dashboard")
+def test_admin_dashboard_sees_all_tenants(client):
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    response = client.get("/api/dashboard")
     assert response.status_code == 200, response.text
     data = response.json()
 
@@ -195,3 +192,37 @@ def test_admin_dashboard_sees_all_tenants(admin_client):
     payload = json.dumps(data)
     assert json.dumps(DEMOA_IP) in payload
     assert json.dumps(DEMOB_IP) in payload
+
+
+def test_stats_endpoints_are_scoped_and_shaped(client):
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+    top = client.get(
+        "/api/stats/top",
+        params={"tenant": "demoa", "field": "src_ip", "n": 50},
+    )
+    assert top.status_code == 200, top.text
+    assert top.json()["field"] == "src_ip"
+    top_values = {item["value"] for item in top.json()["items"]}
+    assert DEMOA_IP in top_values
+    assert DEMOB_IP not in top_values
+
+    timeline = client.get(
+        "/api/stats/timeline", params={"tenant": "demoa", "interval": "1d"}
+    )
+    assert timeline.status_code == 200, timeline.text
+    assert timeline.json()["interval"] == "1d"
+    assert all("by_source" in bucket for bucket in timeline.json()["buckets"])
+
+    summary = client.get("/api/stats/summary", params={"tenant": "demoa"})
+    assert summary.status_code == 200, summary.text
+    body = summary.json()
+    assert body["tenants"] == ["demoa"]
+    assert body["total_events"] >= 1
+    assert set(body) == {
+        "total_events",
+        "failed_logins",
+        "open_alerts",
+        "active_sources",
+        "tenants",
+    }

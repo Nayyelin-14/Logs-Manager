@@ -209,74 +209,41 @@ def login(client, email: str, password: str):
     return response
 
 
-@pytest.fixture()
-def admin_client(client):
-    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
-    return client
+def _assign_tenant_api_key(tenant_name: str, api_key: str) -> str:
+    """Point an existing tenant at a deterministic test key."""
 
+    from app.core.database import async_session_maker
+    from app.models.tenant import Tenant
+    from sqlalchemy import update
+    import hashlib
 
-@pytest.fixture()
-def viewer_a_client(client):
-    login(client, VIEWER_A_EMAIL, VIEWER_A_PASSWORD)
-    return client
+    async def _setup():
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        async with async_session_maker() as session:
+            await session.execute(
+                update(Tenant)
+                .where(Tenant.name == tenant_name)
+                .values(api_key_hash=key_hash, is_active=True)
+            )
+            await session.commit()
 
-
-@pytest.fixture()
-def viewer_b_client(client):
-    login(client, VIEWER_B_EMAIL, VIEWER_B_PASSWORD)
-    return client
+    asyncio.run(_setup())
+    return api_key
 
 
 @pytest.fixture()
 def api_key_demoa(test_database):
-    from app.core.database import async_session_maker
-    from app.models.tenant import Tenant
-    from sqlalchemy import update
-    import hashlib
-
-    async def _setup():
-        key_hash = hashlib.sha256(DEMOA_API_KEY.encode()).hexdigest()
-        async with async_session_maker() as session:
-            await session.execute(
-                update(Tenant).where(Tenant.name == "demoa").values(api_key_hash=key_hash, is_active=True)
-            )
-            await session.commit()
-
-    asyncio.run(_setup())
-    return DEMOA_API_KEY
+    return _assign_tenant_api_key("demoa", DEMOA_API_KEY)
 
 
 @pytest.fixture()
 def api_key_demob(test_database):
-    from app.core.database import async_session_maker
-    from app.models.tenant import Tenant
-    from sqlalchemy import update
-    import hashlib
-
-    async def _setup():
-        key_hash = hashlib.sha256(DEMOB_API_KEY.encode()).hexdigest()
-        async with async_session_maker() as session:
-            await session.execute(
-                update(Tenant).where(Tenant.name == "demob").values(api_key_hash=key_hash, is_active=True)
-            )
-            await session.commit()
-
-    asyncio.run(_setup())
-    return DEMOB_API_KEY
+    return _assign_tenant_api_key("demob", DEMOB_API_KEY)
 
 
 @pytest.fixture()
 def api_key(api_key_demoa):
     return api_key_demoa
-
-
-@pytest.fixture()
-def feature_test_flag_enabled():
-    os.environ["FEATURE_TEST_FLAG_ENABLED"] = "true"
-    try:
-        yield
-    finally:
-        os.environ.pop("FEATURE_TEST_FLAG_ENABLED", None)
 
 
 @pytest.fixture(autouse=True)
