@@ -1,7 +1,7 @@
 # Tests
 
 The backend acceptance suite lives in `backend/tests/` and runs with **pytest**.
-It is intentionally curated: **61 test functions / 71 parametrized cases across
+It is intentionally curated: **69 test functions / 85 parametrized cases across
 11 files**, each pinning a product or security boundary rather than duplicating
 unit-level coverage.
 
@@ -21,11 +21,11 @@ Redis.
 
 ## Suite layout
 
-| File | Functions | Scope |
+| File | Functions (cases) | Scope |
 | --- | ---: | --- |
-| `test_normalization.py` | 9 | Firewall, AWS, CrowdStrike, M365, AD, and network normalizers; canonical event names; outcome inference; syslog and shared parser helpers |
-| `test_ingest_api.py` | 9 | Single, batch, file (JSON/JSONL/CSV/syslog), and HTTP syslog ingestion; malformed payloads (400/401/403/413/422); API-key tenant binding; batch format detection |
-| `test_security_rbac.py` | 10 | Login/session/refresh, admin-only routes, viewer read/write boundaries, tenant isolation, API-key secrecy/rotation, CSRF/CORS, SSRF, tenant/user/rule lifecycle, per-email lockout |
+| `test_normalization.py` | 11 (27) | The seven assignment samples through real ingest; parser and normalizer helpers; canonical event names; outcome inference; syslog parsing |
+| `test_ingest_api.py` | 13 | Single, batch, file (JSON/JSONL/CSV/syslog), and HTTP syslog ingestion; malformed payloads (400/401/403/413/422); API-key tenant binding; rate limits (429); native-listener parser; transient DB failure (503) |
+| `test_security_rbac.py` | 12 | Login/session/refresh, login lockout (429), absent self-registration, admin-only routes, viewer read/write boundaries, tenant isolation, API-key secrecy/rotation, CSRF/CORS, SSRF, tenant/user/rule lifecycle |
 | `test_search_filters.py` | 6 | Free text, source, event type, severity, time range (`from`/`to`), sort/limit, viewer scoping |
 | `test_alerting.py` | 7 | Threshold trigger + aggregation, below-threshold/per-IP isolation, five-minute window edge, notification delivery (webhook/email), tenant evidence, rule validation/lifecycle, idempotent upsert and cooldown |
 | `test_retention.py` | 1 | Seven-day default, purge only expired rows, dry run is read-only |
@@ -40,18 +40,30 @@ Redis.
 | Assignment requirement | Test file::function |
 | --- | --- |
 | >=4 working ingest sources (HTTP JSON, batch/file, HTTP syslog, simulator/API key) | `test_ingest_api.py::test_single_event_ingest_normalizes_and_scopes_to_api_key`; `test_ingest_api.py::test_batch_ingest_counts_per_record_and_keeps_good_rows`; `test_ingest_api.py::test_file_upload_parses_jsonl_and_csv`; `test_ingest_api.py::test_http_syslog_accepts_rfc3164_and_rfc5424` |
-| 7 source types normalized (firewall, network, api, crowdstrike, aws, m365, ad) | `test_normalization.py::test_firewall_normalizer_and_shared_parser_helpers`; `test_normalization.py::test_cloud_and_identity_normalizers_share_field_names`; `test_normalization.py::test_network_normalizer_uses_network_source_and_ports`; `test_normalization.py::test_canonical_helpers_describe_known_events` |
+| 7 source types normalized (firewall, network, api, crowdstrike, aws, m365, ad) | `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[firewall]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[router]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[api]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[crowdstrike]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[aws]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[m365]`; `test_normalization.py::test_assignment_sample_normalizes_through_real_ingest[ad]` (each case sends the assignment sample through HTTP ingest and reads the stored row back through search) |
 | Common schema: `@timestamp`, tenant, source, severity 0-10, action, raw, `_tags` | `test_normalization.py::test_normalized_event_validators_and_deterministic_id`; `test_normalization.py::test_tenant_is_never_trusted_from_the_payload` |
 | Postgres JSONB storage + dashboard Top IP/User/Event Type + timeline | `test_dashboard.py::test_dashboard_returns_top_widgets_and_timeline`; `test_dashboard.py::test_stats_endpoints_are_scoped_and_shaped` |
 | >=1 alert rule with UI + webhook notification | `test_alerting.py::test_threshold_rule_triggers_one_alert_and_aggregates`; `test_alerting.py::test_alert_records_a_notification`; `test_alerting.py::test_rule_validation_and_viewer_boundary` |
 | Five failed logins from one IP: alert inside 5 minutes, none when spread beyond 5 minutes | `test_alerting.py::test_five_failures_only_alert_when_inside_five_minute_window` |
 | Admin/Viewer RBAC with tenant data isolation | `test_security_rbac.py::test_admin_routes_require_admin_and_authentication`; `test_security_rbac.py::test_viewer_reads_are_tenant_scoped`; `test_security_rbac.py::test_viewer_cannot_mutate_alerts_rules_logs_or_users`; `test_alerting.py::test_alert_evidence_stays_within_tenant` |
 | API key secrecy, tenant binding and rotation | `test_security_rbac.py::test_api_key_tenant_binding_secrecy_and_rotation`; `test_ingest_api.py::test_ingest_enforces_api_keys_and_tenant_binding` |
-| Login/session security, lockout, CSRF/CORS, SSRF | `test_security_rbac.py::test_login_sets_cookies_and_logout_invalidates_the_session`; `test_security_rbac.py::test_login_rejects_bad_credentials_and_inactive_users`; `test_security_rbac.py::test_csrf_and_cors_boundaries`; `test_security_rbac.py::test_webhook_ssrf_blocks_internal_targets` |
+| Login/session security, lockout, CSRF/CORS, SSRF | `test_security_rbac.py::test_login_sets_cookies_and_logout_invalidates_the_session`; `test_security_rbac.py::test_login_rejects_bad_credentials_and_inactive_users`; `test_security_rbac.py::test_repeated_bad_logins_return_429_lockout`; `test_security_rbac.py::test_register_route_is_absent`; `test_security_rbac.py::test_csrf_and_cors_boundaries`; `test_security_rbac.py::test_webhook_ssrf_blocks_internal_targets` |
 | Search, filters, time range and pagination | `test_search_filters.py::test_free_text_user_and_ip_search`; `test_search_filters.py::test_time_range_filters_use_from_and_to`; `test_search_pagination.py::test_cursor_pagination_covers_every_row_once_with_timestamp_ties` |
 | Retention >=7 days (purge + dry run) | `test_retention.py::test_purge_removes_only_expired_events_and_dry_run_is_safe` |
 | Self-hosted Docker / SaaS readiness + frontend API contract | `test_health.py::test_readiness_checks_database_and_redis`; `test_api_contract.py::test_every_frontend_route_is_declared`; `test_api_contract.py::test_frontend_query_parameters_are_declared` |
 | HTTPS / managed TLS | Manual smoke check (`tests/smoke.sh` against the deployed HTTPS URL); no unit test can assert managed certificates |
+
+## What is intentionally not unit-tested
+
+- **Provider retry internals** (webhook/email backoff and circuit-breaker paths).
+  The curated suite asserts the observable alert and notification record, not the
+  provider SDK's internal retry loop.
+- **Vector configuration**. The forwarder configuration is deployment data; a
+  unit test here would only restate the file. It is exercised as part of the
+  appliance smoke check.
+- **Listener sockets**. The native UDP/TCP socket lifecycle is verified manually
+  on the Appliance with `logger` and `nc`; the suite tests the same
+  `parse_syslog_message` parser without opening real sockets.
 
 ## Conftest
 
@@ -75,7 +87,7 @@ TEST_REDIS_PORT=56379 \
 ./.venv/bin/python -m pytest --cov=app --cov-report=term-missing -q
 ```
 
-The curated suite keeps overall coverage at ~74% and holds every critical module
+The curated suite keeps overall coverage at 76% and holds every critical module
 within 10 points of the previous full suite (ingest, parsers, search, alerting,
 security, dependencies, normalized schema).
 

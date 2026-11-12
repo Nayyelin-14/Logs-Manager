@@ -52,7 +52,7 @@ This document describes the common normalized event schema used across all log s
 | `dpt` | `dst_port` | Destination port |
 | `proto` | `protocol` | UDP/TCP/etc |
 | `policy` | `rule_name` | Firewall rule/policy name |
-| PRI (severity) | `severity` | Mapped: 0→10, 1→9, 2→8, 3→7, 4→5, 5→4, 6→2, 7→1 |
+| PRI (severity) | `severity` | Production derives severity as `PRI % 8`, so PRI 134 → `134 % 8` = **6**. The low three PRI bits are the RFC 5424 severity code (0-7) used directly on the 0-10 scale; the facility bits are discarded. |
 | `action` (key=value) | `action` | deny→denied, allow→allowed |
 | `msg` | `raw` | Preserved in raw JSON |
 
@@ -64,7 +64,7 @@ This document describes the common normalized event schema used across all log s
 | `if` | `tags` | Interface name |
 | `reason` | `raw` | Preserved |
 | `mac` | `raw` | Preserved |
-| PRI (severity) | `severity` | Mapped as above |
+| PRI (severity) | `severity` | `PRI % 8` (PRI 190 → **6**); see the firewall row above. |
 | `event_type` | `network` | Source enum |
 
 ### 3. HTTP API

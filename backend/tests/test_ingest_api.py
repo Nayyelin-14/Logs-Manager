@@ -13,10 +13,12 @@ import uuid
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.exceptions import ValidationError
+from app.integrations.syslog import parse_syslog_message
 from app.ingest.batch import (
     detect_format,
     looks_like_syslog_line,
@@ -26,6 +28,7 @@ from app.ingest.batch import (
     validate_upload,
 )
 from app.models.events import Event
+from app.services.ingest_service import IngestionService
 
 from conftest import ADMIN_EMAIL, ADMIN_PASSWORD, login
 
@@ -374,3 +377,79 @@ def test_http_syslog_rejects_missing_key_and_cross_tenant(client, api_key_demoa)
         json={"tenant": "demob", "lines": [_syslog_line("cross-tenant-body")]},
     )
     assert response.status_code == 403, response.text
+
+
+def test_http_syslog_rate_limit_returns_429(client, api_key_demoa, monkeypatch):
+    """Assignment requirement: HTTP syslog ingestion is rate limited."""
+    monkeypatch.setattr(get_settings(), "INGEST_RATE_LIMIT", "2/minute", raising=False)
+    headers = {"X-API-Key": api_key_demoa, "Content-Type": "text/plain"}
+
+    first = client.post(SYSLOG_PATH, headers=headers, content=_syslog_line("rl-1").encode())
+    second = client.post(SYSLOG_PATH, headers=headers, content=_syslog_line("rl-2").encode())
+    third = client.post(SYSLOG_PATH, headers=headers, content=_syslog_line("rl-3").encode())
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert third.status_code == 429, third.text
+    assert third.headers.get("Retry-After")
+
+
+def test_ingest_rate_limit_per_api_key_returns_429(client, api_key, monkeypatch):
+    """Assignment requirement: JSON ingest is rate limited per API key."""
+    monkeypatch.setattr(get_settings(), "INGEST_RATE_LIMIT", "2/minute", raising=False)
+    payload = {"source": "api", "event_type": "rate_limit_probe", "severity": 3}
+
+    statuses = [
+        client.post("/api/ingest", json=payload, headers=_headers(api_key)).status_code
+        for _ in range(3)
+    ]
+
+    assert statuses == [200, 200, 429], statuses
+
+
+def test_native_listener_parser_accepts_assignment_firewall_line():
+    """Assignment requirement: the UDP/TCP listener parser handles syslog."""
+    parsed = parse_syslog_message(
+        '<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny '
+        'src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp '
+        'msg="DNS blocked" policy=Block-DNS'
+    )
+
+    assert parsed is not None
+    assert parsed["priority"] == 134
+    assert parsed["host"] == "fw01"
+    assert parsed["action"] == "deny"
+    assert parsed["src"] == "10.0.1.10"
+    assert parsed["dst"] == "8.8.8.8"
+    assert parsed["spt"] == "5353"
+    assert parsed["dpt"] == "53"
+    assert parsed["proto"] == "udp"
+    assert parsed["policy"] == "Block-DNS"
+
+
+def test_http_syslog_transient_db_failure_returns_503(client, api_key_demoa, monkeypatch):
+    """Assignment requirement: a transient DB failure is retryable, not a 202."""
+    marker_one = f"dbfail-one-{uuid.uuid4().hex}"
+    marker_two = f"dbfail-two-{uuid.uuid4().hex}"
+
+    async def _fail(self, *args, **kwargs):
+        raise OperationalError("INSERT", {}, Exception("connection refused"))
+
+    monkeypatch.setattr(IngestionService, "ingest_batch_atomic", _fail)
+
+    response = client.post(
+        SYSLOG_PATH,
+        headers={"X-API-Key": api_key_demoa},
+        json={"lines": [_syslog_line(marker_one), _syslog_line(marker_two)]},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.headers.get("retry-after") == "5"
+    body = response.json()
+    assert body["accepted"] == 0
+    assert body["rejected"] == 2
+    assert body["errors"][0]["error"].startswith("temporary storage failure")
+
+    rows = asyncio.run(_events_for_tenant("demoa"))
+    assert not _contains_marker(rows, marker_one)
+    assert not _contains_marker(rows, marker_two)

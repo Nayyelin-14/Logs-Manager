@@ -145,6 +145,28 @@ def test_login_rejects_bad_credentials_and_inactive_users(client):
     assert login_limiter is not None and login_limiter.enabled
 
 
+def test_repeated_bad_logins_return_429_lockout(client):
+    """Assignment requirement: repeated failed logins are rate limited."""
+    email = f"lockout-{uuid.uuid4().hex[:8]}@demo.local"
+    statuses = [
+        client.post(
+            "/api/auth/login", json={"email": email, "password": "WrongPassword!"}
+        ).status_code
+        for _ in range(5)
+    ]
+
+    assert statuses[:4] == [401, 401, 401, 401], statuses
+    assert statuses[4] in (423, 429), statuses
+
+
+def test_register_route_is_absent(client):
+    """Assignment requirement: users are provisioned by an admin, not self-registration."""
+    response = client.post(
+        "/api/auth/register", json={"email": "new@demo.local", "password": "Password123!"}
+    )
+    assert response.status_code in (404, 405), response.text
+
+
 def test_expired_access_token_refreshes_but_expired_refresh_is_rejected(client):
     login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
     refresh_token = client.cookies.get("refreshToken")

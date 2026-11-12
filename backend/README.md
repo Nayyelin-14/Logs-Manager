@@ -148,7 +148,7 @@ make test  # Runs pytest against the test database (tests/conftest.py)
 # or: pytest tests/ -q
 ```
 
-The curated suite passes (60 test functions / 70 cases across 11 files), including:
+The curated suite passes (69 test functions / 85 cases across 11 files), including:
 - Normalization for firewall, AWS, CrowdStrike, Microsoft 365, Active Directory, and network sources
 - Ingestion API (single/batch/file/HTTP syslog, tenant enforcement, limits)
 - Authentication, RBAC, tenant isolation, CSRF/CORS, API keys, and SSRF guards

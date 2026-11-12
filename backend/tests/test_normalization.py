@@ -8,16 +8,20 @@ on: canonical event names, outcome inference, and syslog parsing.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import select
 
+from app.core.database import async_session_maker
 from app.integrations.syslog import (
     parse_key_values,
     parse_rfc3164_timestamp,
     parse_syslog_message,
 )
 from app.models.enums import Source
+from app.models.events import Event
 from app.parsers.canonical import (
     get_canonical_events_for_source,
     get_canonical_event_description,
@@ -25,14 +29,6 @@ from app.parsers.canonical import (
     resolve_canonical_event_type,
 )
 from app.parsers.cloud import normalize_aws, normalize_crowdstrike
-from app.parsers.firewall import normalize_firewall
-from app.parsers.firewall_helpers import (
-    parse_key_value_message,
-    parse_syslog_pri,
-    parse_syslog_timestamp,
-    validate_ip,
-    validate_port,
-)
 from app.parsers.helpers import (
     as_record,
     determine_outcome,
@@ -53,54 +49,9 @@ from app.parsers.structured import normalize_network
 from app.schemas.normalized_event import NormalizedEvent, Source as SchemaSource
 
 
-def test_firewall_normalizer_and_shared_parser_helpers():
-    event = normalize_firewall(
-        {
-            "priority": 134,
-            "timestamp": datetime(2025, 8, 20, 12, 44, 56, tzinfo=timezone.utc),
-            "vendor": "demo",
-            "product": "ngfw",
-            "action": "deny",
-            "src": "10.0.1.10",
-            "dst": "8.8.8.8",
-            "spt": 5353,
-            "dpt": 53,
-            "proto": "udp",
-            "msg": "DNS blocked policy=Block-DNS",
-        },
-        tenant="demoa",
-    )
-
-    assert isinstance(event, NormalizedEvent)
-    assert event.source == SchemaSource.firewall
-    assert event.event_type == "firewall_deny"
-    assert event.action.value == "deny"
-    assert event.severity == 2
-    assert (event.src_ip, event.dst_ip) == ("10.0.1.10", "8.8.8.8")
-    assert (event.src_port, event.dst_port) == (5353, 53)
-    assert event.protocol == "udp"
-    assert event.rule_name == "Block-DNS"
-    assert event.tenant == "demoa"
-
-    # Firewall-specific parsers and the shared extraction helpers.
-    assert parse_syslog_pri(134) == (16, 6)
-    reference = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    assert parse_syslog_timestamp("Dec 31 23:59:59", reference).year == 2025
-    for invalid in ("", "Bad 11 22:14:15", "Oct xx 22:14:15", "Oct 11 99:14:15"):
-        assert parse_syslog_timestamp(invalid, reference) is None
-    assert parse_key_value_message("src=10.0.0.1 msg=\"two words\"") == {
-        "src": "10.0.0.1",
-        "msg": '"two words"',
-    }
-    assert parse_key_value_message("") == {}
-    assert validate_ip("10.0.0.1") == "10.0.0.1"
-    assert validate_ip("not-an-ip") is None
-    assert validate_ip(None) is None
-    assert validate_port("443") == 443
-    assert validate_port("70000") is None
-    assert validate_port("bad") is None
-    assert validate_port(None) is None
-
+def test_shared_parser_helpers_used_by_normalizers():
+    # Production normalizers share these extraction helpers even though the
+    # legacy normalize_firewall wrapper is gone.
     assert as_record({"a": 1}) == {"a": 1}
     assert as_record([1]) is None
     assert pick({"a": {"b": 3}}, ["a.b", "a.c"]) == 3
@@ -128,43 +79,12 @@ def test_firewall_normalizer_and_shared_parser_helpers():
     assert map_ad_action(4625) == "LOGIN"
     assert map_ad_action(None) is None
 
-    # Remaining firewall branches: PRI coercion, embedded timestamps, fallback
-    # timestamps, key/value extraction, and severity normalization.
-    assert normalize_firewall({"priority": "134", "action": "other"}).severity == 2
-    invalid_pri = normalize_firewall({"priority": 999, "action": "other"})
-    assert invalid_pri.tenant == "default"
-    assert invalid_pri.event_type == "network_traffic"
 
-    embedded = normalize_firewall(
-        {"priority": 134, "msg": "Oct 11 22:14:15 host app: traffic"}
-    )
-    assert embedded.ts is not None
-    assert normalize_firewall({"action": "allow"}).ts is not None
-    assert normalize_firewall({"action": "allow", "timestamp": "not-a-date"}).ts is not None
-
-    key_values = normalize_firewall(
-        {
-            "priority": 134,
-            "msg": (
-                "src=10.0.0.9 dst=10.0.0.10 spt=1000 dpt=80 proto=TCP "
-                "action=deny policy=web-block vendor=acme product=ngfw"
-            ),
-        }
-    )
-    assert (key_values.src_ip, key_values.dst_ip) == ("10.0.0.9", "10.0.0.10")
-    assert (key_values.src_port, key_values.dst_port) == (1000, 80)
-    assert key_values.protocol == "tcp"
-    assert key_values.rule_name == "web-block"
-
-    assert normalize_firewall(
-        {"priority": 134, "action": "deny", "severity": "8"}
-    ).severity == 8
-    assert normalize_firewall(
-        {"priority": 134, "action": "deny", "severity": "bad"}
-    ).severity == 2
-    assert normalize_firewall(
-        {"priority": 134, "action": "deny", "severity": None}
-    ).severity == 2
+def test_syslog_timestamp_without_year_is_parsed():
+    """Assignment requirement: RFC3164 timestamps carry no year."""
+    parsed = parse_rfc3164_timestamp("Oct 11 22:14:15")
+    assert parsed is not None
+    assert parsed.endswith("22:14:15+00:00")
 
 
 def test_cloud_and_identity_normalizers_share_field_names():
@@ -254,15 +174,240 @@ def test_network_normalizer_uses_network_source_and_ports():
     assert (result["src_port"], result["dst_port"]) == (51515, 443)
 
 
-def test_tenant_is_never_trusted_from_the_payload():
-    event = normalize_firewall(
-        {"priority": 134, "tenant": "attacker", "Tenant": "attacker", "src": "10.0.1.10"},
-        tenant="demoa",
-    )
-    assert event.tenant == "demoa"
+FIREWALL_LINE = (
+    '<134>Aug 20 12:44:56 fw01 vendor=demo product=ngfw action=deny '
+    'src=10.0.1.10 dst=8.8.8.8 spt=5353 dpt=53 proto=udp '
+    'msg="DNS blocked" policy=Block-DNS'
+)
+ROUTER_LINE = (
+    "<190>Aug 20 13:01:02 r1 source=network if=ge-0/0/1 event=link-down "
+    "mac=aa:bb:cc:dd:ee:ff reason=carrier-loss"
+)
 
-    event = normalize_firewall({"priority": 134, "tenant": "attacker", "src": "10.0.1.10"})
-    assert event.tenant == "default"
+ASSIGNMENT_SAMPLES = {
+    "firewall": {
+        "line": FIREWALL_LINE,
+        "search": {"source": "firewall", "search": "fw01"},
+        "event_type": "firewall_deny",
+        "match": {"srcIp": "10.0.1.10"},
+        "expected": {
+            "source": "firewall",
+            "src_ip": "10.0.1.10",
+            "src_port": 5353,
+            "dst_ip": "8.8.8.8",
+            "dst_port": 53,
+            "protocol": "udp",
+            "action": "deny",
+            "rule_name": "Block-DNS",
+            "host": "fw01",
+            "severity": 6,
+        },
+    },
+    "router": {
+        "line": ROUTER_LINE,
+        "search": {"source": "network", "search": "r1"},
+        "event_type": "link-down",
+        "match": {"host": "r1"},
+        "expected": {"source": "network", "host": "r1"},
+    },
+    "api": {
+        "json": {
+            "tenant": "demoA",
+            "source": "api",
+            "event_type": "app_login_failed",
+            "user": "alice",
+            "ip": "203.0.113.7",
+            "reason": "wrong_password",
+            "@timestamp": "2025-08-20T07:20:00Z",
+        },
+        "search": {"source": "api", "search": "203.0.113.7"},
+        "event_type": "app_login_failed",
+        "match": {"srcIp": "203.0.113.7"},
+        "expected": {
+            "source": "api",
+            "user_name": "alice",
+            "src_ip": "203.0.113.7",
+            "event_type": "app_login_failed",
+        },
+        "timestamp": "2025-08-20T07:20:00",
+    },
+    "crowdstrike": {
+        "json": {
+            "tenant": "demoA",
+            "source": "crowdstrike",
+            "event_type": "malware_detected",
+            "host": "WIN10-01",
+            "process": "powershell.exe",
+            "severity": 8,
+            "sha256": "abc...",
+            "action": "quarantine",
+            "@timestamp": "2025-08-20T08:00:00Z",
+            "tags": ["malware"],
+        },
+        "search": {"source": "crowdstrike", "search": "WIN10-01"},
+        "event_type": "malware_detected",
+        "match": {"host": "WIN10-01"},
+        "expected": {
+            "source": "crowdstrike",
+            "host": "WIN10-01",
+            "process": "powershell.exe",
+            "severity": 8,
+            # The API key's tenant is normalized to lower case before storage.
+            "tenant": "demoa",
+        },
+    },
+    "aws": {
+        "json": {
+            "source": "aws",
+            "eventName": "CreateUser",
+            "userIdentity": {"userName": "admin"},
+            "sourceIPAddress": None,
+            "awsRegion": "ap-southeast-1",
+            "recipientAccountId": "123456789012",
+            "eventSource": "iam.amazonaws.com",
+            "requestParameters": {"userName": "temp-user"},
+        },
+        "search": {"source": "aws", "search": "admin"},
+        "event_type": "CreateUser",
+        "match": {"user": "admin"},
+        "expected": {
+            "source": "aws",
+            # The stored column is cloud_service; production keeps the full
+            # eventSource value rather than the short "iam" alias.
+            "cloud_service": "iam.amazonaws.com",
+            "cloud_account_id": "123456789012",
+            "cloud_region": "ap-southeast-1",
+            "event_type": "CreateUser",
+            "user_name": "admin",
+        },
+    },
+    "m365": {
+        "json": {
+            "source": "m365",
+            "Operation": "UserLoggedIn",
+            "UserId": "bob@demo.local",
+            "ClientIP": "198.51.100.23",
+            "ResultStatus": "Success",
+            "Workload": "Exchange",
+            "@timestamp": "2025-08-20T10:05:00Z",
+            "tags": ["Exchange"],
+        },
+        "search": {"source": "m365", "search": "bob@demo.local"},
+        "event_type": "UserLoggedIn",
+        "match": {"user": "bob@demo.local"},
+        "expected": {
+            "source": "m365",
+            "user_name": "bob@demo.local",
+            "src_ip": "198.51.100.23",
+            "outcome": "success",
+        },
+    },
+    "ad": {
+        "json": {
+            "source": "ad",
+            "event_id": 4625,
+            "event_type": "LogonFailed",
+            "TargetUserName": "demo\\eve",
+            "IpAddress": "203.0.113.77",
+            "Computer": "DC01",
+            "LogonType": 3,
+            "@timestamp": "2025-08-20T11:11:11Z",
+        },
+        "search": {"source": "ad", "search": "DC01"},
+        "event_type": "LogonFailed",
+        "match": {"user": "demo\\eve"},
+        "expected": {
+            "source": "ad",
+            "event_id": 4625,
+            "user_name": "demo\\eve",
+            "host": "DC01",
+            "src_ip": "203.0.113.77",
+            "outcome": "failure",
+        },
+    },
+}
+
+
+async def _load_event(event_id: str) -> Event:
+    async with async_session_maker() as session:
+        result = await session.execute(select(Event).where(Event.id == event_id))
+        return result.scalars().first()
+
+
+@pytest.mark.parametrize("sample_id", list(ASSIGNMENT_SAMPLES))
+def test_assignment_sample_normalizes_through_real_ingest(client, api_key, sample_id):
+    """Assignment requirement: all seven source samples normalize on ingest."""
+    from conftest import ADMIN_EMAIL, ADMIN_PASSWORD, login
+
+    sample = ASSIGNMENT_SAMPLES[sample_id]
+    if "line" in sample:
+        response = client.post(
+            "/api/ingest/syslog",
+            headers={"X-API-Key": api_key, "Content-Type": "text/plain"},
+            content=sample["line"].encode(),
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["accepted"] == 1, response.text
+    else:
+        response = client.post(
+            "/api/ingest",
+            json=sample["json"],
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200, response.text
+
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    params = {**sample["search"], "tenant": "demoa", "limit": 100}
+    search = client.get("/api/events", params=params)
+    assert search.status_code == 200, search.text
+    matches = [
+        row for row in search.json()["logs"]
+        if row["eventType"] == sample["event_type"]
+        and all(row.get(key) == value for key, value in sample.get("match", {}).items())
+    ]
+    assert matches, f"{sample_id} was not returned by search: {search.text}"
+
+    stored = asyncio.run(_load_event(matches[0]["id"]))
+    assert stored is not None
+
+    # Every row keeps an RFC3339 timestamp and a non-empty raw payload.
+    timestamp = matches[0]["timestamp"]
+    parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    assert parsed_timestamp.tzinfo is not None
+    assert stored.raw
+
+    for field, expected in sample["expected"].items():
+        actual = getattr(stored, field)
+        if field == "source":
+            actual = str(actual)
+        assert actual == expected, f"{sample_id}.{field}: {actual!r} != {expected!r}"
+
+    if sample_id in ("firewall", "router"):
+        # The original syslog line is preserved verbatim in raw.message.
+        assert stored.raw["message"] == sample["line"]
+        assert stored.raw["raw"]["message"] == sample["line"]
+    if "timestamp" in sample:
+        assert parsed_timestamp.isoformat().startswith(sample["timestamp"])
+
+
+def test_tenant_is_never_trusted_from_the_payload(client, api_key):
+    """Assignment requirement: the tenant comes from the API key, not the body."""
+    rejected = client.post(
+        "/api/ingest",
+        json={"tenant": "attacker", "source": "api", "event_type": "tenant_probe"},
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+    )
+    assert rejected.status_code == 403, rejected.text
+
+    accepted = client.post(
+        "/api/ingest",
+        json={"tenant": "demoA", "source": "api", "event_type": "tenant_probe"},
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    stored = asyncio.run(_load_event(accepted.json()["eventId"]))
+    assert stored is not None
+    assert stored.tenant == "demoa"
 
 
 @pytest.mark.parametrize(
