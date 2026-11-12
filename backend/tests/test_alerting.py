@@ -140,6 +140,45 @@ def test_rule_does_not_fire_below_threshold_or_across_ips(client, api_key_demoa)
     assert _alerts_for_tag(client, spread_tag) == []
 
 
+def test_five_failures_only_alert_when_inside_five_minute_window(client, api_key_demoa):
+    now = datetime.now(timezone.utc)
+
+    # Five failures from one IP spanning six minutes: the oldest falls outside
+    # the five-minute window, so at most four are ever counted -> no alert.
+    outside_tag = f"window-outside-{uuid.uuid4().hex}"
+    for index, minutes_ago in enumerate((6.0, 4.5, 3.0, 1.5, 0.0)):
+        response = _ingest_failure(
+            client,
+            api_key_demoa,
+            tenant="demoa",
+            src_ip="203.0.113.240",
+            user=f"outside{index}",
+            tag=outside_tag,
+            ts=now - timedelta(minutes=minutes_ago),
+        )
+        assert response.status_code == 200, response.text
+
+    # The same five failures compressed into four minutes -> one alert.
+    inside_tag = f"window-inside-{uuid.uuid4().hex}"
+    for index, minutes_ago in enumerate((4.0, 3.0, 2.0, 1.0, 0.0)):
+        response = _ingest_failure(
+            client,
+            api_key_demoa,
+            tenant="demoa",
+            src_ip="203.0.113.241",
+            user=f"inside{index}",
+            tag=inside_tag,
+            ts=now - timedelta(minutes=minutes_ago),
+        )
+        assert response.status_code == 200, response.text
+
+    login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+    assert _alerts_for_tag(client, outside_tag) == []
+    inside_alerts = _alerts_for_tag(client, inside_tag)
+    assert len(inside_alerts) == 1
+    assert inside_alerts[0]["count"] == 5
+
+
 def test_alert_records_a_notification(client, api_key_demoa):
     tag = f"brute-notify-{uuid.uuid4().hex}"
     now = datetime.now(timezone.utc)
