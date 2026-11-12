@@ -100,7 +100,15 @@ def safe_severity(value: Any) -> Optional[int]:
     return severity_map.get(key)
 
 
-def safe_timestamp(value: Any) -> str:
+def safe_timestamp(value: Any) -> Optional[str]:
+    """Parse a timestamp to ISO-8601 UTC.
+
+    Missing timestamps (``None``) fall back to ingestion time. Numeric values
+    are treated as epoch milliseconds. Unparseable strings return ``None``
+    instead of silently substituting ingestion time, so callers can reject the
+    record (this keeps file upload consistent with the single-event
+    ``/api/ingest`` 422 behaviour for bad ``@timestamp`` values).
+    """
     if value is None:
         from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
@@ -113,12 +121,9 @@ def safe_timestamp(value: Any) -> str:
 
     from datetime import datetime
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).isoformat()
     except (ValueError, AttributeError):
-        pass
-
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
+        return None
 
 
 def safe_tags(value: Any) -> List[str]:

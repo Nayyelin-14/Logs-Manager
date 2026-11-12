@@ -170,6 +170,14 @@ def test_file_upload_parses_jsonl_and_csv(client, api_key):
         + "\n{not valid json\n"
         + json.dumps({"source": "api", "event_type": f"{MARKER}_file_1"})
         + "\n"
+        + json.dumps(
+            {
+                "source": "api",
+                "event_type": f"{MARKER}_file_bad",
+                "@timestamp": "not-a-date",
+            }
+        )
+        + "\n"
     ).encode()
     response = client.post(
         "/api/ingest/file",
@@ -179,8 +187,13 @@ def test_file_upload_parses_jsonl_and_csv(client, api_key):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["format"] == "jsonl"
-    assert (body["parsed"], body["ingested"], body["rejected"]) == (3, 2, 1)
+    assert (body["parsed"], body["ingested"], body["rejected"]) == (4, 2, 2)
+    assert len(body["errors"]) == 2, body["errors"]
     assert any("Invalid JSON" in error["error"] for error in body["errors"])
+    assert any(
+        "datetime" in error["error"].lower() or "timestamp" in error["error"].lower()
+        for error in body["errors"]
+    ), body["errors"]
 
     csv_content = (
         "source,event_type,severity,src_ip,action\n"

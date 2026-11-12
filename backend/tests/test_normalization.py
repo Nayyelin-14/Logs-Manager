@@ -64,7 +64,8 @@ def test_shared_parser_helpers_used_by_normalizers():
     assert safe_severity(99) == 10
     assert safe_severity("nonsense") is None
     assert safe_timestamp(0).startswith("1970-01-01")
-    assert safe_timestamp("not-a-date")
+    assert safe_timestamp("not-a-date") is None
+    assert safe_timestamp("2025-08-20T07:20:00Z").startswith("2025-08-20T07:20:00")
     assert safe_tags(["a", 1]) == ["a", "1"]
     assert safe_tags("a") == []
     assert get_firewall_event_type("deny") == "firewall_deny"
