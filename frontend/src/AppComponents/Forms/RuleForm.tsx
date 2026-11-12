@@ -109,7 +109,13 @@ export function AlertRuleForm({
                   : String(currentCondition.value),
               threshold: String(currentCondition?.threshold ?? 1),
               windowSeconds: String(currentCondition?.windowSeconds ?? 60),
-              groupBy: (currentCondition?.groupBy as "srcIp" | "user" | "host") ?? "srcIp",
+              groupBy:
+                currentCondition?.groupBy === "src_ip"
+                  ? "srcIp"
+                  : currentCondition?.groupBy === "user_name"
+                    ? "user"
+                    : ((currentCondition?.groupBy as "srcIp" | "user" | "host") ??
+                      "srcIp"),
             },
           ],
         }
@@ -141,23 +147,30 @@ export function AlertRuleForm({
       return Number.isFinite(parsed) ? parsed : undefined;
     };
 
-    // Send the condition in the shape the API persists: numeric threshold and
-    // window, canonical group_by names, and no unused field key.
+    // Send only the fields the API accepts. Empty optional strings are omitted
+    // so the backend's "value must not be blank" validator is not triggered.
     const cleanedData = {
       ...data,
       conditions: data.conditions.map((c) => {
-        const condition: Record<string, unknown> = {
-          type: c.type,
-          value: c.value,
-          threshold: toNumber(c.threshold),
-          windowSeconds: toNumber(c.windowSeconds),
-          groupBy:
-            c.groupBy === "srcIp"
-              ? "src_ip"
-              : c.groupBy === "user"
-                ? "user_name"
-                : c.groupBy,
-        };
+        const condition: Record<string, unknown> = { type: c.type };
+
+        const value = c.value?.trim();
+        if (value) condition.value = value;
+
+        const threshold = toNumber(c.threshold);
+        if (threshold !== undefined) condition.threshold = threshold;
+
+        const windowSeconds = toNumber(c.windowSeconds);
+        if (windowSeconds !== undefined) condition.windowSeconds = windowSeconds;
+
+        const groupBy =
+          c.groupBy === "srcIp"
+            ? "src_ip"
+            : c.groupBy === "user"
+              ? "user_name"
+              : c.groupBy;
+        if (groupBy) condition.groupBy = groupBy;
+
         if (c.type === "field_value" && c.field) {
           // Map frontend field names to backend column names so the evaluator
           // can apply the filter correctly.
