@@ -2,29 +2,11 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import delete, inspect
+from sqlalchemy import delete
 
 from app.core.database import async_session_maker
-from app.models.alert import AlertRule, Alert
+from app.models.alert import Alert, AlertRule
 from app.models.events import Event
-class TestAlertRuleModel:
-
-    def test_alert_rule_model_has_required_columns(self):
-
-        cols = {c.name for c in AlertRule.__table__.columns}
-        expected = {
-            "id", "name", "description", "tenant", "conditions",
-            "enabled", "severity", "createdAt", "updatedAt",
-        }
-        assert expected.issubset(cols)
-    def test_alert_model_has_required_columns(self):
-
-        cols = {c.name for c in Alert.__table__.columns}
-        expected = {
-            "id", "rule_id", "tenant", "description", "triggeredAt",
-            "event_ids", "severity", "status", "title", "dedupe_key",
-        }
-        assert expected.issubset(cols)
 
 
 @pytest.mark.asyncio

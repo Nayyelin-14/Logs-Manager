@@ -281,10 +281,31 @@ def feature_test_flag_enabled():
 
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
-    from app.api.routes.auth import _FAILED_LOGIN_TRACKER, login_limiter
+    from app.api.routes.auth import login_limiter
     from app.core.limiting import limiter
+    import asyncio
+    import redis.asyncio as _redis_async
 
-    _FAILED_LOGIN_TRACKER.clear()
+    # Clear Redis lockout keys for test isolation between tests
+    async def _clear_all():
+        try:
+            client = _redis_async.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:56379"),
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            keys = await client.keys("lms:auth:login:*")
+            if keys:
+                await client.delete(*keys)
+            await client.aclose()
+        except Exception:
+            pass
+
+    try:
+        asyncio.run(_clear_all())
+    except Exception:
+        pass
     for rate_limiter in (login_limiter, limiter):
         try:
             rate_limiter.reset()

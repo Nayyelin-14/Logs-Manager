@@ -6,7 +6,6 @@ from slowapi import Limiter
 from pydantic import BaseModel, AfterValidator
 from typing import Annotated, Optional
 import re
-import time
 import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -21,10 +20,10 @@ from app.core.security import (
 )
 from app.core.dependencies import get_current_user, require_admin
 from app.core.tenancy import resolve_read_tenant
+from app.core.auth_lockout import auth_lockout, RedisUnavailableError, LOCKOUT_TTL_SECONDS
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.enums import Role
-import datetime
 
 settings = get_settings()
 router = APIRouter()
@@ -35,8 +34,6 @@ router = APIRouter()
 login_limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
 
 
-
-_FAILED_LOGIN_TRACKER: dict[str, dict] = {}
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -54,32 +51,6 @@ SafeEmail = Annotated[str, AfterValidator(_validate_email)]
 class LoginRequest(BaseModel):
     email: SafeEmail
     password: str
-
-
-def _is_locked_out(email: str) -> tuple[bool, int]:
-    entry = _FAILED_LOGIN_TRACKER.get(email)
-    if not entry:
-        return False, 0
-    elapsed = time.time() - entry["first_failed_at"]
-    if entry["count"] >= settings.LOGIN_LOCKOUT_ATTEMPTS and elapsed < settings.LOGIN_LOCKOUT_MINUTES * 60:
-        return True, int(settings.LOGIN_LOCKOUT_MINUTES * 60 - elapsed)
-
-    if elapsed >= settings.LOGIN_LOCKOUT_MINUTES * 60:
-        _FAILED_LOGIN_TRACKER.pop(email, None)
-    return False, 0
-
-
-def _record_failed_login(email: str):
-    now = time.time()
-    entry = _FAILED_LOGIN_TRACKER.get(email)
-    if not entry:
-        _FAILED_LOGIN_TRACKER[email] = {"count": 1, "first_failed_at": now}
-    else:
-        entry["count"] += 1
-
-
-def _clear_failed_logins(email: str):
-    _FAILED_LOGIN_TRACKER.pop(email, None)
 
 
 class AuthCheckResponse(BaseModel):
@@ -121,7 +92,14 @@ async def login(
     email = login_request.email
 
 
-    locked, retry_after = _is_locked_out(email)
+    try:
+        locked, retry_after = await auth_lockout.is_locked_out(email)
+    except RedisUnavailableError:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Authentication service temporarily unavailable."},
+        )
+
     if locked:
         return JSONResponse(
             status_code=429,
@@ -133,13 +111,18 @@ async def login(
     user = result.scalar_one_or_none()
 
     if not user:
-        _record_failed_login(email)
-        locked, retry_after = _is_locked_out(email)
-        if locked:
+        try:
+            _, lockout_activated = await auth_lockout.record_failed_login(email)
+        except RedisUnavailableError:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Authentication service temporarily unavailable."},
+            )
+        if lockout_activated:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many login attempts. Try again later."},
-                headers={"Retry-After": str(retry_after)},
+                headers={"Retry-After": str(LOCKOUT_TTL_SECONDS)},
             )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -153,17 +136,28 @@ async def login(
             raise HTTPException(status_code=403, detail="Tenant is not active.")
 
     if user.password and not verify_password(login_request.password, user.password):
-        _record_failed_login(email)
-        locked, retry_after = _is_locked_out(email)
-        if locked:
+        try:
+            _, lockout_activated = await auth_lockout.record_failed_login(email)
+        except RedisUnavailableError:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Authentication service temporarily unavailable."},
+            )
+        if lockout_activated:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many login attempts. Try again later."},
-                headers={"Retry-After": str(retry_after)},
+                headers={"Retry-After": str(LOCKOUT_TTL_SECONDS)},
             )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    _clear_failed_logins(email)
+    try:
+        await auth_lockout.clear_failed_logins(email)
+    except RedisUnavailableError:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Authentication service temporarily unavailable."},
+        )
 
     payload = TokenPayload(
         user_id=user.id,
