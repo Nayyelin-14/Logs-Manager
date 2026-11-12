@@ -187,6 +187,14 @@ After startup:
  CADDY_BIND_IP=127.0.0.1
  DOMAIN=localhost
 
+ # CSRF/CORS trusted origins. The appliance UI origin must be listed here so
+ # cookie-authenticated requests from the UI pass the CSRF origin check. If you
+ # override HTTP_PORT/HTTPS_PORT (or serve the UI on a non-default host/port),
+ # add that origin, for example:
+ #   CORS_ORIGINS='["http://localhost:5173", "http://localhost:8081", "https://localhost:8443"]'
+ # Keep this list explicit; do not wildcard it -- CSRF stays strict.
+ CORS_ORIGINS='["http://localhost:5173", "http://localhost:8081"]'
+
  # Syslog (solely handled by the dedicated ingest container)
  SYSLOG_ENABLED=true
  # Set to a private/LAN address; never publish 514 on a public interface.
